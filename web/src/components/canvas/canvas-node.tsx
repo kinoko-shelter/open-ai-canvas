@@ -9,7 +9,7 @@ import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { formatBytes } from "@/lib/image-utils";
 import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { storyboardMinNodeHeight } from "./canvas-script-node";
@@ -904,7 +904,7 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchExpanded
 function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRendererProps) {
     const playWhenReadyRef = useRef(false);
     const playerBoxRef = useRef<HTMLDivElement>(null);
-    const { url, loading, load } = useNodeResourceUrl(node, false);
+    const { url, loading, load } = useNodeResourceUrl(node, false, "direct");
     const subtitleEntries = node.metadata?.subtitleEntries || [];
     const subtitleStyle = node.metadata?.subtitleStyle || createDefaultSubtitleStyle();
     const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -939,7 +939,7 @@ function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRender
             </div>
         );
     if (!url) {
-        return <DeferredMediaLoad icon={loading ? <LoaderCircle className="size-5 animate-spin" /> : <Play className="size-5 fill-current" />} label={loading ? "正在缓存视频" : "加载并缓存视频"} disabled={loading} onClick={() => { playWhenReadyRef.current = true; void load(); }} />;
+        return <DeferredMediaLoad icon={loading ? <LoaderCircle className="size-5 animate-spin" /> : <Play className="size-5 fill-current" />} label={loading ? "正在加载视频" : "加载视频"} disabled={loading} onClick={() => { playWhenReadyRef.current = true; void load(); }} />;
     }
 
     // 视频画面按实际分辨率等比适配节点盒子，字幕叠加层与画面同框，不在黑边上错位。
@@ -1053,17 +1053,24 @@ function DeferredMediaLoad({ icon, label, disabled, onClick }: { icon: ReactNode
     );
 }
 
-function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
+function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, mode: "cache" | "direct" = "cache") {
     const storageKey = node.metadata?.storageKey || "";
     const fallback = node.metadata?.content || "";
-    const isRemoteResource = Boolean(resourceIdFromStorageKey(storageKey));
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    const isRemoteResource = Boolean(resourceId);
+    const directUrl = resourceId ? resourceFileUrl(resourceId) : fallback;
     const [url, setUrl] = useState(isRemoteResource ? "" : fallback);
-    const [loading, setLoading] = useState(isRemoteResource && eager);
+    const [loading, setLoading] = useState(isRemoteResource && eager && mode === "cache");
 
     useEffect(() => {
         let cancelled = false;
         if (!isRemoteResource) {
             setUrl(fallback);
+            setLoading(false);
+            return;
+        }
+        if (mode === "direct") {
+            setUrl(eager ? directUrl : "");
             setLoading(false);
             return;
         }
@@ -1083,11 +1090,15 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
         return () => {
             cancelled = true;
         };
-    }, [eager, fallback, isRemoteResource, storageKey]);
+    }, [directUrl, eager, fallback, isRemoteResource, mode, storageKey]);
 
     const load = useCallback(async () => {
         if (url) return url;
         if (!isRemoteResource) return fallback;
+        if (mode === "direct") {
+            setUrl(directUrl);
+            return directUrl;
+        }
         setLoading(true);
         try {
             const next = (await cacheResourceObjectUrl(storageKey)) || fallback;
@@ -1099,7 +1110,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
         } finally {
             setLoading(false);
         }
-    }, [fallback, isRemoteResource, storageKey, url]);
+    }, [directUrl, fallback, isRemoteResource, mode, storageKey, url]);
 
     return { url, loading, load };
 }

@@ -30,6 +30,8 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const RECOVERABLE_TASK_POLL_INTERVAL_MS = 30_000;
+const RECOVERABLE_TASK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded, nodes, nodesRef, setNodes }: UseCanvasGenerationOptions) {
     const { message, modal } = App.useApp();
@@ -229,6 +231,18 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     }, [projectLoaded, recoverInterruptedGenerationTasks]);
 
     useEffect(() => {
+        if (!projectLoaded || !nodes.some(shouldPollRecoverableTaskNode)) return;
+        let stopped = false;
+        const timer = window.setInterval(() => {
+            if (!stopped) void recoverInterruptedGenerationTasks();
+        }, RECOVERABLE_TASK_POLL_INTERVAL_MS);
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+        };
+    }, [nodes, projectLoaded, recoverInterruptedGenerationTasks]);
+
+    useEffect(() => {
         if (!projectLoaded) return;
         nodes.forEach((node) => {
             const taskId = node.metadata?.taskId;
@@ -257,4 +271,19 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         taskDetailLoading,
         taskDetailLogs,
     };
+}
+
+function shouldPollRecoverableTaskNode(node: CanvasNodeData) {
+    const metadata = node.metadata;
+    if (!metadata?.taskId || metadata.status === NODE_STATUS_SUCCESS) return false;
+    if (metadata.status === NODE_STATUS_LOADING) return true;
+    if (metadata.taskStatus !== "failed" && metadata.status !== NODE_STATUS_ERROR) return false;
+    if (!isRecentTaskMetadata(metadata.taskUpdatedAt || metadata.taskCreatedAt)) return false;
+    return /等待超时|上游|处理中|恢复/.test(metadata.errorDetails || metadata.taskStage || "");
+}
+
+function isRecentTaskMetadata(value?: string) {
+    if (!value) return true;
+    const timestamp = Date.parse(value);
+    return !Number.isFinite(timestamp) || Date.now() - timestamp <= RECOVERABLE_TASK_MAX_AGE_MS;
 }

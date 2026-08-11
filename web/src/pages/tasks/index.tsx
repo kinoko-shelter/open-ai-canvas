@@ -58,6 +58,7 @@ export default function TasksPage() {
     const [mediaPreview, setMediaPreview] = useState<{ url: string; kind: "image" | "video"; title: string } | null>(null);
     const syncedCanvasTaskIdsRef = useRef(new Set<string>());
     const tasksRef = useRef<GenerationTask[]>([]);
+    const detailTaskRef = useRef<GenerationTask | null>(null);
 
     const canvasById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const domainProjectNameById = useMemo(() => new Map(domainProjects.map((item) => [item.project.id, item.project.name])), [domainProjects]);
@@ -129,6 +130,27 @@ export default function TasksPage() {
             const next = await listGenerationTasks();
             setTasks((current) => reconcileTaskSummaries(current, next));
             void syncCompletedCanvasTasks(next);
+            const currentDetail = detailTaskRef.current;
+            const nextDetailSummary = currentDetail ? next.find((task) => task.id === currentDetail.id) : undefined;
+            if (currentDetail && nextDetailSummary && currentDetail.updatedAt !== nextDetailSummary.updatedAt) {
+                setDetailLoading(true);
+                setLogsLoading(true);
+                void Promise.all([queryGenerationTask(currentDetail.id), listTaskLogs(currentDetail.id)])
+                    .then(([detail, logs]) => {
+                        if (detailTaskRef.current?.id !== detail.id) return;
+                        setDetailTask(detail);
+                        setTaskLogs(logs);
+                    })
+                    .catch((error) => {
+                        message.error(error instanceof Error ? error.message : "任务详情刷新失败");
+                    })
+                    .finally(() => {
+                        if (detailTaskRef.current?.id === currentDetail.id) {
+                            setDetailLoading(false);
+                            setLogsLoading(false);
+                        }
+                    });
+            }
             return next;
         } catch (error) {
             if (showLoading) message.error(error instanceof Error ? error.message : "任务加载失败");
@@ -162,6 +184,10 @@ export default function TasksPage() {
     useEffect(() => {
         tasksRef.current = tasks;
     }, [tasks]);
+
+    useEffect(() => {
+        detailTaskRef.current = detailTask;
+    }, [detailTask]);
 
     useEffect(() => {
         let stopped = false;
