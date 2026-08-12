@@ -1724,6 +1724,10 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 	if len(input.ReferenceImages) > 9 || len(input.ReferenceVideos) > 3 || len(input.ReferenceAudios) > 3 {
 		return newAPIVideoRequest{}, errors.New("NewAPI Video Generations 最多支持 9 张参考图、3 个参考视频和 3 个参考音频")
 	}
+	// NewAPI Video Generations 只接受附着在参考视频上的音频；纯音频请求会被上游拒绝。
+	if len(input.ReferenceAudios) > 0 && len(input.ReferenceVideos) == 0 {
+		return newAPIVideoRequest{}, errors.New("NewAPI Video Generations 的参考音频必须同时提供至少 1 个参考视频；纯音频生视频请切换到支持该模式的渠道")
+	}
 	upstreamModel, fixedResolution := grokVideoResolutionProfile(input.Config.Model)
 	modelName := strings.ToLower(strings.TrimSpace(upstreamModel))
 	requiresSingleImage := modelName == "grok-video-1.5" || modelName == "grok-video-1.5-1080p"
@@ -2065,6 +2069,7 @@ func grokVideoBody(input canvasGenerationInput) (map[string]interface{}, error) 
 }
 
 // xAI 生成接口与 legacy /videos 使用不同字段，保持独立可避免兼容字段触发上游 422。
+// 设置首帧时按 image-to-video 只传 image；未设置首帧时按 reference-to-video 把所有参考图放入 reference_images。
 func xaiVideoRequestBody(input canvasGenerationInput) (xaiVideoRequest, error) {
 	upstreamModel, fixedResolution := grokVideoResolutionProfile(input.Config.Model)
 	resolution := fixedResolution
@@ -2081,8 +2086,24 @@ func xaiVideoRequestBody(input canvasGenerationInput) (xaiVideoRequest, error) {
 	if !shouldSendNewAPIVideoImages(input) || len(input.ReferenceImages) == 0 {
 		return body, nil
 	}
+	startFrameID := metadataString(input.Metadata, "videoStartFrameNodeId")
+	if startFrameID == "" {
+		// 未设置首帧：所有参考图作为 R2V 参考，不受单张起始图限制。
+		for index := range input.ReferenceImages {
+			imageURL, err := openAIImageInputURL(input.ReferenceImages[index])
+			if err != nil {
+				return xaiVideoRequest{}, err
+			}
+			body.ReferenceImages = append(body.ReferenceImages, xaiVideoImage{URL: imageURL})
+		}
+		return body, nil
+	}
+	// 设置了首帧：xAI 不允许 image 与 reference_images 同时出现，只把首帧作为起始图。
 	if len(input.ReferenceImages) > 1 {
-		return xaiVideoRequest{}, fmt.Errorf("xAI 图生视频只支持 1 张起始图，当前连接了 %d 张", len(input.ReferenceImages))
+		return xaiVideoRequest{}, fmt.Errorf("xAI 设置首帧后只支持 1 张起始图，当前连接了 %d 张", len(input.ReferenceImages))
+	}
+	if input.ReferenceImages[0].ID != startFrameID {
+		return xaiVideoRequest{}, errors.New("已配置的首帧参考图未包含在视频请求中")
 	}
 	imageURL, err := openAIImageInputURL(input.ReferenceImages[0])
 	if err != nil {
