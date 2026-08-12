@@ -9,6 +9,7 @@ data/
 /.local/docker-compose.postgres.yml
 coverage/
 dist/
+/web/dist
 *.log
 *.tsbuildinfo
 *.db
