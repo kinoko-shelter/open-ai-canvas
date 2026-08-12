@@ -14,6 +14,23 @@ case "$ACTION" in
     else
       echo unknown
     fi
+    if [[ -L "$PROJECT_DIR/.local/current" ]]; then
+      current_release="$(readlink -f "$PROJECT_DIR/.local/current")"
+      printf 'frontend commit: '
+      if [[ -s "$current_release/web-commit" ]]; then
+        tr -d '\r\n' < "$current_release/web-commit"
+        printf '\n'
+      else
+        echo unknown
+      fi
+      printf 'backend commit: '
+      if [[ -s "$current_release/backend-commit" ]]; then
+        tr -d '\r\n' < "$current_release/backend-commit"
+        printf '\n'
+      else
+        echo unknown
+      fi
+    fi
     systemctl --no-pager --full status "$SERVICE" || true
     printf 'backend health: '
     curl -fsS http://127.0.0.1:8080/api/health && printf '\n'

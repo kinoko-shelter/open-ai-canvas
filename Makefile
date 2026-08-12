@@ -5,11 +5,15 @@ BRANCH ?= custom/main
 REF ?=
 SERVICE ?= story-creation
 
-.PHONY: check deploy rollback install-service restart status logs
+.PHONY: check check-deploy-scope deploy rollback install-service restart status logs
 
 check:
+	./scripts/test-classify-deploy-scope.sh
 	cd backend && go test ./...
 	cd web && bun install --frozen-lockfile && bun run test && bun run build
+
+check-deploy-scope:
+	./scripts/test-classify-deploy-scope.sh
 
 deploy:
 	REMOTE="$(REMOTE)" BRANCH="$(BRANCH)" DEPLOY_REF="$(REF)" SERVICE="$(SERVICE)" ./scripts/deploy-bare-metal.sh

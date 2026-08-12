@@ -48,21 +48,34 @@ cd /opt/open-ai-canvas-dev
 make deploy
 ```
 
-当前 `make deploy` 是前后端全量部署：同时构建前端和后端，并重启后端。它暂未根据文件差异自动区分“仅前端”或“仅后端”。
+`make deploy` 会比较上次已检查提交与目标提交，并自动选择部署范围：
+
+| 变化范围 | 实际动作 |
+| --- | --- |
+| 只改 `web/` | 只构建并切换前端，不编译、不重启后端 |
+| 只改 `backend/` | 只编译并切换后端，复用当前前端，并优雅重启后端 |
+| 前后端同时变化 | 构建并切换前后端，优雅重启后端 |
+| 只改 Markdown、`docs/`、`.github/` 或 `LICENSE` | 提示无需部署并退出 |
+| `Makefile`、`scripts/`、`deploy/`、Compose、Nginx 或未知非文档文件变化 | 保守执行前后端全量部署 |
+
+飞书开始、成功和失败通知都会显示本次类型：`仅前端`、`仅后端`、`前后端`或`无需部署`。
 
 完整流程：
 
 1. 获取部署锁，防止两个人同时部署。
 2. 拉取 `origin/custom/main` 最新提交，并快进服务器工作树。
-3. 在 `.local/build.*` 临时目录安装前端依赖、构建前端、编译 Linux 后端二进制。
-4. 构建全部成功后创建新的 `.local/releases/<commit-time>`。
-5. 原子切换 `.local/current`，让前端和后端使用同一个提交的产物。
-6. 通过 systemd 重启 `story-creation.service`。
-7. 检查 systemd、本机后端、Caddy API 和首页。
-8. 全部成功后删除旧 release，服务器只保留当前成功产物。
-9. 切换或健康检查失败时，恢复本次部署前的产物和 systemd unit。
+3. 判断本次是仅前端、仅后端、前后端还是无需部署。
+4. 在 `.local/build.*` 临时目录只构建需要变化的组件。
+5. 创建新的 `.local/releases/<commit-time>`；未变化的组件从当前 release 复制，因此每个 release 始终包含完整前后端产物。
+6. 原子切换 `.local/current`；仅前端部署不会重启后端。
+7. 后端有变化时通过 systemd 优雅重启 `story-creation.service`。
+8. 检查 systemd、本机后端、Caddy API 和首页。
+9. 全部成功后删除旧 release，服务器只保留当前成功产物。
+10. 切换或健康检查失败时，恢复本次部署前的产物和 systemd unit。
 
 构建发生在临时目录中，因此构建失败不会覆盖当前线上版本。部署脚本不会执行 `git clean`，也不会修改数据库、Redis、OSS 或 `.local/server.env`。
+
+`make deploy REF=<commit-sha>` 和 `make rollback REF=<commit-sha>` 始终执行前后端全量构建，确保指定提交的前后端版本完全一致。自动按变化范围部署只用于不带 `REF` 的日常 `make deploy`。
 
 ## 常用命令
 
@@ -90,7 +103,7 @@ make rollback REF=<commit-sha>
 make status
 ```
 
-显示当前部署提交、systemd 状态、本机后端健康检查和 Caddy API 健康检查。
+显示最近部署提交、当前前端提交、当前后端提交、systemd 状态及健康检查。
 
 ```bash
 make logs
@@ -151,9 +164,9 @@ systemd 已设置开机启动和异常退出自动重启。后端不再通过 tm
 
 服务器环境文件配置 `FEISHU_DEPLOY_WEBHOOK` 后，部署脚本会发送：
 
-- 开始部署：主机、分支、提交。
-- 部署成功：主机、分支、提交、systemd 服务名。
-- 部署失败：失败提交，以及是否执行回退。
+- 开始部署：主机、分支、提交、部署类型。
+- 部署成功：主机、分支、提交、部署类型、systemd 服务名。
+- 部署失败：失败提交、部署类型，以及是否执行回退。
 
 通知失败只会写警告，不会让一次原本成功的部署回滚。Webhook 只存在服务器私有环境文件中。
 
