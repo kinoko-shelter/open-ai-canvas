@@ -72,8 +72,9 @@ json_escape() {
 notify_feishu() {
   local message="$1"
   [[ -n "${FEISHU_DEPLOY_WEBHOOK:-}" ]] || return 0
-  local payload
-  payload="$(printf '{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}' "$(json_escape "$message")")"
+  local payload rendered
+  printf -v rendered '%b' "$message"
+  payload="$(printf '{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}' "$(json_escape "$rendered")")"
   if ! curl -fsS --max-time 10 -H 'Content-Type: application/json' --data-binary "$payload" "$FEISHU_DEPLOY_WEBHOOK" >/dev/null; then
     echo "Warning: Feishu deployment notification failed" >&2
   fi
