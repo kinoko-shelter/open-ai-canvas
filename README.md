@@ -88,6 +88,8 @@ Issue 反馈、技术讨论和产品升级建议都可以在 QQ 群中沟通。�
 
 ## 新服务器一键部署（推荐）
 
+> 团队当前 `canvas.marsvis.com` 的 CodeUp + 裸机 systemd 部署流程见 [DEPLOYMENT.md](DEPLOYMENT.md)。下面是一套面向上游开源用户的通用 Docker 安装方式，两者不要混用。
+
 适用于刚买的 Linux 云服务器。准备一台 Ubuntu、Debian、CentOS 或 Rocky Linux 服务器，在云厂商防火墙（安全组）中先仅对自己的公网 IP 放行 TCP `3000` 端口，然后登录服务器执行这一条命令：
 
 ```bash

@@ -4,7 +4,7 @@
 
 ## 0. 项目事实与边界
 
-- 项目是“影策”AI 影视创作工作台，当前仍在快速开发，数据结构和外部接口可能直接调整；除非用户明确要求，不为旧字段和旧数据编写迁移兼容层。
+- 项目是“故事创作”AI 影视创作工作台，当前仍在快速开发，数据结构和外部接口可能直接调整；除非用户明确要求，不为旧字段和旧数据编写迁移兼容层。
 - 前端位于 `web/`，技术栈是 Vite、React 19、TypeScript、React Router、Ant Design 6、Tailwind CSS 4、Zustand、TanStack Query。
 - 后端位于 `backend/`，技术栈是 Go、Gin、GORM、SQLite；生产/部署也支持 PostgreSQL、Redis、Docker Compose。
 - `canvas-agent/` 和 `plugins/` 是相对独立的运行单元，修改其代码时先读取各自 README 和局部规则，不把主应用约定臆测套过去。
@@ -159,6 +159,7 @@
 - 宿主机开发可在 `backend/` 使用 `CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug go run ./cmd/server`，在 `web/` 使用 Bun 和 Vite；Docker 开发沿用仓库现有 Compose 文件，不另起一套数据卷。
 - 默认不启动 dev server；只有用户明确要求浏览器预览或联调时才启动，并先确认端口和数据目录。
 - Docker 部署只对外暴露网页容器 `3000`；后端 `8080` 留在 Compose 网络内。健康检查只能证明入口可用，不能替代 SSE/登录/生成路径验证。
+- 团队服务器采用 [DEPLOYMENT.md](DEPLOYMENT.md) 的 CodeUp + 裸机 systemd 流程；`custom/main` 是唯一默认部署来源，禁止恢复 tmux 或 `go run` 托管。
 - 生产必须设置明确的 `CANVAS_CORS_ORIGINS`，保持公开注册关闭，HTTPS 终止后保留 Host、X-Forwarded-*，并限制数据库、备份、数据目录和 `.settings-key` 权限。
 - Nginx/Caddy 只对 `/api/tasks/<id>/text-events` 配置 SSE 的 flush、长超时、禁缓冲和禁缓存，不把这套配置复制给所有接口。
 
