@@ -35,6 +35,12 @@ type Service struct {
 	coordinator     *runtimeCoordinator
 	runtimeErr      error
 	workerID        string
+	workerStartOnce sync.Once
+	workerStopOnce  sync.Once
+	workerStop      chan struct{}
+	workerDone      chan struct{}
+	workerTasks     sync.WaitGroup
+	backgroundTasks sync.WaitGroup
 }
 
 const taskWorkerConcurrency = 3
@@ -191,46 +197,91 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+	return &Service{
+		repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc),
+		coordinator: coordinator, runtimeErr: err, workerID: newID(),
+		workerStop: make(chan struct{}), workerDone: make(chan struct{}),
+	}
 }
 
 func (s *Service) StartWorker() {
-	s.startTextReplayCleanup()
-	s.startProviderCancellationReconciliation()
-	s.startBillingReviewAudit()
-	go func() {
-		slots := make(chan struct{}, maxChannelConcurrencyLimit)
-		dispatch := func() {
-			setting, err := s.runtimeConcurrencySetting()
-			if err != nil {
+	s.workerStartOnce.Do(func() {
+		s.startTextReplayCleanup()
+		s.startProviderCancellationReconciliation()
+		s.startBillingReviewAudit()
+		go func() {
+			s.runTaskWorker()
+			s.backgroundTasks.Wait()
+			close(s.workerDone)
+		}()
+	})
+}
+
+func (s *Service) runTaskWorker() {
+	slots := make(chan struct{}, maxChannelConcurrencyLimit)
+	dispatch := func() {
+		setting, err := s.runtimeConcurrencySetting()
+		if err != nil {
+			return
+		}
+		workerConcurrency := setting.WorkerConcurrency
+		for len(slots) < workerConcurrency {
+			select {
+			case <-s.workerStop:
+				return
+			default:
+			}
+			releaseGlobal, acquired, err := s.coordinator.acquire(context.Background(), "workers", workerConcurrency, 45*time.Minute)
+			if err != nil || !acquired {
 				return
 			}
-			workerConcurrency := setting.WorkerConcurrency
-			for len(slots) < workerConcurrency {
-				releaseGlobal, acquired, err := s.coordinator.acquire(context.Background(), "workers", workerConcurrency, 45*time.Minute)
-				if err != nil || !acquired {
-					return
-				}
-				task, err := s.repo.ClaimNextTask(s.workerID, 45*time.Second)
-				if err != nil || task == nil {
-					releaseGlobal()
-					return
-				}
-				slots <- struct{}{}
-				go func(task *model.Task) {
-					defer func() { <-slots; releaseGlobal() }()
-					_ = s.processClaimedTask(task)
-				}(task)
+			select {
+			case <-s.workerStop:
+				releaseGlobal()
+				return
+			default:
 			}
+			task, err := s.repo.ClaimNextTask(s.workerID, 45*time.Second)
+			if err != nil || task == nil {
+				releaseGlobal()
+				return
+			}
+			slots <- struct{}{}
+			s.workerTasks.Add(1)
+			go func(task *model.Task) {
+				defer func() {
+					<-slots
+					releaseGlobal()
+					s.workerTasks.Done()
+				}()
+				_ = s.processClaimedTask(task)
+			}(task)
 		}
+	}
 
-		dispatch()
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
+	dispatch()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.workerStop:
+			s.workerTasks.Wait()
+			return
+		case <-ticker.C:
 			dispatch()
 		}
-	}()
+	}
+}
+
+// StopWorker stops claiming new tasks and waits for tasks already owned by this process.
+func (s *Service) StopWorker(ctx context.Context) error {
+	s.workerStopOnce.Do(func() { close(s.workerStop) })
+	select {
+	case <-s.workerDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*SessionDetail, error) {

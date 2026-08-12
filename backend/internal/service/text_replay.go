@@ -112,11 +112,18 @@ func (s *Service) startTextReplayCleanup() {
 		}
 	}
 	cleanup()
+	s.backgroundTasks.Add(1)
 	go func() {
+		defer s.backgroundTasks.Done()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			cleanup()
+		for {
+			select {
+			case <-s.workerStop:
+				return
+			case <-ticker.C:
+				cleanup()
+			}
 		}
 	}()
 }

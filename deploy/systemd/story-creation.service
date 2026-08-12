@@ -1,0 +1,18 @@
+[Unit]
+Description=Story Creation backend
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/open-ai-canvas-dev/backend
+EnvironmentFile=/opt/open-ai-canvas-dev/.local/server.env
+ExecStart=/opt/open-ai-canvas-dev/.local/current/backend
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=11min
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

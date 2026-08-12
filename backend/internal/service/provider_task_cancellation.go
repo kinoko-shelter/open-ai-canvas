@@ -32,17 +32,24 @@ const (
 )
 
 func (s *Service) startProviderCancellationReconciliation() {
+	s.backgroundTasks.Add(1)
 	go func() {
+		defer s.backgroundTasks.Done()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			task, err := s.repo.ClaimNextTaskProviderCancellation("provider-cancel:"+s.workerID, providerCancellationLeaseDuration)
-			if err != nil || task == nil {
-				continue
+		for {
+			select {
+			case <-s.workerStop:
+				return
+			case <-ticker.C:
+				task, err := s.repo.ClaimNextTaskProviderCancellation("provider-cancel:"+s.workerID, providerCancellationLeaseDuration)
+				if err != nil || task == nil {
+					continue
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				_ = s.reconcileProviderCancellation(ctx, task)
+				cancel()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = s.reconcileProviderCancellation(ctx, task)
-			cancel()
 		}
 	}()
 }

@@ -32,11 +32,18 @@ func (s *Service) startBillingReviewAudit() {
 		}
 	}
 	audit()
+	s.backgroundTasks.Add(1)
 	go func() {
+		defer s.backgroundTasks.Done()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			audit()
+		for {
+			select {
+			case <-s.workerStop:
+				return
+			case <-ticker.C:
+				audit()
+			}
 		}
 	}()
 }

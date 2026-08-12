@@ -240,9 +240,9 @@ git config rerere.enabled true
 3. 对 UI 和业务流程冲突，先在 `sync/upstream-YYYYMMDD` 验证，不要直接污染 `custom/main`。
 4. 合并完成后必须跑构建，必要时做浏览器验证。
 
-## 服务器部署建议
+## 服务器部署
 
-推荐最终让服务器直接从 CodeUp 拉代码。
+服务器直接从 CodeUp 拉取 `origin/custom/main`，采用单环境、裸机部署。Caddy、PostgreSQL 和 Redis 继续由 systemd 管理；Go 后端使用 `story-creation.service`，不再使用 tmux 或 `go run`。
 
 服务器需要具备：
 
@@ -250,19 +250,51 @@ git config rerere.enabled true
 - `custom/main` 分支拉取权限。
 - 项目运行所需环境变量和本地服务配置。
 
-部署流程：
+首次切换到 systemd 或 unit 发生变化时执行：
 
 ```bash
 cd /opt/open-ai-canvas-dev
-git fetch origin
-git checkout custom/main
-git pull --ff-only origin custom/main
-
-cd web
-bun run build
+make deploy
 ```
 
-当前服务结构建议保持：
+`make deploy` 会自动完成以下流程：
+
+1. 获取部署锁，防止多人同时部署。
+2. 拉取 `origin/custom/main` 的最新提交。
+3. 在临时目录构建前端和 Linux 后端二进制，不覆盖当前线上文件。
+4. 构建成功后切换 `.local/current`，并通过 systemd 重启后端。
+5. 旧进程停止接收新 HTTP 请求和领取新任务，并等待已经领取的任务完成。
+6. 检查 systemd、本机后端、Caddy API 和首页。
+7. 全部成功后删除旧构建产物，并将服务器工作树快进到已部署提交。
+8. 切换或健康检查失败时，在本次部署内恢复旧产物和旧服务。
+
+如果服务器环境文件配置了 `FEISHU_DEPLOY_WEBHOOK`，部署脚本会在开始、成功、失败回退时向飞书群发送通知。Webhook 只保存在服务器，不提交到 Git；通知失败不会阻断或回滚部署。
+
+服务器只保留最近一次成功构建的产物。历史版本由 Git 提交保存；需要回退时重新构建指定提交：
+
+```bash
+make rollback REF=<commit-sha>
+```
+
+常用命令：
+
+```bash
+make deploy                 # 拉取并部署 origin/custom/main 最新提交
+make deploy REF=<commit>    # 部署指定提交
+make status                 # 查看版本、systemd 和健康检查
+make logs                   # 跟踪 systemd 日志
+make restart                # 只重启后端，不拉代码
+```
+
+开发机合并前可运行：
+
+```bash
+make check
+```
+
+它会执行 Go 测试、前端依赖锁校验、前端测试和生产构建。
+
+当前服务结构：
 
 ```text
 Caddy 80/443/3000
@@ -273,7 +305,11 @@ Go 后端
   -> 127.0.0.1:8080
 ```
 
-如果服务器尚未加入 Git 仓库，可以先备份当前目录，再 clone CodeUp：
+服务器配置仍保存在 Git 忽略的 `/opt/open-ai-canvas-dev/.local/server.env`。部署不会修改 PostgreSQL、Redis、OSS、数据库数据或该环境文件，也不会执行 `git clean`。
+
+后端收到 SIGTERM 时立即停止接收新连接，默认最多等待 10 分钟排空已领取任务；systemd 最多等待 11 分钟。可以在 `server.env` 中通过 `CANVAS_SHUTDOWN_TIMEOUT_SECONDS` 缩短排空时间，超过 600 秒的配置按 600 秒处理。超时后仍未完成的任务由数据库租约和已保存的上游任务 ID恢复，因此当前方案是可恢复重启，不承诺严格零停机。
+
+如果新服务器尚未加入 Git 仓库，可以 clone CodeUp：
 
 ```bash
 mv /opt/open-ai-canvas-dev /opt/open-ai-canvas-dev.bak.$(date +%Y%m%d%H%M%S)

@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"infinite-canvas/backend/internal/database"
@@ -93,9 +98,53 @@ func main() {
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
 	log.Printf("故事创作 backend listening on %s", addr)
-	if err := r.Run(addr); err != nil {
-		log.Fatal(err)
+	server := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 10 * time.Second}
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- server.ListenAndServe() }()
+
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+		return
+	case <-signalCtx.Done():
+		log.Printf("shutdown requested; draining worker tasks")
 	}
+
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), 30*time.Second)
+	httpDone := make(chan error, 1)
+	go func() { httpDone <- server.Shutdown(httpCtx) }()
+
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), shutdownTimeout())
+	if err := svc.StopWorker(drainCtx); err != nil {
+		log.Printf("worker drain timed out; unfinished tasks will resume through database leases: %v", err)
+	}
+	cancelDrain()
+
+	if err := <-httpDone; err != nil {
+		log.Printf("http shutdown failed: %v", err)
+		_ = server.Close()
+	}
+	cancelHTTP()
+	log.Printf("backend stopped")
+}
+
+func shutdownTimeout() time.Duration {
+	const fallback = 10 * time.Minute
+	const maximum = 10 * time.Minute
+	value := strings.TrimSpace(os.Getenv("CANVAS_SHUTDOWN_TIMEOUT_SECONDS"))
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		return fallback
+	}
+	timeout := time.Duration(seconds) * time.Second
+	if timeout > maximum {
+		return maximum
+	}
+	return timeout
 }
 
 func redactCanvasSharePath(path string) string {
