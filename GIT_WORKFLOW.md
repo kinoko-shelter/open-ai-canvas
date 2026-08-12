@@ -68,6 +68,63 @@ release/xxx
   如果以后需要更严格的上线节奏，可以从 custom/main 拉发布分支。
 ```
 
+## `custom/main` 与 `main` 的合并原则
+
+本项目二次开发后，`custom/main` 和 `main` 的关系必须按下面的原则理解：
+
+- `main` 是上游基线分支，只代表当前同步到的开源版本。
+- `custom/main` 是我们的长期主分支，代表 `main` 加上我们的二次开发差异。
+- 合并目标不是让 `custom/main` 和 `main` 完全一致，而是把 `main` 的新增变化吸收到 `custom/main`，同时保留我们的定制。
+- 已推送的 `custom/main` 不做 rebase，不改历史；上游同步统一使用 merge commit。
+
+每一次把 `main` 合入 `custom/main` 前，都必须先过滤一遍差异：
+
+```bash
+git fetch origin
+
+# main 有、custom/main 还没有的提交，也就是本次准备吸收的上游变化
+git log --oneline custom/main..main
+
+# custom/main 有、main 没有的提交，也就是必须保护的二开差异
+git log --oneline main..custom/main
+
+# 从共同祖先到 main 的文件变化，用来判断本次上游会碰哪些模块
+git diff --name-status custom/main...main
+```
+
+判断原则：
+
+- 只在 `main` 改、`custom/main` 没改的文件，正常吸收。
+- 只在 `custom/main` 改、`main` 没改的文件，必须保留。
+- 双方都改但不重叠的文件，允许 Git 自动合并，但仍要看 diff。
+- 双方都改且重叠的文件，必须人工语义合并，不能简单选择 `ours` 或 `theirs`。
+- `main` 删除、`custom/main` 修改或新增的文件，默认保留 `custom/main`，除非确认该二开功能已经废弃。
+- `main` 重构了某个模块时，要把 `custom/main` 的业务语义迁移到新结构里，而不是直接覆盖。
+
+冲突处理时的优先级：
+
+1. 业务定制优先保留：品牌名、用户体系、密码能力、模型渠道、计费规则、OSS、部署脚本。
+2. 上游通用修复优先吸收：协议兼容、provider 请求结构、资源处理、测试用例、安全修复。
+3. 核心路径必须逐段看：任务状态、计费结算、资源存储、认证会话、模型调用。
+4. 前端 UI 冲突按业务入口判断：保留我们的产品命名和功能入口，吸收上游结构或 bugfix。
+
+合并完成后再做一次差异确认：
+
+```bash
+# 确认没有未解决冲突
+git status --short
+
+# 看本次 merge 实际带进来的改动
+git diff --stat HEAD^1..HEAD
+
+# 确认 custom/main 的二开提交仍然存在
+git log --oneline main..HEAD --max-count=20
+```
+
+一句话规则：
+
+> `custom/main` 永远是 `main` 加我们的定制差异。合并 `main` 时只吸收新增上游变化，不反向削掉 `custom/main` 的业务改动。
+
 ## 日常开发流程
 
 开始开发前同步团队主线：
@@ -109,10 +166,11 @@ git push origin custom/main
 
 ## 同步上游流程
 
-同步上游分两步：
+同步上游分三步：
 
 1. 先让本地 `main` 跟上游 `upstream/main` 对齐。
-2. 再把 `main` 合并进 `custom/main` 的临时同步分支。
+2. 按上一节规则过滤 `custom/main` 与 `main` 的差异。
+3. 再把 `main` 合并进 `custom/main` 的临时同步分支。
 
 操作步骤：
 
@@ -129,13 +187,21 @@ git merge --ff-only upstream/main
 git push origin main
 ```
 
+合并前必须查看差异：
+
+```bash
+git log --oneline custom/main..main
+git log --oneline main..custom/main
+git diff --name-status custom/main...main
+```
+
 从 `custom/main` 创建同步分支：
 
 ```bash
 git checkout custom/main
 git pull --rebase origin custom/main
 git checkout -b sync/upstream-YYYYMMDD
-git merge main
+git merge --no-ff main
 ```
 
 如果发生冲突：
@@ -155,7 +221,7 @@ git merge --no-ff sync/upstream-YYYYMMDD
 git push origin custom/main
 ```
 
-不要直接在 `custom/main` 上硬合上游。临时同步分支可以隔离风险，方便冲突处理和回滚。
+不要直接用上游覆盖 `custom/main`。临时同步分支可以隔离风险，方便冲突处理和回滚。
 
 ## 冲突处理建议
 
