@@ -30,6 +30,9 @@ import (
 
 const providerResourceURLTTL = 4 * time.Hour
 const directResourceURLTTL = 5 * time.Minute
+const ossObjectReadTimeout = 2 * time.Minute
+const ossObjectUploadBaseTimeout = 5 * time.Minute
+const ossObjectUploadMaxTimeout = 20 * time.Minute
 
 var errInvalidGeneratedDataURL = errors.New("生成内容 data URL 无效")
 
@@ -689,6 +692,23 @@ func putOSSObject(setting ossSettingValue, objectKey string, mimeType string, si
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
+	timeout := ossObjectUploadTimeout(size)
+	etag, err := putOSSObjectOnce(setting, objectKey, mimeType, size, body, timeout)
+	if err == nil || !retryableOSSUploadError(err) {
+		return etag, err
+	}
+	seeker, ok := body.(io.Seeker)
+	if !ok {
+		return "", err
+	}
+	if _, seekErr := seeker.Seek(0, io.SeekStart); seekErr != nil {
+		return "", fmt.Errorf("%w；重试前重置上传内容失败：%v", err, seekErr)
+	}
+	time.Sleep(500 * time.Millisecond)
+	return putOSSObjectOnce(setting, objectKey, mimeType, size, body, timeout)
+}
+
+func putOSSObjectOnce(setting ossSettingValue, objectKey string, mimeType string, size int64, body io.Reader, timeout time.Duration) (string, error) {
 	req, err := newOSSRequest(http.MethodPut, setting, objectKey, mimeType, body)
 	if err != nil {
 		return "", err
@@ -696,7 +716,7 @@ func putOSSObject(setting ossSettingValue, objectKey string, mimeType string, si
 	if size > 0 {
 		req.ContentLength = size
 	}
-	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	resp, err := OutboundHTTPClient(timeout).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -706,6 +726,31 @@ func putOSSObject(setting ossSettingValue, objectKey string, mimeType string, si
 		return "", fmt.Errorf("OSS 上传失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
 	return strings.Trim(resp.Header.Get("ETag"), `"`), nil
+}
+
+func ossObjectUploadTimeout(size int64) time.Duration {
+	timeout := ossObjectUploadBaseTimeout
+	if size > 0 {
+		extra := time.Duration(size/(10<<20)) * time.Minute
+		timeout += extra
+	}
+	if timeout > ossObjectUploadMaxTimeout {
+		return ossObjectUploadMaxTimeout
+	}
+	return timeout
+}
+
+func retryableOSSUploadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	value := strings.ToLower(err.Error())
+	for _, marker := range []string{"timeout", "deadline exceeded", "connection reset", "unexpected eof", "broken pipe"} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 type ossObjectStream struct {
@@ -724,7 +769,7 @@ func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader st
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
-	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	resp, err := OutboundHTTPClient(ossObjectReadTimeout).Do(req)
 	if err != nil {
 		return nil, err
 	}
