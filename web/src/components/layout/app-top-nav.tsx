@@ -83,9 +83,9 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                                 "lg:justify-center lg:px-0",
                             )}
                         >
-                            <Link to="/" className={cn("min-w-0 items-center gap-2", mobileSidebarExpanded || spatialWorkbench ? "flex" : "hidden", "lg:flex")} title="影策">
+                            <Link to="/" className={cn("min-w-0 items-center gap-2", mobileSidebarExpanded || spatialWorkbench ? "flex" : "hidden", "lg:flex")} title="故事创作">
                                 <span className="app-workspace-brand-mark grid size-7 shrink-0 place-items-center rounded-md bg-foreground text-background"><InfinityIcon className="size-4" /></span>
-                                {spatialWorkbench ? <span className="min-w-0"><span className="block truncate text-[var(--fs-body)] font-semibold">影策</span><span className="block truncate text-[var(--fs-micro)] text-foreground/36">AI 叙事工作台</span></span> : <span className="truncate text-[var(--fs-body)] font-semibold">影策</span>}
+                                {spatialWorkbench ? <span className="min-w-0"><span className="block truncate text-[var(--fs-body)] font-semibold">故事创作</span><span className="block truncate text-[var(--fs-micro)] text-foreground/36">AI 叙事工作台</span></span> : <span className="truncate text-[var(--fs-body)] font-semibold">故事创作</span>}
                             </Link>
                         </div>
 

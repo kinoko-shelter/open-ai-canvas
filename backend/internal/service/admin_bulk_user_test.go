@@ -69,6 +69,83 @@ func TestCreateAdminUserRejectsDuplicateUsername(t *testing.T) {
 		t.Fatal("CreateAdminUser() duplicate username error = nil")
 	}
 }
+
+func TestAdminResetUserPasswordUpdatesHashAndClearsSessions(t *testing.T) {
+	db := newBulkUserTestDB(t)
+	oldHash, err := hashPassword("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	target := model.User{ID: "user-1", Username: "user-one", Role: model.UserRoleUser, Status: model.UserStatusActive, PasswordHash: oldHash}
+	if err := db.Create(&[]model.User{actor, target}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AuthSession{ID: "session-1", UserID: target.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := (&Service{repo: repository.New(db)}).AdminResetUserPassword(&actor, target.ID, "", AdminResetUserPasswordRequest{Password: "new-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verifyPassword("new-password", updated.PasswordHash) {
+		t.Fatal("new password hash does not match")
+	}
+	var sessionCount int64
+	if err := db.Model(&model.AuthSession{}).Where("user_id = ?", target.ID).Count(&sessionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 0 {
+		t.Fatalf("sessions = %d, want 0", sessionCount)
+	}
+	var audit model.AdminAuditEvent
+	if err := db.Where("action = ? AND target_id = ?", "user.password.reset", target.ID).First(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChangePasswordRequiresCurrentPasswordAndRefreshesSession(t *testing.T) {
+	db := newBulkUserTestDB(t)
+	passwordHash, err := hashPassword("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{ID: "user-1", Username: "user-one", Role: model.UserRoleUser, Status: model.UserStatusActive, PasswordHash: passwordHash}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]model.AuthSession{{ID: "current-session", UserID: user.ID}, {ID: "other-session", UserID: user.ID}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	if _, err := svc.ChangePassword(&user, ChangePasswordRequest{CurrentPassword: "wrong-password", NewPassword: "new-password"}); err == nil {
+		t.Fatal("ChangePassword() wrong current password error = nil")
+	}
+
+	result, err := svc.ChangePassword(&user, ChangePasswordRequest{CurrentPassword: "old-password", NewPassword: "new-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Session == "" {
+		t.Fatal("new session is empty")
+	}
+	var stored model.User
+	if err := db.First(&stored, "id = ?", user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !verifyPassword("new-password", stored.PasswordHash) {
+		t.Fatal("stored password hash does not match new password")
+	}
+	var sessionCount int64
+	if err := db.Model(&model.AuthSession{}).Where("user_id = ?", user.ID).Count(&sessionCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("sessions = %d, want only the refreshed session", sessionCount)
+	}
+}
+
 func TestBulkDisableUsersDisablesUsersSessionsAndWritesAudits(t *testing.T) {
 	db := newBulkUserTestDB(t)
 	actor := model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
@@ -154,7 +231,7 @@ func newBulkUserTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.AuthSession{}, &model.AdminAuditEvent{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.SystemSetting{}, &model.TaskTextDelta{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.AuthSession{}, &model.UserIdentity{}, &model.AdminAuditEvent{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.SystemSetting{}, &model.TaskTextDelta{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

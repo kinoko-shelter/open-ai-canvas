@@ -23,9 +23,12 @@ type CreateAdminUserRequest struct {
 type UpdateUserRequest struct {
 	DisplayName string           `json:"displayName"`
 	Email       string           `json:"email"`
-	Password    string           `json:"password"`
 	Role        model.UserRole   `json:"role"`
 	Status      model.UserStatus `json:"status"`
+}
+
+type AdminResetUserPasswordRequest struct {
+	Password string `json:"password"`
 }
 
 type BulkDisableUsersRequest struct {
@@ -324,17 +327,6 @@ func (s *Service) UpdateUser(actor *model.User, userID string, req UpdateUserReq
 		}
 		user.Email = email
 	}
-	if req.Password != "" {
-		if err := validatePassword(req.Password); err != nil {
-			return nil, err
-		}
-		hash, err := hashPassword(req.Password)
-		if err != nil {
-			return nil, err
-		}
-		user.PasswordHash = hash
-		_ = s.repo.DeleteUserAuthSessions(user.ID)
-	}
 	user.Role = nextRole
 	user.Status = nextStatus
 	user.UpdatedAt = time.Now()
@@ -342,6 +334,36 @@ func (s *Service) UpdateUser(actor *model.User, userID string, req UpdateUserReq
 		return nil, err
 	}
 	if err := s.appendAdminAudit(actor, "user.update", "user", user.ID, "更新用户账号状态或资料", map[string]any{"role": user.Role, "status": user.Status}); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *Service) AdminResetUserPassword(actor *model.User, userID string, currentSessionCookie string, req AdminResetUserPasswordRequest) (*model.User, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return nil, err
+	}
+	user, err := s.repo.User(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePassword(req.Password); err != nil {
+		return nil, err
+	}
+	passwordHash, err := hashPassword(req.Password)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = passwordHash
+	user.UpdatedAt = time.Now()
+	keepSessionID := ""
+	if actor != nil && actor.ID == user.ID {
+		keepSessionID, _ = parseSessionCookie(currentSessionCookie)
+	}
+	if err := s.repo.UpdateUserPasswordAndDeleteSessions(user, keepSessionID); err != nil {
+		return nil, err
+	}
+	if err := s.appendAdminAudit(actor, "user.password.reset", "user", user.ID, "重置用户登录密码", map[string]any{"self": actor != nil && actor.ID == user.ID}); err != nil {
 		return nil, err
 	}
 	return user, nil

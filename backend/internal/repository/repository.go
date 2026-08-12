@@ -233,6 +233,27 @@ func (r *Repository) DeleteUserAuthSessions(userID string) error {
 	return r.db.Delete(&model.AuthSession{}, "user_id = ?", userID).Error
 }
 
+func (r *Repository) DeleteUserAuthSessionsExcept(userID string, keepSessionID string) error {
+	query := r.db.Where("user_id = ?", userID)
+	if keepSessionID != "" {
+		query = query.Where("id <> ?", keepSessionID)
+	}
+	return query.Delete(&model.AuthSession{}).Error
+}
+
+func (r *Repository) UpdateUserPasswordAndDeleteSessions(user *model.User, keepSessionID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(user).Error; err != nil {
+			return err
+		}
+		query := tx.Where("user_id = ?", user.ID)
+		if keepSessionID != "" {
+			query = query.Where("id <> ?", keepSessionID)
+		}
+		return query.Delete(&model.AuthSession{}).Error
+	})
+}
+
 func (r *Repository) LatestEmailVerificationCode(email string, purpose string) (*model.EmailVerificationCode, error) {
 	var code model.EmailVerificationCode
 	if err := r.db.Where("email = ? AND purpose = ? AND used_at IS NULL", email, purpose).Order("created_at desc").First(&code).Error; err != nil {

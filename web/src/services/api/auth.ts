@@ -366,6 +366,10 @@ export function register(input: { username: string; email?: string; emailCode?: 
     return request<{ user: LocalUser }>(api.post("/auth/register", input));
 }
 
+export function changePassword(input: { currentPassword: string; newPassword: string }) {
+    return request<{ user: LocalUser }>(api.post("/auth/change-password", input));
+}
+
 export function logout() {
     return request<{ ok: boolean }>(api.post("/auth/logout"));
 }
@@ -400,8 +404,12 @@ export function listAdminUserAuditEvents(id: string, params: { page?: number; li
     return request<{ events: AdminAuditEvent[]; total: number; page: number; limit: number }>(api.get(`/admin/users/${encodeURIComponent(id)}/audit-events`, { params }));
 }
 
-export function updateAdminUser(id: string, input: Partial<Pick<LocalUser, "displayName" | "email" | "role" | "status">> & { password?: string }) {
+export function updateAdminUser(id: string, input: Partial<Pick<LocalUser, "displayName" | "email" | "role" | "status">>) {
     return request<{ user: LocalUser }>(api.patch(`/admin/users/${encodeURIComponent(id)}`, input));
+}
+
+export function resetAdminUserPassword(id: string, password: string) {
+    return request<{ user: LocalUser }>(api.post(`/admin/users/${encodeURIComponent(id)}/password`, { password }));
 }
 
 export function deleteAdminUser(id: string) {

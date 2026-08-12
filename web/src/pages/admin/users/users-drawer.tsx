@@ -1,7 +1,7 @@
 import { App, Button, Drawer, Form, Input, Select } from "antd";
 import { useEffect, useState } from "react";
 
-import { createAdminUser, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
+import { createAdminUser, resetAdminUserPassword, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
 
 type UserFormValues = Pick<LocalUser, "displayName" | "email" | "role" | "status">;
 
@@ -196,6 +196,81 @@ export function AdminUserCreateDrawer({
                 </Form.Item>
                 <Form.Item name="status" label={"\u8d26\u53f7\u72b6\u6001"}>
                     <Select options={[{ label: "\u5df2\u542f\u7528", value: "active" }, { label: "\u5df2\u505c\u7528", value: "disabled" }]} />
+                </Form.Item>
+            </Form>
+        </Drawer>
+    );
+}
+
+type ResetPasswordFormValues = {
+    password: string;
+    confirmPassword: string;
+};
+
+export function AdminUserPasswordModal({
+    user,
+    onClose,
+    onSaved,
+}: {
+    user: AdminUser | null;
+    onClose: () => void;
+    onSaved: (user: LocalUser) => void;
+}) {
+    const { message } = App.useApp();
+    const [form] = Form.useForm<ResetPasswordFormValues>();
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (user) form.resetFields();
+    }, [form, user]);
+
+    const submit = async () => {
+        if (!user) return;
+        const values = await form.validateFields();
+        setSaving(true);
+        try {
+            const result = await resetAdminUserPassword(user.id, values.password);
+            onSaved(result.user);
+            message.success("用户密码已重置");
+            onClose();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重置密码失败");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Drawer
+            title={user ? `重置密码 · ${user.displayName || user.username}` : "重置密码"}
+            open={Boolean(user)}
+            width="min(440px, 100vw)"
+            onClose={onClose}
+            maskClosable={!saving}
+            destroyOnHidden
+            extra={<Button type="primary" loading={saving} onClick={() => void submit()}>保存新密码</Button>}
+        >
+            <Form form={form} layout="vertical" requiredMark={false}>
+                <Form.Item label="用户名">
+                    <Input value={user ? `@${user.username}` : ""} disabled />
+                </Form.Item>
+                <Form.Item name="password" label="新密码" rules={[{ required: true, message: "请输入新密码" }, { min: 8, message: "密码至少 8 位" }]}>
+                    <Input.Password autoComplete="new-password" placeholder="至少 8 位" />
+                </Form.Item>
+                <Form.Item
+                    name="confirmPassword"
+                    label="确认新密码"
+                    dependencies={["password"]}
+                    rules={[
+                        { required: true, message: "请再次输入新密码" },
+                        ({ getFieldValue }) => ({
+                            validator(_, value) {
+                                return !value || getFieldValue("password") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的新密码不一致"));
+                            },
+                        }),
+                    ]}
+                >
+                    <Input.Password autoComplete="new-password" placeholder="再次输入新密码" />
                 </Form.Item>
             </Form>
         </Drawer>

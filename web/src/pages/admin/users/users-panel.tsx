@@ -10,7 +10,7 @@ import { AdminBatchBar, AdminTableEmpty, AdminTableSkeleton } from "../component
 import { useTableUrlState } from "../lib/use-table-url-state";
 import { AdminUserDetailDrawer } from "../components/admin-user-detail-drawer";
 import { createUserColumns, userColumnOptions, type UserColumnKey } from "./users-columns";
-import { AdminUserCreateDrawer, AdminUserEditDrawer } from "./users-drawer";
+import { AdminUserCreateDrawer, AdminUserEditDrawer, AdminUserPasswordModal } from "./users-drawer";
 
 const columnStorageKey = "admin-users-visible-columns";
 const allColumnKeys = userColumnOptions.map((item) => item.key);
@@ -25,6 +25,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     const [loading, setLoading] = useState(true);
     const [detailUserId, setDetailUserId] = useState<string | null>(null);
     const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+    const [passwordUser, setPasswordUser] = useState<AdminUser | null>(null);
     const [createUserOpen, setCreateUserOpen] = useState(false);
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [bulkDisabling, setBulkDisabling] = useState(false);
@@ -103,6 +104,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
         visibleColumns,
         onView: (user) => setDetailUserId(user.id),
         onEdit: (user) => { setCreateUserOpen(false); setEditingUser(user); },
+        onResetPassword: (user) => { setCreateUserOpen(false); setEditingUser(null); setPasswordUser(user); },
         onToggleStatus: toggleStatus,
     }), [actor?.id, toggleStatus, visibleColumns]);
 
@@ -230,6 +232,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
             <AdminUserDetailDrawer userId={detailUserId} onClose={() => setDetailUserId(null)} />
             <AdminUserCreateDrawer open={createUserOpen} onClose={() => setCreateUserOpen(false)} onCreated={addUser} />
             <AdminUserEditDrawer user={editingUser} actorId={actor?.id} onClose={() => setEditingUser(null)} onSaved={replaceUser} />
+            <AdminUserPasswordModal user={passwordUser} onClose={() => setPasswordUser(null)} onSaved={replaceUser} />
         </>
     );
 }

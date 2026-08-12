@@ -1,6 +1,6 @@
 import { Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Eye, Pencil, Power } from "lucide-react";
+import { Eye, KeyRound, Pencil, Power } from "lucide-react";
 
 import { formatCredits } from "@/constant/credits";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
@@ -24,12 +24,14 @@ export function createUserColumns({
     visibleColumns,
     onView,
     onEdit,
+    onResetPassword,
     onToggleStatus,
 }: {
     actorId?: string;
     visibleColumns: Set<UserColumnKey>;
     onView: (user: AdminUser) => void;
     onEdit: (user: AdminUser) => void;
+    onResetPassword: (user: AdminUser) => void;
     onToggleStatus: (user: AdminUser) => Promise<void>;
 }): ColumnsType<AdminUser> {
     const columns: Array<ColumnsType<AdminUser>[number] & { key: UserColumnKey }> = [
@@ -67,6 +69,7 @@ export function createUserColumns({
                     primary={{ label: "详情", icon: <Eye className="size-3.5" />, onClick: () => onView(user) }}
                     actions={[
                         { key: "edit", label: "编辑用户", icon: <Pencil className="size-3.5" />, onClick: () => onEdit(user) },
+                        { key: "password", label: "重置密码", icon: <KeyRound className="size-3.5" />, onClick: () => onResetPassword(user) },
                         {
                             key: "toggle-status",
                             label: user.status === "active" ? "停用用户" : "重新启用",

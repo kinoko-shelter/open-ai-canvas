@@ -105,6 +105,26 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		clearSessionCookie(c)
 		ok(c, gin.H{"ok": true})
 	})
+	r.POST("/auth/change-password", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req service.ChangePasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.ChangePassword(user, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		setSessionCookie(c, result.Session, result.MaxAgeSecs)
+		ok(c, gin.H{"user": result.User})
+	})
 	r.GET("/auth/session", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -305,6 +325,25 @@ func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		updated, err := svc.UpdateUser(user, c.Param("id"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"user": updated})
+	})
+	r.POST("/admin/users/:id/password", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req service.AdminResetUserPasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		updated, err := svc.AdminResetUserPassword(user, c.Param("id"), sessionCookie(c), req)
 		if err != nil {
 			failService(c, err)
 			return

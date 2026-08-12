@@ -1,9 +1,10 @@
 import { App, Popover, Switch } from "antd";
-import { ChevronRight, LogIn, LogOut, Moon, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { ChevronRight, KeyRound, LogIn, LogOut, Moon, ShieldCheck, Sun, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
+import { ChangePasswordModal } from "@/components/layout/change-password-modal";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
@@ -28,6 +29,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
     const navigate = useNavigate();
     const { message } = App.useApp();
     const [menuOpen, setMenuOpen] = useState(false);
+    const [passwordOpen, setPasswordOpen] = useState(false);
     const { availableMicrocredits } = useWalletBalance(user?.id, creditsEnabled);
     const balance = availableMicrocredits === null
         ? "--"
@@ -89,6 +91,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                 <span className="ml-2 flex-1 text-xs text-foreground/65">深色模式</span>
                                 <Switch size="small" checked={theme === "dark"} onChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="深色模式" />
                             </div>
+                            <button type="button" className="flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-foreground/[.055] hover:text-foreground" onClick={() => { setMenuOpen(false); setPasswordOpen(true); }}><KeyRound className="size-3.5" />修改密码</button>
                             <button type="button" className="flex h-9 w-full items-center gap-2 rounded px-2 text-xs text-foreground/55 hover:bg-foreground/[.055] hover:text-foreground" onClick={() => void handleLogout()}><LogOut className="size-3.5" />退出登录</button>
                         </div>
                     )}
@@ -107,6 +110,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                     <LogIn className="size-4 shrink-0" /><span className={expandedClassName}>登录</span>
                 </Link>
             )}
+            <ChangePasswordModal open={passwordOpen} onClose={() => setPasswordOpen(false)} />
         </div>
     );
 }

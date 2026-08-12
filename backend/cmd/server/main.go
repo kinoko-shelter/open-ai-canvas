@@ -92,7 +92,7 @@ func main() {
 	handler.RegisterCanvasShareRoutes(api, svc)
 
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
-	log.Printf("影策 backend listening on %s", addr)
+	log.Printf("故事创作 backend listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatal(err)
 	}

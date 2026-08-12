@@ -44,6 +44,11 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
 type PublicAuthSettings struct {
 	FirstUser           bool `json:"firstUser"`
 	RegistrationEnabled bool `json:"registrationEnabled"`
@@ -215,6 +220,28 @@ func (s *Service) Logout(cookieValue string) error {
 	return s.repo.DeleteAuthSession(sessionID)
 }
 
+func (s *Service) ChangePassword(user *model.User, req ChangePasswordRequest) (*AuthSessionResult, error) {
+	if user == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	if !verifyPassword(req.CurrentPassword, user.PasswordHash) {
+		return nil, Unauthorized("当前密码不正确")
+	}
+	if err := validatePassword(req.NewPassword); err != nil {
+		return nil, err
+	}
+	passwordHash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = passwordHash
+	user.UpdatedAt = time.Now()
+	if err := s.repo.UpdateUserPasswordAndDeleteSessions(user, ""); err != nil {
+		return nil, err
+	}
+	return s.createAuthSession(user)
+}
+
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
 	sessionID, token := parseSessionCookie(cookieValue)
 	if sessionID == "" || token == "" {
@@ -280,6 +307,7 @@ func (s *Service) createAuthSession(user *model.User) (*AuthSessionResult, error
 }
 
 func hashPassword(password string) (string, error) {
+	// bcrypt 的标准存储字符串包含 cost、随机 salt 和 hash；不需要额外数据库 salt 字段。
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash), err
 }
