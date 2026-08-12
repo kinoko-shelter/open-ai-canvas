@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var grokVideoResolutionModelPattern = regexp.MustCompile(`(?i)^(grok-imagine-video-[\w.-]+)-(480p|720p|1080p)$`)
 
 func isPublicMediaURL(value string) bool {
 	lower := strings.ToLower(value)
@@ -19,6 +22,15 @@ func isSeedanceVideoConfig(config providerConfig) bool {
 
 func isGrokVideoConfig(config providerConfig) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(config.Model)), "grok")
+}
+
+func grokVideoResolutionProfile(model string) (string, string) {
+	modelName := strings.TrimSpace(model)
+	match := grokVideoResolutionModelPattern.FindStringSubmatch(modelName)
+	if len(match) != 3 {
+		return modelName, ""
+	}
+	return match[1], strings.ToLower(match[2])
 }
 
 func isArkPlanVideoConfig(config providerConfig) bool {

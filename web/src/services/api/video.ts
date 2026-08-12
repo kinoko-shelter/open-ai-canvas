@@ -273,15 +273,19 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: ResolvedAiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
-    const modelName = modelOptionName(model);
+    const grokProfile = parseGrokVideoResolutionModel(model);
+    const modelName = grokProfile?.upstreamModel || modelOptionName(model);
     if (config.interfaceType === "xai-video" || modelName.toLowerCase().includes("grok")) {
         const images = await Promise.all(references.slice(0, 7).map((image) => imageToDataUrl(image)));
         const seconds = normalizeVideoSeconds(config.videoSeconds);
+        const resolution = grokProfile?.resolution || normalizeVideoResolution(config.vquality);
         const payload = {
             model: modelName,
             prompt,
             duration: Number.parseInt(seconds, 10) || 6,
             seconds,
+            resolution,
+            resolution_name: resolution,
             ...(normalizeVideoSize(config.size) ? { size: normalizeVideoSize(config.size) } : {}),
             ...(images.length ? { image: images[0], images } : {}),
         };
@@ -570,6 +574,13 @@ function normalizeVideoResolution(value: string) {
     if (value.toLowerCase() === "4k") return "2160p";
     const resolution = value.replace(/p$/i, "") || "720";
     return `${resolution}p`;
+}
+
+function parseGrokVideoResolutionModel(model: string) {
+    const modelName = modelOptionName(model);
+    const match = modelName.match(/^(grok-imagine-video-[\w.-]+)-(480p|720p|1080p)$/i);
+    if (!match) return null;
+    return { upstreamModel: match[1], resolution: match[2].toLowerCase() };
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {

@@ -1724,7 +1724,8 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 	if len(input.ReferenceImages) > 9 || len(input.ReferenceVideos) > 3 || len(input.ReferenceAudios) > 3 {
 		return newAPIVideoRequest{}, errors.New("NewAPI Video Generations 最多支持 9 张参考图、3 个参考视频和 3 个参考音频")
 	}
-	modelName := strings.ToLower(strings.TrimSpace(input.Config.Model))
+	upstreamModel, fixedResolution := grokVideoResolutionProfile(input.Config.Model)
+	modelName := strings.ToLower(strings.TrimSpace(upstreamModel))
 	requiresSingleImage := modelName == "grok-video-1.5" || modelName == "grok-video-1.5-1080p"
 	images := make([]string, 0, len(input.ReferenceImages))
 	// 单图模型以实际参考图为准，兼容旧画布中未随连接关系更新的 text_to_video 元数据。
@@ -1755,9 +1756,12 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 		seconds = 6
 	}
 	ratio := normalizeNewAPIChannel2Ratio(input.Config.Size, modelName)
-	resolution := normalizeNewAPIChannel2Resolution(input.Config.VQuality, modelName)
+	resolution := fixedResolution
+	if resolution == "" {
+		resolution = normalizeNewAPIChannel2Resolution(input.Config.VQuality, modelName)
+	}
 	body := newAPIVideoRequest{
-		Model:       input.Config.Model,
+		Model:       upstreamModel,
 		Prompt:      strings.TrimSpace(input.Prompt),
 		Seconds:     strconv.Itoa(seconds),
 		AspectRatio: ratio,
@@ -2029,11 +2033,18 @@ func grokVideoBody(input canvasGenerationInput) (map[string]interface{}, error) 
 	if err != nil || duration <= 0 {
 		duration = 6
 	}
+	upstreamModel, fixedResolution := grokVideoResolutionProfile(input.Config.Model)
+	resolution := fixedResolution
+	if resolution == "" {
+		resolution = normalizeVideoResolution(input.Config.VQuality)
+	}
 	body := map[string]interface{}{
-		"model":    input.Config.Model,
-		"prompt":   strings.TrimSpace(input.Prompt),
-		"duration": duration,
-		"seconds":  strconv.Itoa(duration),
+		"model":           upstreamModel,
+		"prompt":          strings.TrimSpace(input.Prompt),
+		"duration":        duration,
+		"seconds":         strconv.Itoa(duration),
+		"resolution":      resolution,
+		"resolution_name": resolution,
 	}
 	if size := normalizeVideoSize(input.Config.Size); size != "" {
 		body["size"] = size
@@ -2055,12 +2066,17 @@ func grokVideoBody(input canvasGenerationInput) (map[string]interface{}, error) 
 
 // xAI 生成接口与 legacy /videos 使用不同字段，保持独立可避免兼容字段触发上游 422。
 func xaiVideoRequestBody(input canvasGenerationInput) (xaiVideoRequest, error) {
+	upstreamModel, fixedResolution := grokVideoResolutionProfile(input.Config.Model)
+	resolution := fixedResolution
+	if resolution == "" {
+		resolution = normalizeXAIVideoResolution(input.Config.VQuality)
+	}
 	body := xaiVideoRequest{
-		Model:       input.Config.Model,
+		Model:       upstreamModel,
 		Prompt:      strings.TrimSpace(input.Prompt),
 		Duration:    normalizeXAIVideoDuration(input.Config.VideoSeconds),
 		AspectRatio: normalizeXAIVideoAspectRatio(input.Config.Size),
-		Resolution:  normalizeXAIVideoResolution(input.Config.VQuality),
+		Resolution:  resolution,
 	}
 	if !shouldSendNewAPIVideoImages(input) || len(input.ReferenceImages) == 0 {
 		return body, nil

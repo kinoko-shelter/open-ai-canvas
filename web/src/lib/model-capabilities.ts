@@ -160,7 +160,17 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.generateAudio = { supported: true, default: true };
     }
     if (protocol === "volcengine-ark-video") video.watermark = { supported: true, default: false };
+    const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
+    if (fixedGrokVideoResolution) {
+        video.resolutions = [fixedGrokVideoResolution];
+        video.defaultResolution = fixedGrokVideoResolution;
+    }
     return { version: 1, image: defaultImageCapabilityConfig(protocol, model), video };
+}
+
+function grokVideoResolutionFromModel(model: string) {
+    const match = model.trim().match(/^grok-imagine-video-[\w.-]+-(480p|720p|1080p)$/i);
+    return match ? match[1].toLowerCase() : "";
 }
 
 export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; models: string[]; modelCosts?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
@@ -170,9 +180,14 @@ export function modelCapabilityConfigFor(config: { channels: Array<{ id: string;
     const channel = config.channels.find((item) => item.id === channelId) || config.channels.find((item) => item.models.includes(modelName));
     const cost = channel?.modelCosts?.find((item) => item.model === modelName);
     const fallback = defaultModelCapabilityConfig(cost?.protocol, modelName);
-    return cost?.capabilityConfig
+    const resolved = cost?.capabilityConfig
         ? { ...fallback, ...cost.capabilityConfig, image: cost.capabilityConfig.image || fallback.image, video: cost.capabilityConfig.video || fallback.video }
         : fallback;
+    const fixedGrokVideoResolution = grokVideoResolutionFromModel(modelName);
+    if (fixedGrokVideoResolution && resolved.video) {
+        resolved.video = { ...resolved.video, resolutions: [fixedGrokVideoResolution], defaultResolution: fixedGrokVideoResolution };
+    }
+    return resolved;
 }
 
 export function normalizeImageValue(profile: ImageCapabilityConfig, value: { size?: string; quality?: string; count?: string; transparentBackground?: string }) {
