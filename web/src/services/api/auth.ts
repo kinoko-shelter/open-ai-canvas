@@ -256,6 +256,9 @@ export type AdminOSSSetting = {
     accessKeyId: string;
     accessKeySecret?: string;
     hasAccessKeySecret: boolean;
+    cdnBaseUrl: string;
+    cdnAuthKey?: string;
+    hasCdnAuthKey: boolean;
     publicBaseUrl: string;
     pathPrefix: string;
     updatedBy?: string;

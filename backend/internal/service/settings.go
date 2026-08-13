@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,8 @@ type OSSSettingRequest struct {
 	Bucket          string `json:"bucket"`
 	AccessKeyID     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
+	CDNBaseURL      string `json:"cdnBaseUrl"`
+	CDNAuthKey      string `json:"cdnAuthKey"`
 	PublicBaseURL   string `json:"publicBaseUrl"`
 	PathPrefix      string `json:"pathPrefix"`
 }
@@ -42,6 +45,8 @@ type PublicOSSSetting struct {
 	Bucket             string    `json:"bucket"`
 	AccessKeyID        string    `json:"accessKeyId"`
 	HasAccessKeySecret bool      `json:"hasAccessKeySecret"`
+	CDNBaseURL         string    `json:"cdnBaseUrl"`
+	HasCDNAuthKey      bool      `json:"hasCdnAuthKey"`
 	PublicBaseURL      string    `json:"publicBaseUrl"`
 	PathPrefix         string    `json:"pathPrefix"`
 	UpdatedBy          string    `json:"updatedBy"`
@@ -57,6 +62,8 @@ type ossSettingValue struct {
 	Bucket          string `json:"bucket"`
 	AccessKeyID     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
+	CDNBaseURL      string `json:"cdnBaseUrl"`
+	CDNAuthKey      string `json:"cdnAuthKey"`
 	PublicBaseURL   string `json:"publicBaseUrl"`
 	PathPrefix      string `json:"pathPrefix"`
 }
@@ -95,6 +102,10 @@ func (s *Service) UpdateOSSSetting(actor *model.User, req OSSSettingRequest) (*P
 	}
 	stored := next
 	stored.AccessKeySecret, err = s.encryptSettingSecret(next.AccessKeySecret)
+	if err != nil {
+		return nil, err
+	}
+	stored.CDNAuthKey, err = s.encryptSettingSecret(next.CDNAuthKey)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +157,10 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 	if err != nil {
 		return nil, err
 	}
+	stored.CDNAuthKey, err = s.encryptSettingSecret(next.CDNAuthKey)
+	if err != nil {
+		return nil, err
+	}
 	valueJSON, err := json.Marshal(stored)
 	if err != nil {
 		return nil, err
@@ -173,14 +188,23 @@ func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error
 			return nil, ossSettingValue{}, errors.New("平台 OSS 配置格式无效")
 		}
 	}
-	storedSecret := value.AccessKeySecret
+	storedAccessKeySecret := value.AccessKeySecret
+	storedCDNAuthKey := value.CDNAuthKey
 	value.AccessKeySecret, err = s.decryptSettingSecret(value.AccessKeySecret)
 	if err != nil {
 		return nil, ossSettingValue{}, err
 	}
-	if storedSecret != "" && !strings.HasPrefix(storedSecret, encryptedSettingPrefix) {
+	value.CDNAuthKey, err = s.decryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return nil, ossSettingValue{}, err
+	}
+	if (storedAccessKeySecret != "" && !strings.HasPrefix(storedAccessKeySecret, encryptedSettingPrefix)) || (storedCDNAuthKey != "" && !strings.HasPrefix(storedCDNAuthKey, encryptedSettingPrefix)) {
 		migrated := value
 		migrated.AccessKeySecret, err = s.encryptSettingSecret(value.AccessKeySecret)
+		if err != nil {
+			return nil, ossSettingValue{}, err
+		}
+		migrated.CDNAuthKey, err = s.encryptSettingSecret(value.CDNAuthKey)
 		if err != nil {
 			return nil, ossSettingValue{}, err
 		}
@@ -229,6 +253,11 @@ func (s *Service) userOSSSettingValue(setting *model.UserOSSSetting) (ossSetting
 		return ossSettingValue{}, err
 	}
 	value.AccessKeySecret = secret
+	cdnAuthKey, err := s.decryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return ossSettingValue{}, err
+	}
+	value.CDNAuthKey = cdnAuthKey
 	value.Enabled = setting.Enabled
 	return normalizeOSSSetting(value), nil
 }
@@ -405,6 +434,8 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 		Bucket:          strings.TrimSpace(req.Bucket),
 		AccessKeyID:     strings.TrimSpace(req.AccessKeyID),
 		AccessKeySecret: strings.TrimSpace(req.AccessKeySecret),
+		CDNBaseURL:      strings.TrimRight(strings.TrimSpace(req.CDNBaseURL), "/"),
+		CDNAuthKey:      strings.TrimSpace(req.CDNAuthKey),
 		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(req.PublicBaseURL), "/"),
 		PathPrefix:      strings.Trim(strings.TrimSpace(req.PathPrefix), "/"),
 	}
@@ -416,6 +447,9 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 	}
 	if next.AccessKeySecret == "" {
 		next.AccessKeySecret = current.AccessKeySecret
+	}
+	if next.CDNAuthKey == "" {
+		next.CDNAuthKey = current.CDNAuthKey
 	}
 	if next.Enabled {
 		if next.Bucket == "" {
@@ -434,6 +468,14 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 			return next, BadAuthRequest("请填写 AccessKey Secret")
 		}
 	}
+	if next.CDNBaseURL != "" {
+		if _, err := validateCDNBaseURL(next.CDNBaseURL); err != nil {
+			return next, fmt.Errorf("媒体 CDN 地址无效：%w", err)
+		}
+	}
+	if (next.CDNBaseURL == "") != (next.CDNAuthKey == "") {
+		return next, BadAuthRequest("媒体 CDN 地址和 URL 鉴权密钥必须同时填写")
+	}
 	return next, nil
 }
 
@@ -447,6 +489,8 @@ func normalizeOSSSetting(value ossSettingValue) ossSettingValue {
 	value.Bucket = strings.TrimSpace(value.Bucket)
 	value.AccessKeyID = strings.TrimSpace(value.AccessKeyID)
 	value.AccessKeySecret = strings.TrimSpace(value.AccessKeySecret)
+	value.CDNBaseURL = strings.TrimRight(strings.TrimSpace(value.CDNBaseURL), "/")
+	value.CDNAuthKey = strings.TrimSpace(value.CDNAuthKey)
 	value.PublicBaseURL = strings.TrimRight(strings.TrimSpace(value.PublicBaseURL), "/")
 	value.PathPrefix = strings.Trim(strings.TrimSpace(value.PathPrefix), "/")
 	return value
@@ -465,6 +509,8 @@ func publicOSSSetting(setting *model.SystemSetting, value ossSettingValue) Publi
 		Bucket:             value.Bucket,
 		AccessKeyID:        value.AccessKeyID,
 		HasAccessKeySecret: strings.TrimSpace(value.AccessKeySecret) != "",
+		CDNBaseURL:         value.CDNBaseURL,
+		HasCDNAuthKey:      strings.TrimSpace(value.CDNAuthKey) != "",
 		PublicBaseURL:      value.PublicBaseURL,
 		PathPrefix:         value.PathPrefix,
 	}
@@ -485,6 +531,8 @@ func publicUserOSSSetting(setting *model.UserOSSSetting, value ossSettingValue) 
 		Bucket:             value.Bucket,
 		AccessKeyID:        value.AccessKeyID,
 		HasAccessKeySecret: strings.TrimSpace(value.AccessKeySecret) != "",
+		CDNBaseURL:         value.CDNBaseURL,
+		HasCDNAuthKey:      strings.TrimSpace(value.CDNAuthKey) != "",
 		PublicBaseURL:      value.PublicBaseURL,
 		PathPrefix:         value.PathPrefix,
 	}
@@ -494,4 +542,21 @@ func publicUserOSSSetting(setting *model.UserOSSSetting, value ossSettingValue) 
 		result.UpdatedAt = setting.UpdatedAt
 	}
 	return result
+}
+
+func validateCDNBaseURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+		return nil, BadAuthRequest("媒体 CDN 地址无效")
+	}
+	if parsed.User != nil {
+		return nil, BadAuthRequest("媒体 CDN 地址不能包含认证信息")
+	}
+	if parsed.Scheme != "https" {
+		return nil, BadAuthRequest("媒体 CDN 地址必须使用 HTTPS")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return nil, BadAuthRequest("媒体 CDN 地址不能包含路径、查询参数或片段")
+	}
+	return parsed, nil
 }

@@ -39,6 +39,36 @@ func TestSignedOSSObjectURLUsesExpiringQuerySignature(t *testing.T) {
 	}
 }
 
+func TestSignedCDNResourceURLUsesTypeAAuthKey(t *testing.T) {
+	expiresAt := time.Unix(1800000000, 0)
+	value, ok := signedCDNResourceURL(ossSettingValue{
+		CDNBaseURL: "https://media.example.com", CDNAuthKey: "test-cdn-key",
+	}, "users/u-1/image/test image.png", expiresAt)
+	if !ok {
+		t.Fatal("signedCDNResourceURL() did not sign configured CDN URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "media.example.com" || parsed.EscapedPath() != "/users/u-1/image/test%20image.png" {
+		t.Fatalf("CDN URL = %q", value)
+	}
+	const expectedAuthKey = "1800000000-0-0-544679922c5f192b8812ad8d729cdc02"
+	if actual := parsed.Query().Get("auth_key"); actual != expectedAuthKey {
+		t.Fatalf("auth_key = %q, want %q", actual, expectedAuthKey)
+	}
+	if strings.Contains(value, "test-cdn-key") {
+		t.Fatalf("CDN URL leaked auth key: %q", value)
+	}
+}
+
+func TestSignedCDNResourceURLSkipsIncompleteConfiguration(t *testing.T) {
+	if value, ok := signedCDNResourceURL(ossSettingValue{CDNBaseURL: "https://media.example.com"}, "image.png", time.Now().Add(time.Minute)); ok || value != "" {
+		t.Fatalf("signedCDNResourceURL() = %q, %v", value, ok)
+	}
+}
+
 func TestDirectResourceURLChecksOwnershipAndSignsOSSResource(t *testing.T) {
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
@@ -62,6 +92,33 @@ func TestDirectResourceURLChecksOwnershipAndSignsOSSResource(t *testing.T) {
 	}
 	if _, err := svc.DirectResourceURL("other-user", resource.ID); err == nil {
 		t.Fatal("DirectResourceURL() allowed another user's resource")
+	}
+}
+
+func TestDirectResourceURLUsesCDNForPlatformOSSResource(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value", CDNBaseURL: "https://media.example.com", CDNAuthKey: "test-cdn-key",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-cdn", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/image/direct.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	value, err := svc.DirectResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host != "media.example.com" || parsed.Query().Get("auth_key") == "" || strings.Contains(value, "Signature=") {
+		t.Fatalf("DirectResourceURL() = %q, %v", value, err)
 	}
 }
 

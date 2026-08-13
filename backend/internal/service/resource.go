@@ -3,9 +3,11 @@ package service
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +89,9 @@ func (s *Service) directResourceURL(resource *model.Resource, expiresAt time.Tim
 	setting.Provider = firstNonEmpty(resource.Provider, setting.Provider)
 	setting.Endpoint = firstNonEmpty(resource.Endpoint, setting.Endpoint)
 	setting.Bucket = firstNonEmpty(resource.Bucket, setting.Bucket)
+	if cdnURL, ok := signedCDNResourceURL(setting, resource.ObjectKey, expiresAt); ok {
+		return cdnURL, nil
+	}
 	return signedOSSObjectURL(setting, resource.ObjectKey, expiresAt)
 }
 
@@ -827,6 +832,34 @@ func signedOSSObjectURL(setting ossSettingValue, objectKey string, expiresAt tim
 	return baseURL.String(), nil
 }
 
+// signedCDNResourceURL creates Alibaba Cloud CDN Type A auth_key URLs. CDN
+// validates this key before looking up the shared cache entry or reading OSS.
+func signedCDNResourceURL(setting ossSettingValue, objectKey string, expiresAt time.Time) (string, bool) {
+	if strings.TrimSpace(setting.CDNBaseURL) == "" || strings.TrimSpace(setting.CDNAuthKey) == "" {
+		return "", false
+	}
+	baseURL, err := validateCDNBaseURL(setting.CDNBaseURL)
+	if err != nil {
+		return "", false
+	}
+	objectKey = strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if objectKey == "" {
+		return "", false
+	}
+	setEscapedObjectURLPath(baseURL, objectKey)
+	timestamp := strconv.FormatInt(expiresAt.UTC().Unix(), 10)
+	const random = "0"
+	const userID = "0"
+	path := baseURL.EscapedPath()
+	if path == "" {
+		return "", false
+	}
+	signatureInput := strings.Join([]string{path, timestamp, random, userID, setting.CDNAuthKey}, "-")
+	digest := md5.Sum([]byte(signatureInput))
+	baseURL.RawQuery = url.Values{"auth_key": {strings.Join([]string{timestamp, random, userID, hex.EncodeToString(digest[:])}, "-")}}.Encode()
+	return baseURL.String(), true
+}
+
 func newOSSRequest(method string, setting ossSettingValue, objectKey string, contentType string, body io.Reader) (*http.Request, error) {
 	baseURL, err := ossBucketBaseURL(setting)
 	if err != nil {
@@ -877,6 +910,12 @@ func escapeObjectKey(key string) string {
 		parts[i] = url.PathEscape(part)
 	}
 	return strings.Join(parts, "/")
+}
+
+func setEscapedObjectURLPath(target *url.URL, objectKey string) {
+	escapedPath := "/" + escapeObjectKey(objectKey)
+	target.Path, _ = url.PathUnescape(escapedPath)
+	target.RawPath = escapedPath
 }
 
 func safeObjectSegment(value string) string {

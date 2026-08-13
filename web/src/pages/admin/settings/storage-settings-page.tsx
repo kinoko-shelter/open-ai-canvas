@@ -8,7 +8,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import { configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 
 type StorageMode = "local" | "oss";
-type OSSFormValues = { mode: StorageMode; publicBaseUrl?: string; region?: string; endpoint?: string; bucket?: string; accessKeyId?: string; accessKeySecret?: string; pathPrefix?: string };
+type OSSFormValues = { mode: StorageMode; publicBaseUrl?: string; region?: string; endpoint?: string; bucket?: string; accessKeyId?: string; accessKeySecret?: string; cdnBaseUrl?: string; cdnAuthKey?: string; pathPrefix?: string };
 
 export default function StorageSettingsPage() {
     const { message } = App.useApp();
@@ -38,7 +38,7 @@ export default function StorageSettingsPage() {
         if (values.mode === "oss" && !values.accessKeyId?.trim()) return message.error("请填写 AccessKey ID");
         setSaving(true);
         try {
-            const result = await updateAdminOSSSetting({ enabled: values.mode === "oss", provider: "aliyun", region: values.region?.trim() || "", endpoint: values.endpoint?.trim() || "", bucket: values.bucket?.trim() || "", accessKeyId: values.accessKeyId?.trim() || "", accessKeySecret: values.accessKeySecret?.trim() || "", publicBaseUrl: values.publicBaseUrl?.trim() || "", pathPrefix: values.pathPrefix?.trim() || "" });
+            const result = await updateAdminOSSSetting({ enabled: values.mode === "oss", provider: "aliyun", region: values.region?.trim() || "", endpoint: values.endpoint?.trim() || "", bucket: values.bucket?.trim() || "", accessKeyId: values.accessKeyId?.trim() || "", accessKeySecret: values.accessKeySecret?.trim() || "", cdnBaseUrl: values.cdnBaseUrl?.trim() || "", cdnAuthKey: values.cdnAuthKey?.trim() || "", publicBaseUrl: values.publicBaseUrl?.trim() || "", pathPrefix: values.pathPrefix?.trim() || "" });
             setSetting(result.setting);
             form.setFieldsValue(formValues(result.setting));
             message.success("存储配置已保存");
@@ -59,7 +59,7 @@ export default function StorageSettingsPage() {
                     icon={<Cloud className="size-4" />}
                     title="平台存储"
                     description="选择平台新增媒体资源的默认写入方式。"
-                    status={<Space size={6}><Tag variant="filled" color={setting?.enabled ? "blue" : "default"}>{setting?.enabled ? "阿里云 OSS" : "服务器本地"}</Tag>{setting?.enabled ? <Tag variant="filled" color={setting.hasAccessKeySecret ? "success" : "warning"}>{setting.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}</Tag> : null}</Space>}
+                    status={<Space size={6}><Tag variant="filled" color={setting?.enabled ? "blue" : "default"}>{setting?.enabled ? "阿里云 OSS" : "服务器本地"}</Tag>{setting?.enabled ? <Tag variant="filled" color={setting.hasAccessKeySecret ? "success" : "warning"}>{setting.hasAccessKeySecret ? configuredSecretText : "未保存密钥"}</Tag> : null}{setting?.enabled ? <Tag variant="filled" color={setting.hasCdnAuthKey ? "success" : "default"}>{setting.hasCdnAuthKey ? "CDN 鉴权已配置" : "未启用 CDN"}</Tag> : null}</Space>}
                     footer={<><div className="text-xs text-foreground/45">{setting?.updatedAt ? `上次更新：${formatTime(setting.updatedAt)}${setting.updatedBy ? ` · ${userNameById.get(setting.updatedBy) || setting.updatedBy}` : ""}` : "尚未保存平台存储配置"}</div><Button type="primary" loading={saving} onClick={() => void save()}>保存存储配置</Button></>}
                 >
                     <Form form={form} layout="vertical" requiredMark={false} disabled={loading}>
@@ -81,6 +81,8 @@ export default function StorageSettingsPage() {
                                     <Form.Item name="pathPrefix" label="路径前缀"><Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" /></Form.Item>
                                     <Form.Item name="accessKeyId" label="AccessKey ID"><Input autoComplete="off" placeholder="阿里云 AccessKey ID" /></Form.Item>
                                     <Form.Item name="accessKeySecret" label={setting?.hasAccessKeySecret ? `AccessKey Secret（${configuredSecretText}）` : "AccessKey Secret"}><Input.Password autoComplete="new-password" placeholder={setting?.hasAccessKeySecret ? "留空保留原密钥" : "阿里云 AccessKey Secret"} /></Form.Item>
+                                    <Form.Item name="cdnBaseUrl" label="媒体 CDN 地址" rules={[{ type: "url", message: "请填写完整的 HTTPS 地址" }]}><Input autoComplete="off" placeholder="https://media.example.com" prefix={<Globe className="size-4 text-foreground/35" />} /></Form.Item>
+                                    <Form.Item name="cdnAuthKey" label={setting?.hasCdnAuthKey ? `CDN Type A 鉴权密钥（${configuredSecretText}）` : "CDN Type A 鉴权密钥"}><Input.Password autoComplete="new-password" placeholder={setting?.hasCdnAuthKey ? "留空保留原密钥" : "在 CDN 控制台启用 Type A 后填写"} /></Form.Item>
                                 </>
                             ) : (
                                 <>
@@ -117,6 +119,6 @@ export default function StorageSettingsPage() {
     );
 }
 
-function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? "oss" : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", pathPrefix: setting?.pathPrefix || "" }; }
+function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? "oss" : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", cdnBaseUrl: setting?.cdnBaseUrl || "", cdnAuthKey: "", pathPrefix: setting?.pathPrefix || "" }; }
 function formatTime(value?: string) { return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--"; }
 function Notice({ icon, text }: { icon: ReactNode; text: string }) { return <div className="flex items-center gap-2 px-3 py-2.5"><span className="text-foreground/40">{icon}</span><span>{text}</span></div>; }
