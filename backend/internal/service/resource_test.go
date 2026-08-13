@@ -69,6 +69,15 @@ func TestSignedCDNResourceURLSkipsIncompleteConfiguration(t *testing.T) {
 	}
 }
 
+func TestUpdateUserOSSSettingRejectsPlatformCDNConfiguration(t *testing.T) {
+	svc := newResourceTestService(t)
+	actor := &model.User{ID: "user-1"}
+	_, err := svc.UpdateUserOSSSetting(actor, OSSSettingRequest{CDNBaseURL: "https://media.example.com", CDNAuthKey: "test-cdn-key"})
+	if err == nil || !strings.Contains(err.Error(), "仅支持管理员") {
+		t.Fatalf("UpdateUserOSSSetting() error = %v", err)
+	}
+}
+
 func TestDirectResourceURLChecksOwnershipAndSignsOSSResource(t *testing.T) {
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
