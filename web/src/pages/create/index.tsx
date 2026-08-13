@@ -16,6 +16,7 @@ import { VIDEO_RESOLUTION_OPTIONS } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch, type BackendGenerationResult } from "@/services/api/generation-task";
 import { requestImageQuestion } from "@/services/api/image";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { storeGeneratedVideo } from "@/services/api/video";
@@ -81,7 +82,8 @@ type CreationImageResult = NonNullable<BackendGenerationResult["images"]>[number
 
 async function persistCreationImageResult(image: CreationImageResult): Promise<UploadedImage> {
     if (!image.storageKey) return uploadImage(image.dataUrl);
-    const url = await resolveImageUrl(image.storageKey, image.dataUrl);
+    const resourceID = resourceIdFromStorageKey(image.storageKey);
+    const url = resourceID ? resourceFileUrl(resourceID) : await resolveImageUrl(image.storageKey, image.dataUrl);
     if (!url) throw new Error("图片结果资源不可用");
     return {
         url,
@@ -127,8 +129,10 @@ export default function CreatePage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const threadScrollRef = useRef<HTMLElement>(null);
     const followLatestMessageRef = useRef(true);
-    const taskSyncWarningRef = useRef(false);
-    const taskSyncInFlightRef = useRef(false);
+    const pendingTaskSyncWarningRef = useRef(false);
+    const pendingTaskSyncInFlightRef = useRef(false);
+    const historyTaskSyncWarningRef = useRef(false);
+    const historyTaskSyncInFlightRef = useRef(false);
 
     const activeConversation = useMemo(() => conversations.find((item) => item.id === activeId) || conversations[0], [activeId, conversations]);
     const historyConversations = useMemo(
@@ -142,6 +146,7 @@ export default function CreatePage() {
     const isEmpty = !activeConversation?.messages.length;
     const pendingMediaKey = useMemo(() => pendingCreationMediaKey(conversations), [conversations]);
     const pendingTaskIds = useMemo(() => pendingCreationTaskIds(conversations), [conversations]);
+    const pendingMessageKeys = useMemo(() => pendingCreationMessageKeys(conversations), [conversations]);
 
     useEffect(() => {
         if (mode !== "image") return;
@@ -182,35 +187,69 @@ export default function CreatePage() {
     useEffect(() => {
         if (!hydrated || !pendingMediaKey || !pendingTaskIds.length) return;
         let cancelled = false;
+        // 已绑定 ID 的最新任务走定向查询，避免历史列表和资源恢复阻塞首个结果回填。
         const syncTasks = async () => {
-            if (taskSyncInFlightRef.current) return;
-            taskSyncInFlightRef.current = true;
+            if (pendingTaskSyncInFlightRef.current) return;
+            pendingTaskSyncInFlightRef.current = true;
             try {
-                const summaries = await listGenerationTasks(100);
-                const tasks = await enrichCreationTaskSummaries(summaries);
-                const pendingTaskIdSet = new Set(pendingTaskIds);
-                const persistedTasks = await persistCreationTaskResults(tasks.filter((task) => pendingTaskIdSet.has(task.id)));
+                const tasks = await queryPendingCreationTasks(pendingTaskIds);
+                const persistedTasks = await persistCreationTaskResults(tasks);
                 if (cancelled) return;
-                taskSyncWarningRef.current = false;
+                pendingTaskSyncWarningRef.current = false;
                 setConversations((current) => reconcileCreationTaskMessages(current, persistedTasks));
             } catch (error) {
                 if (cancelled) return;
                 console.warn("创作任务状态同步失败", error);
-                if (!taskSyncWarningRef.current) {
-                    taskSyncWarningRef.current = true;
+                if (!pendingTaskSyncWarningRef.current) {
+                    pendingTaskSyncWarningRef.current = true;
                     toast.warning("任务状态暂时无法同步，请稍后刷新");
                 }
             } finally {
-                taskSyncInFlightRef.current = false;
+                pendingTaskSyncInFlightRef.current = false;
             }
         };
         void syncTasks();
-        const timer = window.setInterval(() => void syncTasks(), 3000);
+        const timer = window.setInterval(() => void syncTasks(), 1000);
         return () => {
             cancelled = true;
             window.clearInterval(timer);
         };
     }, [hydrated, pendingMediaKey, pendingTaskIds, toast]);
+
+    useEffect(() => {
+        if (!hydrated || !pendingMediaKey || !pendingMessageKeys.length) return;
+        let cancelled = false;
+        // 刷新恰好发生在 taskId 持久化前时，只能通过会话和消息 ID 从历史任务中补回关联。
+        const syncHistoryTasks = async () => {
+            if (historyTaskSyncInFlightRef.current) return;
+            historyTaskSyncInFlightRef.current = true;
+            try {
+                const knownTaskIds = new Set(pendingTaskIds);
+                const summaries = await listGenerationTasks(100);
+                const recoverableSummaries = summaries.filter((task) => !knownTaskIds.has(task.id) && pendingMessageKeys.includes(creationMessageKey(task.clientContext)));
+                const tasks = await enrichCreationTaskSummaries(recoverableSummaries);
+                const persistedTasks = await persistCreationTaskResults(tasks);
+                if (cancelled) return;
+                historyTaskSyncWarningRef.current = false;
+                if (persistedTasks.length) setConversations((current) => reconcileCreationTaskMessages(current, persistedTasks));
+            } catch (error) {
+                if (cancelled) return;
+                console.warn("创作历史任务恢复失败", error);
+                if (!historyTaskSyncWarningRef.current) {
+                    historyTaskSyncWarningRef.current = true;
+                    toast.warning("历史创作任务暂时无法恢复，请稍后刷新");
+                }
+            } finally {
+                historyTaskSyncInFlightRef.current = false;
+            }
+        };
+        void syncHistoryTasks();
+        const timer = window.setInterval(() => void syncHistoryTasks(), 30000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [hydrated, pendingMediaKey, pendingMessageKeys, pendingTaskIds, toast]);
 
     useEffect(() => {
         let cancelled = false;
@@ -941,12 +980,53 @@ function pendingCreationTaskIds(conversations: CreationConversation[]) {
     return Array.from(new Set(taskIds));
 }
 
+function pendingCreationMessageKeys(conversations: CreationConversation[]) {
+    return conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
+        if (message.role !== "assistant" || message.status !== "pending" || message.mode === "text") return [];
+        return [creationMessageKey({ conversationId: conversation.id, messageId: message.id })];
+    }));
+}
+
+function creationMessageKey(context?: GenerationTask["clientContext"]) {
+    if (!context?.conversationId || !context.messageId) return "";
+    return `${context.conversationId}:${context.messageId}`;
+}
+
+async function queryPendingCreationTasks(taskIds: string[]) {
+    const results = await Promise.allSettled(taskIds.map((id) => queryGenerationTask(id)));
+    const tasks = results.flatMap((result) => result.status === "fulfilled" ? [withCreationTaskContext(result.value)] : []);
+    if (tasks.length) return tasks;
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    throw failed?.reason instanceof Error ? failed.reason : new Error("创作任务状态同步失败");
+}
+
 async function enrichCreationTaskSummaries(tasks: GenerationTask[]) {
     return Promise.all(tasks.map(async (task) => {
-        if (!task.clientContext || (task.status !== "failed" && (task.status !== "succeeded" || task.previewUrl))) return task;
+        if (task.status !== "failed" && (task.status !== "succeeded" || task.previewUrl)) return task;
         const detail = await queryGenerationTask(task.id).catch(() => null);
-        return detail ? { ...task, ...detail, clientContext: task.clientContext } : task;
+        return detail ? withCreationTaskContext(detail, task.clientContext) : task;
     }));
+}
+
+function withCreationTaskContext(task: GenerationTask, fallback?: GenerationTask["clientContext"]): GenerationTask {
+    return { ...task, clientContext: task.clientContext || creationTaskClientContext(task.inputJson) || fallback };
+}
+
+function creationTaskClientContext(inputJson?: string): GenerationTask["clientContext"] | undefined {
+    if (!inputJson) return undefined;
+    try {
+        const input = JSON.parse(inputJson) as { metadata?: { source?: unknown; conversationId?: unknown; messageId?: unknown; batchIndex?: unknown; batchCount?: unknown } };
+        const metadata = input.metadata;
+        if (metadata?.source !== "create-page" || typeof metadata.conversationId !== "string" || typeof metadata.messageId !== "string") return undefined;
+        return {
+            conversationId: metadata.conversationId,
+            messageId: metadata.messageId,
+            ...(typeof metadata.batchIndex === "number" ? { batchIndex: metadata.batchIndex } : {}),
+            ...(typeof metadata.batchCount === "number" ? { batchCount: metadata.batchCount } : {}),
+        };
+    } catch {
+        return undefined;
+    }
 }
 
 type PersistedCreationTask = GenerationTask & { creationResultUrls?: string[]; creationError?: string };
@@ -993,11 +1073,19 @@ function reconcileCreationTaskMessages(conversations: CreationConversation[], ta
                 .filter((task) => taskIds.has(task.id) || (task.clientContext?.conversationId === conversation.id && task.clientContext.messageId === message.id))
                 .sort((left, right) => (left.clientContext?.batchIndex || 0) - (right.clientContext?.batchIndex || 0));
             const expectedTaskCount = Math.max(0, ...matches.map((task) => task.clientContext?.batchCount || 0));
-            if (!matches.length || (expectedTaskCount > 0 && matches.length < expectedTaskCount) || matches.some((task) => task.status === "queued" || task.status === "running")) return message;
+            if (!matches.length) return message;
+
+            const nextTaskIds = Array.from(new Set([...(message.taskIds || []), ...matches.map((task) => task.id)]));
+            const taskIdsChanged = nextTaskIds.length !== taskIds.size;
+            if ((expectedTaskCount > 0 && matches.length < expectedTaskCount) || matches.some((task) => task.status === "queued" || task.status === "running")) {
+                if (!taskIdsChanged) return message;
+                conversationChanged = true;
+                changed = true;
+                return { ...message, taskIds: nextTaskIds };
+            }
 
             const resultUrls = Array.from(new Set(matches.filter((task) => task.status === "succeeded").flatMap(creationTaskResultUrls)));
             const failedCount = matches.filter((task) => task.status !== "succeeded" || Boolean(task.creationError)).length;
-            const nextTaskIds = Array.from(new Set([...(message.taskIds || []), ...matches.map((task) => task.id)]));
             completedAt = matches.reduce((latest, task) => conversationTimestamp(task.updatedAt) > conversationTimestamp(latest) ? task.updatedAt : latest, completedAt);
             conversationChanged = true;
             changed = true;
