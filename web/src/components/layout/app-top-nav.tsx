@@ -3,6 +3,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
+import { ImpersonationReturnControl } from "@/components/layout/impersonation-return-control";
 import { WorkspaceSidebarFooter } from "@/components/layout/workspace-sidebar-footer";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
@@ -149,6 +150,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         </button>
                     ) : null}
                     {children}
+                    <ImpersonationReturnControl />
                 </div>
             </div>
             <ModelSetupGuide hidden={pathname === "/login" || pathname === "/register" || pathname.startsWith("/admin")} />

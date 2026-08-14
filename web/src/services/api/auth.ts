@@ -30,6 +30,11 @@ export type AdminUser = LocalUser & {
 
 export type AuthSessionPayload = {
     user: LocalUser | null;
+    canImpersonateUsers?: boolean;
+    impersonation?: {
+        actorDisplayName: string;
+        actorUsername: string;
+    };
     systemChannels?: ModelChannel[];
     runtimeLimits?: RuntimeLimits;
     drawingEngine?: CanvasDrawingEngineSetting;
@@ -375,6 +380,14 @@ export function changePassword(input: { currentPassword: string; newPassword: st
 
 export function logout() {
     return request<{ ok: boolean }>(api.post("/auth/logout"));
+}
+
+export function startAdminUserImpersonation(id: string) {
+    return request<{ user: LocalUser }>(api.post(`/admin/users/${encodeURIComponent(id)}/impersonation`));
+}
+
+export function exitUserImpersonation() {
+    return request<{ user: LocalUser }>(api.post("/auth/impersonation/exit"));
 }
 
 export type AdminListParams = { keyword?: string; status?: string; role?: string; page?: number; limit?: number };

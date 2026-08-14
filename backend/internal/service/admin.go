@@ -139,6 +139,35 @@ func (s *Service) RequireAdmin(user *model.User) error {
 	return nil
 }
 
+// 主管理员固定为系统初始化时的首个账号，二级管理员调整角色也不能获得代入用户的权限。
+func (s *Service) CanImpersonateUsers(user *model.User) (bool, error) {
+	if user == nil || user.Role != model.UserRoleAdmin || user.Status != model.UserStatusActive {
+		return false, nil
+	}
+	primary, err := s.repo.FirstUser()
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return primary.ID == user.ID, nil
+}
+
+func (s *Service) RequirePrimaryAdmin(user *model.User) error {
+	if err := s.RequireAdmin(user); err != nil {
+		return err
+	}
+	allowed, err := s.CanImpersonateUsers(user)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return Forbidden("仅主管理员可以进入用户账号")
+	}
+	return nil
+}
+
 func (s *Service) AdminUsers(actor *model.User, query AdminListQuery) (*AdminUserPage, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err

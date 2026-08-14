@@ -1,6 +1,6 @@
 import { Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Eye, KeyRound, Pencil, Power } from "lucide-react";
+import { Eye, KeyRound, LogIn, Pencil, Power } from "lucide-react";
 
 import { formatCredits } from "@/constant/credits";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
@@ -21,18 +21,22 @@ export const userColumnOptions: Array<{ key: UserColumnKey; label: string; locke
 
 export function createUserColumns({
     actorId,
+    canImpersonateUsers,
     visibleColumns,
     onView,
     onEdit,
     onResetPassword,
     onToggleStatus,
+    onImpersonate,
 }: {
     actorId?: string;
+    canImpersonateUsers: boolean;
     visibleColumns: Set<UserColumnKey>;
     onView: (user: AdminUser) => void;
     onEdit: (user: AdminUser) => void;
     onResetPassword: (user: AdminUser) => void;
     onToggleStatus: (user: AdminUser) => Promise<void>;
+    onImpersonate: (user: AdminUser) => Promise<void>;
 }): ColumnsType<AdminUser> {
     const columns: Array<ColumnsType<AdminUser>[number] & { key: UserColumnKey }> = [
         {
@@ -61,12 +65,22 @@ export function createUserColumns({
         {
             key: "actions",
             title: "操作",
-            width: 140,
+            width: 220,
             fixed: "right",
             align: "right",
             render: (_, user) => (
                 <AdminRowActions
                     primary={{ label: "详情", icon: <Eye className="size-3.5" />, onClick: () => onView(user) }}
+                    secondary={canImpersonateUsers && user.id !== actorId && user.role === "user" && user.status === "active" ? {
+                        label: "进入",
+                        icon: <LogIn className="size-3.5" />,
+                        confirm: {
+                            title: `以 ${user.displayName || user.username} 的身份进入？`,
+                            description: "将切换到该用户的工作区，用于复现和排查问题。可随时从全局入口返回管理员账号。",
+                            okText: "确认进入",
+                        },
+                        onClick: () => onImpersonate(user),
+                    } : undefined}
                     actions={[
                         { key: "edit", label: "编辑用户", icon: <Pencil className="size-3.5" />, onClick: () => onEdit(user) },
                         { key: "password", label: "重置密码", icon: <KeyRound className="size-3.5" />, onClick: () => onResetPassword(user) },

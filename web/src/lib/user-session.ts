@@ -24,6 +24,8 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         ]);
         const persistedConfig = scopedLocalStorage.getItem(CONFIG_STORE_KEY);
         useUserStore.getState().setUser(payload.user);
+        useUserStore.getState().setCanImpersonateUsers(payload.canImpersonateUsers);
+        useUserStore.getState().setImpersonation(payload.impersonation);
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);

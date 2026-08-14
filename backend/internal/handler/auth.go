@@ -125,13 +125,22 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		setSessionCookie(c, result.Session, result.MaxAgeSecs)
 		ok(c, gin.H{"user": result.User})
 	})
+	r.POST("/auth/impersonation/exit", func(c *gin.Context) {
+		result, err := svc.ExitUserImpersonation(sessionCookie(c))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		setSessionCookie(c, result.Session, result.MaxAgeSecs)
+		ok(c, gin.H{"user": result.User})
+	})
 	r.GET("/auth/session", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
+		authSession, err := svc.CurrentAuthSession(sessionCookie(c))
 		if err != nil {
 			ok(c, gin.H{"user": nil})
 			return
 		}
-		publicUser, err := svc.PublicAuthUser(user)
+		publicUser, err := svc.PublicAuthUser(authSession.User)
 		if err != nil {
 			failService(c, err)
 			return
@@ -152,7 +161,16 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"user": publicUser, "systemChannels": channels, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features})
+		canImpersonateUsers, err := svc.CanImpersonateUsers(authSession.User)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		response := gin.H{"user": publicUser, "canImpersonateUsers": canImpersonateUsers, "systemChannels": channels, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features}
+		if authSession.Impersonator != nil {
+			response["impersonation"] = gin.H{"actorDisplayName": authSession.Impersonator.DisplayName, "actorUsername": authSession.Impersonator.Username}
+		}
+		ok(c, response)
 	})
 	r.GET("/channels/system", func(c *gin.Context) {
 		if _, err := currentUser(c, svc); err != nil {
@@ -254,6 +272,15 @@ func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, result)
+	})
+	r.POST("/admin/users/:id/impersonation", func(c *gin.Context) {
+		result, err := svc.StartUserImpersonation(sessionCookie(c), c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		setSessionCookie(c, result.Session, result.MaxAgeSecs)
+		ok(c, gin.H{"user": result.User})
 	})
 	r.GET("/admin/users/:id/detail", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

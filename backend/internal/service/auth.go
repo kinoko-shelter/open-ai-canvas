@@ -63,6 +63,13 @@ type AuthSessionResult struct {
 	MaxAgeSecs int      `json:"maxAgeSecs"`
 }
 
+// 身份切换时 User 是实际访问数据的用户，Impersonator 保留发起切换的管理员用于退出和审计。
+type AuthSessionContext struct {
+	User         *model.User
+	Session      *model.AuthSession
+	Impersonator *model.User
+}
+
 type AuthUser struct {
 	model.User
 	AvatarURL        string `json:"avatarUrl,omitempty"`
@@ -243,6 +250,14 @@ func (s *Service) ChangePassword(user *model.User, req ChangePasswordRequest) (*
 }
 
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
+	context, err := s.CurrentAuthSession(cookieValue)
+	if err != nil {
+		return nil, err
+	}
+	return context.User, nil
+}
+
+func (s *Service) CurrentAuthSession(cookieValue string) (*AuthSessionContext, error) {
 	sessionID, token := parseSessionCookie(cookieValue)
 	if sessionID == "" || token == "" {
 		return nil, Unauthorized("请先登录")
@@ -265,7 +280,85 @@ func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
 	if user.Status != model.UserStatusActive {
 		return nil, Forbidden("该账号已被禁用")
 	}
-	return user, nil
+	context := &AuthSessionContext{User: user, Session: session}
+	if session.ImpersonatorUserID == "" {
+		return context, nil
+	}
+	impersonator, err := s.repo.User(session.ImpersonatorUserID)
+	if err != nil {
+		_ = s.repo.DeleteAuthSession(sessionID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, Unauthorized("管理员身份已失效，请重新登录")
+		}
+		return nil, err
+	}
+	if impersonator.Status != model.UserStatusActive || impersonator.Role != model.UserRoleAdmin {
+		_ = s.repo.DeleteAuthSession(sessionID)
+		return nil, Unauthorized("管理员身份已失效，请重新登录")
+	}
+	context.Impersonator = impersonator
+	return context, nil
+}
+
+func (s *Service) StartUserImpersonation(cookieValue string, targetID string) (*AuthSessionResult, error) {
+	context, err := s.CurrentAuthSession(cookieValue)
+	if err != nil {
+		return nil, err
+	}
+	actor := context.User
+	if err := s.RequirePrimaryAdmin(actor); err != nil {
+		return nil, err
+	}
+	if context.Session.ImpersonatorUserID != "" {
+		return nil, Forbidden("当前已处于身份切换状态")
+	}
+	target, err := s.repo.User(strings.TrimSpace(targetID))
+	if err != nil {
+		return nil, err
+	}
+	if target.ID == actor.ID {
+		return nil, BadAuthRequest("不能进入当前管理员账号")
+	}
+	if target.Role != model.UserRoleUser {
+		return nil, Forbidden("不能进入管理员账号")
+	}
+	if target.Status != model.UserStatusActive {
+		return nil, Forbidden("只能进入已启用的普通用户账号")
+	}
+	result, nextSession, err := s.newAuthSession(target, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	event := &model.AdminAuditEvent{
+		ID: newID(), ActorUserID: actor.ID, Action: "user.impersonation.start", TargetType: "user", TargetID: target.ID,
+		Summary: "以管理员身份进入用户账号", MetadataJSON: `{"mode":"impersonation"}`, CreatedAt: time.Now(),
+	}
+	if err := s.repo.ReplaceAuthSessionWithAudit(context.Session.ID, nextSession, event); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) ExitUserImpersonation(cookieValue string) (*AuthSessionResult, error) {
+	context, err := s.CurrentAuthSession(cookieValue)
+	if err != nil {
+		return nil, err
+	}
+	if context.Session.ImpersonatorUserID == "" || context.Impersonator == nil {
+		return nil, BadAuthRequest("当前不在身份切换状态")
+	}
+	result, nextSession, err := s.newAuthSession(context.Impersonator, "")
+	if err != nil {
+		return nil, err
+	}
+	event := &model.AdminAuditEvent{
+		ID: newID(), ActorUserID: context.Impersonator.ID, Action: "user.impersonation.exit", TargetType: "user", TargetID: context.User.ID,
+		Summary: "退出用户身份并返回管理员账号", MetadataJSON: `{"mode":"impersonation"}`, CreatedAt: time.Now(),
+	}
+	if err := s.repo.ReplaceAuthSessionWithAudit(context.Session.ID, nextSession, event); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // 认证响应只补充当前用户自己的第三方公开身份，不把身份表或密钥字段暴露给其他列表接口。
@@ -286,24 +379,33 @@ func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {
 }
 
 func (s *Service) createAuthSession(user *model.User) (*AuthSessionResult, error) {
-	publicUser, err := s.PublicAuthUser(user)
+	result, session, err := s.newAuthSession(user, "")
 	if err != nil {
 		return nil, err
+	}
+	if err := s.repo.Create(session); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) newAuthSession(user *model.User, impersonatorUserID string) (*AuthSessionResult, *model.AuthSession, error) {
+	publicUser, err := s.PublicAuthUser(user)
+	if err != nil {
+		return nil, nil, err
 	}
 	token := randomToken()
 	now := time.Now()
 	session := model.AuthSession{
-		ID:        newID(),
-		UserID:    user.ID,
-		TokenHash: hashToken(token),
-		ExpiresAt: now.Add(sessionMaxAge),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                 newID(),
+		UserID:             user.ID,
+		ImpersonatorUserID: strings.TrimSpace(impersonatorUserID),
+		TokenHash:          hashToken(token),
+		ExpiresAt:          now.Add(sessionMaxAge),
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
-	if err := s.repo.Create(&session); err != nil {
-		return nil, err
-	}
-	return &AuthSessionResult{User: publicUser, Session: session.ID + "." + token, MaxAgeSecs: int(sessionMaxAge.Seconds())}, nil
+	return &AuthSessionResult{User: publicUser, Session: session.ID + "." + token, MaxAgeSecs: int(sessionMaxAge.Seconds())}, &session, nil
 }
 
 func hashPassword(password string) (string, error) {

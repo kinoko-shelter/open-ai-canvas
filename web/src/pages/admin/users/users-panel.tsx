@@ -1,10 +1,12 @@
 import { App, Button, Checkbox, Dropdown, Input, Table, Tag } from "antd";
 import { Ban, ChevronDown, Search, Settings2, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 
 import { ListToolbar, PaginationBar, TableSurface } from "@/components/layout/workspace-page";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { bulkDisableAdminUsers, deleteAdminUser, listAdminUsers, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
+import { applyUserSession } from "@/lib/user-session";
+import { bulkDisableAdminUsers, deleteAdminUser, getAuthSession, listAdminUsers, startAdminUserImpersonation, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
 import { useUserStore } from "@/stores/use-user-store";
 import { AdminBatchBar, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { useTableUrlState } from "../lib/use-table-url-state";
@@ -17,6 +19,8 @@ const allColumnKeys = userColumnOptions.map((item) => item.key);
 
 export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: LocalUser) => void }) {
     const actor = useUserStore((state) => state.user);
+    const canImpersonateUsers = useUserStore((state) => state.canImpersonateUsers);
+    const navigate = useNavigate();
     const { message, modal } = App.useApp();
     const { state, update } = useTableUrlState();
     const debouncedFilter = useDebouncedValue(state.filter);
@@ -99,14 +103,27 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
         }
     }, [message, replaceUser]);
 
+    const impersonateUser = useCallback(async (user: AdminUser) => {
+        try {
+            await startAdminUserImpersonation(user.id);
+            await applyUserSession(await getAuthSession());
+            message.success(`已进入 ${user.displayName || user.username} 的工作区`);
+            navigate("/create", { replace: true });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "切换用户身份失败");
+        }
+    }, [message, navigate]);
+
     const columns = useMemo(() => createUserColumns({
         actorId: actor?.id,
+        canImpersonateUsers,
         visibleColumns,
         onView: (user) => setDetailUserId(user.id),
         onEdit: (user) => { setCreateUserOpen(false); setEditingUser(user); },
         onResetPassword: (user) => { setCreateUserOpen(false); setEditingUser(null); setPasswordUser(user); },
         onToggleStatus: toggleStatus,
-    }), [actor?.id, toggleStatus, visibleColumns]);
+        onImpersonate: impersonateUser,
+    }), [actor?.id, canImpersonateUsers, impersonateUser, toggleStatus, visibleColumns]);
 
     const resetFilters = () => update({ filter: "", role: "all", status: "all", page: 1 });
 
@@ -216,7 +233,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                             columns={columns}
                             dataSource={users}
                             pagination={false}
-                            scroll={{ x: 860 }}
+                            scroll={{ x: 940 }}
                             locale={{ emptyText: <AdminTableEmpty filtered={hasFilters} /> }}
                         />
                         <PaginationBar

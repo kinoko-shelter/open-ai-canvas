@@ -144,6 +144,15 @@ func (r *Repository) User(id string) (*model.User, error) {
 	return &user, nil
 }
 
+// FirstUser 是初始化时自动成为管理员的首个账号，用于不依赖可变角色字段的主管理员判定。
+func (r *Repository) FirstUser() (*model.User, error) {
+	var user model.User
+	if err := r.db.Order("created_at asc, id asc").First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *Repository) UserByAccount(account string) (*model.User, error) {
 	var user model.User
 	if err := r.db.Where("lower(username) = lower(?) OR lower(email) = lower(?)", account, account).First(&user).Error; err != nil {
@@ -230,11 +239,11 @@ func (r *Repository) DeleteExpiredAuthSessions() error {
 }
 
 func (r *Repository) DeleteUserAuthSessions(userID string) error {
-	return r.db.Delete(&model.AuthSession{}, "user_id = ?", userID).Error
+	return r.db.Where("user_id = ? OR impersonator_user_id = ?", userID, userID).Delete(&model.AuthSession{}).Error
 }
 
 func (r *Repository) DeleteUserAuthSessionsExcept(userID string, keepSessionID string) error {
-	query := r.db.Where("user_id = ?", userID)
+	query := r.db.Where("user_id = ? OR impersonator_user_id = ?", userID, userID)
 	if keepSessionID != "" {
 		query = query.Where("id <> ?", keepSessionID)
 	}
@@ -246,11 +255,31 @@ func (r *Repository) UpdateUserPasswordAndDeleteSessions(user *model.User, keepS
 		if err := tx.Save(user).Error; err != nil {
 			return err
 		}
-		query := tx.Where("user_id = ?", user.ID)
+		query := tx.Where("user_id = ? OR impersonator_user_id = ?", user.ID, user.ID)
 		if keepSessionID != "" {
 			query = query.Where("id <> ?", keepSessionID)
 		}
 		return query.Delete(&model.AuthSession{}).Error
+	})
+}
+
+// 身份切换必须和审计事件同一事务提交，避免浏览器已切换而后台缺失追溯记录。
+func (r *Repository) ReplaceAuthSessionWithAudit(currentSessionID string, nextSession *model.AuthSession, event *model.AdminAuditEvent) error {
+	if nextSession == nil || event == nil {
+		return errors.New("replacement session and audit event are required")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		deleted := tx.Delete(&model.AuthSession{}, "id = ?", currentSessionID)
+		if deleted.Error != nil {
+			return deleted.Error
+		}
+		if deleted.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Create(nextSession).Error; err != nil {
+			return err
+		}
+		return tx.Create(event).Error
 	})
 }
 

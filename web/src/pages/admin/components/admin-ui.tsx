@@ -116,9 +116,11 @@ export type AdminRowAction = {
 
 export function AdminRowActions({
     primary,
+    secondary,
     actions,
 }: {
     primary?: { label: ReactNode; icon?: ReactNode; onClick: () => void; disabled?: boolean };
+    secondary?: { label: ReactNode; icon?: ReactNode; onClick: () => void | Promise<void>; disabled?: boolean; confirm?: AdminRowAction["confirm"] };
     actions: AdminRowAction[];
 }) {
     const { modal } = App.useApp();
@@ -150,6 +152,11 @@ export function AdminRowActions({
             {primary ? (
                 <Button size="small" icon={primary.icon} disabled={primary.disabled} onClick={primary.onClick}>
                     {primary.label}
+                </Button>
+            ) : null}
+            {secondary ? (
+                <Button size="small" icon={secondary.icon} disabled={secondary.disabled} onClick={() => runAction({ key: "secondary", label: secondary.label, icon: secondary.icon, disabled: secondary.disabled, confirm: secondary.confirm, onClick: secondary.onClick })}>
+                    {secondary.label}
                 </Button>
             ) : null}
             {actions.length ? (
