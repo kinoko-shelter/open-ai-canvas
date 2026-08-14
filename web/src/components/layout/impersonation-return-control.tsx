@@ -1,7 +1,6 @@
 import { App, Button } from "antd";
 import { RotateCcw, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
 import { exitUserImpersonation, getAuthSession } from "@/services/api/auth";
@@ -9,7 +8,6 @@ import { useUserStore } from "@/stores/use-user-store";
 
 export function ImpersonationReturnControl() {
     const impersonation = useUserStore((state) => state.impersonation);
-    const navigate = useNavigate();
     const { message } = App.useApp();
     const [exiting, setExiting] = useState(false);
 
@@ -22,7 +20,7 @@ export function ImpersonationReturnControl() {
             await exitUserImpersonation();
             await applyUserSession(await getAuthSession());
             message.success("已返回管理员账号");
-            navigate("/admin/users", { replace: true });
+            window.location.replace("/admin/users");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "返回管理员账号失败");
         } finally {

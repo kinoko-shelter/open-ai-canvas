@@ -1,7 +1,6 @@
 import { App, Button, Checkbox, Dropdown, Input, Table, Tag } from "antd";
 import { Ban, ChevronDown, Search, Settings2, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 
 import { ListToolbar, PaginationBar, TableSurface } from "@/components/layout/workspace-page";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -20,7 +19,6 @@ const allColumnKeys = userColumnOptions.map((item) => item.key);
 export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: LocalUser) => void }) {
     const actor = useUserStore((state) => state.user);
     const canImpersonateUsers = useUserStore((state) => state.canImpersonateUsers);
-    const navigate = useNavigate();
     const { message, modal } = App.useApp();
     const { state, update } = useTableUrlState();
     const debouncedFilter = useDebouncedValue(state.filter);
@@ -108,11 +106,12 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
             await startAdminUserImpersonation(user.id);
             await applyUserSession(await getAuthSession());
             message.success(`已进入 ${user.displayName || user.username} 的工作区`);
-            navigate("/create", { replace: true });
+            // 切换账号后强制从目标用户 scope 重建页面，不能复用当前 SPA 的创作对话内存。
+            window.location.replace("/create");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "切换用户身份失败");
         }
-    }, [message, navigate]);
+    }, [message]);
 
     const columns = useMemo(() => createUserColumns({
         actorId: actor?.id,
