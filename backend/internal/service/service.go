@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -206,18 +207,67 @@ func New(repo *repository.Repository, dataDir string) *Service {
 
 func (s *Service) StartWorker() {
 	s.workerStartOnce.Do(func() {
+		workerScope, err := configuredTaskWorkerScope()
+		if err != nil {
+			log.Printf("任务 worker 未启动：%v", err)
+			close(s.workerDone)
+			return
+		}
+		if err := s.startTaskWorkerLegacyGuard(workerScope); err != nil {
+			log.Printf("任务 worker 未启动：%v", err)
+			close(s.workerDone)
+			return
+		}
 		s.startTextReplayCleanup()
 		s.startProviderCancellationReconciliation()
 		s.startBillingReviewAudit()
 		go func() {
-			s.runTaskWorker()
+			s.runTaskWorker(workerScope)
 			s.backgroundTasks.Wait()
 			close(s.workerDone)
 		}()
 	})
 }
 
-func (s *Service) runTaskWorker() {
+func (s *Service) startTaskWorkerLegacyGuard(workerScope string) error {
+	if !taskWorkerLegacyGuardEnabled() {
+		return nil
+	}
+	if workerScope == legacyTaskWorkerScope {
+		return fmt.Errorf("启用 %s 时必须设置 %s", taskWorkerLegacyGuardEnv, taskWorkerPoolEnv)
+	}
+	if s.coordinator == nil {
+		return errors.New("运行时协调器未初始化")
+	}
+	refresh := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return s.coordinator.reserveLegacyTaskWorkerScope(ctx, workerScope)
+	}
+	if err := refresh(); err != nil {
+		return fmt.Errorf("建立旧任务 worker 池防护失败：%w", err)
+	}
+	log.Printf("任务 worker 使用池 %s，已防护旧池 %s", workerScope, legacyTaskWorkerScope)
+	s.backgroundTasks.Add(1)
+	go func() {
+		defer s.backgroundTasks.Done()
+		ticker := time.NewTicker(legacyTaskWorkerGuardRenewEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.workerStop:
+				return
+			case <-ticker.C:
+				if err := refresh(); err != nil {
+					log.Printf("续期旧任务 worker 池防护失败：%v", err)
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+func (s *Service) runTaskWorker(workerScope string) {
 	slots := make(chan struct{}, maxChannelConcurrencyLimit)
 	dispatch := func() {
 		setting, err := s.runtimeConcurrencySetting()
@@ -231,7 +281,7 @@ func (s *Service) runTaskWorker() {
 				return
 			default:
 			}
-			releaseGlobal, acquired, err := s.coordinator.acquire(context.Background(), "workers", workerConcurrency, 45*time.Minute)
+			releaseGlobal, acquired, err := s.coordinator.acquire(context.Background(), workerScope, workerConcurrency, 45*time.Minute)
 			if err != nil || !acquired {
 				return
 			}

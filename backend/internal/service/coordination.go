@@ -19,9 +19,14 @@ type localRateEntry struct {
 }
 
 const (
-	minChannelConcurrencyLimit     = 1
-	maxChannelConcurrencyLimit     = maxRuntimeConcurrency
-	defaultChannelConcurrencyValue = 3
+	minChannelConcurrencyLimit      = 1
+	maxChannelConcurrencyLimit      = maxRuntimeConcurrency
+	defaultChannelConcurrencyValue  = 3
+	legacyTaskWorkerScope           = "workers"
+	taskWorkerPoolEnv               = "CANVAS_TASK_WORKER_POOL"
+	taskWorkerLegacyGuardEnv        = "CANVAS_BLOCK_LEGACY_TASK_WORKERS"
+	legacyTaskWorkerGuardTTL        = 30 * time.Minute
+	legacyTaskWorkerGuardRenewEvery = 10 * time.Minute
 )
 
 type channelSlotError struct {
@@ -98,6 +103,47 @@ func newRuntimeCoordinator(dialect string) (*runtimeCoordinator, error) {
 		return coordinator, fmt.Errorf("Redis 不可用：%w", err)
 	}
 	return coordinator, nil
+}
+
+func configuredTaskWorkerScope() (string, error) {
+	pool := strings.TrimSpace(os.Getenv(taskWorkerPoolEnv))
+	if pool == "" {
+		return legacyTaskWorkerScope, nil
+	}
+	for _, char := range pool {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return "", fmt.Errorf("%s 只能包含字母、数字、- 和 _", taskWorkerPoolEnv)
+		}
+	}
+	return legacyTaskWorkerScope + ":" + pool, nil
+}
+
+func taskWorkerLegacyGuardEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(taskWorkerLegacyGuardEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// reserveLegacyTaskWorkerScope 占满旧版共享池；生产 worker 使用命名池后，
+// 测试实例仍可访问数据库，但不能领取生产生成任务。
+func (c *runtimeCoordinator) reserveLegacyTaskWorkerScope(ctx context.Context, workerScope string) error {
+	if c == nil || c.redis == nil {
+		return errors.New("任务 worker 池隔离需要 Redis")
+	}
+	key := "canvas:slots:" + legacyTaskWorkerScope
+	expiresAt := float64(time.Now().Add(legacyTaskWorkerGuardTTL).UnixMilli())
+	entries := make([]redis.Z, 0, maxRuntimeConcurrency)
+	for index := 0; index < maxRuntimeConcurrency; index++ {
+		entries = append(entries, redis.Z{Score: expiresAt, Member: "task-worker-guard:" + workerScope + ":" + strconv.Itoa(index)})
+	}
+	pipeline := c.redis.Pipeline()
+	pipeline.ZAdd(ctx, key, entries...)
+	pipeline.PExpire(ctx, key, legacyTaskWorkerGuardTTL)
+	_, err := pipeline.Exec(ctx)
+	return err
 }
 
 func (c *runtimeCoordinator) allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {

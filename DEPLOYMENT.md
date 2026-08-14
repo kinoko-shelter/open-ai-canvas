@@ -145,6 +145,17 @@ systemd 已设置开机启动和异常退出自动重启。后端不再通过 tm
 
 该文件包含数据库、Redis、CORS、OSS和部署通知等私有配置，权限为 `0600`，不得提交到 Git 或发送到群聊。
 
+### 测试机共享生产数据时的任务隔离
+
+测试机临时复用生产 PostgreSQL/Redis 时，生产机的 `.local/server.env` 必须设置：
+
+```text
+CANVAS_TASK_WORKER_POOL=production
+CANVAS_BLOCK_LEGACY_TASK_WORKERS=true
+```
+
+生产 worker 会使用 `workers:production`，并持续占用旧版共享的 `workers` 协调池。未升级或未设置新 pool 的测试实例仍可访问生产数据库完成非生成业务，但不能领取生成任务。测试机升级后必须使用不同的 `CANVAS_TASK_WORKER_POOL`，或明确关闭其 worker。
+
 ## 重启与运行任务
 
 后端收到 SIGTERM 后会：
