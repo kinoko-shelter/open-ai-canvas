@@ -1000,6 +1000,8 @@ function CreationEmptySuggest({ onStartPrompt, onOpenLibrary }: { onStartPrompt:
 function CreationIntro({ mode }: { mode: CreationMode }) {
     const copy = mode === "video" ? ["让", "想象", "，先在镜头里发生", "故事创作 · AI 叙事创作"] : mode === "image" ? ["让", "画面", "，从一个想法开始", "故事创作 · 视觉创作"] : ["把", "故事", "，写在第一句话里", "故事创作 · 叙事创作"];
     return <header className="creation-chat-intro" aria-live="polite"><span className="creation-intro-signal" aria-hidden="true" /><h1>{copy[0]}<span className="creation-intro-emphasis"><span className="is-pink">{copy[1].slice(0, 1)}</span><span className="is-blue">{copy[1].slice(1)}</span></span>{copy[2]}</h1><p>{copy[3]}</p></header>;
+}
+
 type CreationThinking = { title: string; hint: string; steps: string[] };
 
 function thinkingFor(mode: CreationMode): CreationThinking {
@@ -1167,7 +1169,7 @@ function videoResolutionLabel(value: string | number) {
 
 function formatMessageTime(value: string) {
     const timestamp = new Date(value).getTime();
-    return Number.isFinite(timestamp) ? conversationTimeFormatter.format(timestamp) : "";
+    return Number.isFinite(timestamp) ? messageTimeFormatter.format(timestamp) : "";
 }
 
 function conversationPreviewMessage(conversation: CreationConversation) {
