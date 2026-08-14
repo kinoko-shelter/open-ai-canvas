@@ -1,5 +1,5 @@
 import { App, Button, Drawer, Form, Input, Modal, Segmented, Select, Tooltip, Typography } from "antd";
-import { Coins, Eye, FileText, FolderKanban, Image as ImageIcon, Play, Plus, RefreshCw, RotateCcw, Search, Video, X } from "lucide-react";
+import { Coins, Eye, FileText, FolderKanban, FolderPlus, Image as ImageIcon, Play, Plus, RefreshCw, RotateCcw, Search, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
@@ -10,9 +10,11 @@ import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 
 import { cancelGenerationTask, createAgentSession, createGenerationTask, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog, type TaskStatus } from "@/services/api/task-center";
+import { canCollectGenerationTask, collectGenerationTaskMedia, isGenerationTaskMediaCollected } from "@/services/generation-media-collection";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { modelDisplayName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { formatCredits } from "@/constant/credits";
 import { listProjects, type ProjectSummary } from "@/services/api/projects";
@@ -30,6 +32,7 @@ export default function TasksPage() {
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const projects = useCanvasStore((state) => state.projects);
+    const assets = useAssetStore((state) => state.assets);
     const shortDramaEnabled = useUserStore((state) => state.features.shortDramaEnabled);
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const [form] = Form.useForm<CreateTaskInput & { operation: string }>();
@@ -258,6 +261,22 @@ export default function TasksPage() {
         }
     };
 
+    const collectTaskMedia = async (task: GenerationTask) => {
+        setActingId(task.id);
+        try {
+            const detail = task.resultJson ? task : await queryGenerationTask(task.id);
+            const result = await collectGenerationTaskMedia(detail);
+            setTasks((items) => items.map((item) => item.id === detail.id ? { ...item, ...detail } : item));
+            if (detailTaskRef.current?.id === detail.id) setDetailTask(detail);
+            if (result.added) message.success(`已收藏 ${result.added} 个素材`);
+            else message.info("生成结果已在素材库中");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "收藏素材失败");
+        } finally {
+            setActingId("");
+        }
+    };
+
     const submitTask = async () => {
         const values = await form.validateFields();
         setCreating(true);
@@ -341,7 +360,7 @@ export default function TasksPage() {
 
                 {loading && !tasks.length ? <div className="library-loading-grid" aria-label="正在加载任务">{Array.from({ length: 8 }, (_, index) => <div key={index} className="library-skeleton" />)}</div> : null}
                 {!loading || tasks.length ? (
-                    visibleTasks.length ? <div className="task-record-list">{visibleTasks.map((task) => <TaskListRow key={task.id} task={task} canvasById={canvasById} projectNameById={domainProjectNameById} effectiveConfig={effectiveConfig} creditsEnabled={creditsEnabled} actingId={actingId} onOpen={() => void openTaskDetail(task)} onRetry={() => void runAction(task.id, "retry")} onCancel={() => void runAction(task.id, "cancel")} onPreview={() => task.previewUrl && setMediaPreview({ url: task.previewUrl, kind: task.previewKind === "video" ? "video" : "image", title: task.prompt || formatTaskKind(task) })} />)}</div> : <WorkspaceState compact title={taskEmptyState(statusFilter).title} description={taskEmptyState(statusFilter).description} />
+                    visibleTasks.length ? <div className="task-record-list">{visibleTasks.map((task) => <TaskListRow key={task.id} task={task} canvasById={canvasById} projectNameById={domainProjectNameById} effectiveConfig={effectiveConfig} creditsEnabled={creditsEnabled} actingId={actingId} canCollect={canCollectGenerationTask(task) && !isGenerationTaskMediaCollected(task, assets)} onCollect={() => void collectTaskMedia(task)} onOpen={() => void openTaskDetail(task)} onRetry={() => void runAction(task.id, "retry")} onCancel={() => void runAction(task.id, "cancel")} onPreview={() => task.previewUrl && setMediaPreview({ url: task.previewUrl, kind: task.previewKind === "video" ? "video" : "image", title: task.prompt || formatTaskKind(task) })} />)}</div> : <WorkspaceState compact title={taskEmptyState(statusFilter).title} description={taskEmptyState(statusFilter).description} />
                 ) : null}
                 <PaginationBar current={page} pageSize={pageSize} total={filteredTasks.length} pageSizeOptions={[20, 50, 100]} onChange={(nextPage, nextPageSize) => { setPage(nextPageSize !== pageSize ? 1 : nextPage); setPageSize(nextPageSize); }} />
             </WorkspacePage>
@@ -377,6 +396,7 @@ export default function TasksPage() {
                         {canQueryProviderTask(detailTask) ? <div className="flex justify-end"><Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>手动查询任务</Button></div> : null}
                         {detailTask.error ? <pre className="max-h-28 overflow-auto whitespace-pre-wrap border-l-2 border-red-500 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{generationErrorMessage(detailTask.error)}</pre> : null}
                         <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} />
+                        {canCollectGenerationTask(detailTask) && !isGenerationTaskMediaCollected(detailTask, assets) ? <div className="flex justify-end"><Button icon={<FolderPlus className="size-4" />} loading={actingId === detailTask.id} onClick={() => void collectTaskMedia(detailTask)}>收藏素材</Button></div> : null}
                         <DetailBlock title="输入" value={detailLoading ? "详情加载中..." : formatTaskJson(detailTask.inputJson)} />
                         <DetailBlock title="结果" value={detailLoading ? "详情加载中..." : formatTaskJson(detailTask.resultJson)} />
                         <div>
@@ -438,13 +458,15 @@ function TaskResultMedia({ value, taskType }: { value?: string; taskType: string
     );
 }
 
-function TaskListRow({ task, canvasById, projectNameById, effectiveConfig, creditsEnabled, actingId, onOpen, onRetry, onCancel, onPreview }: {
+function TaskListRow({ task, canvasById, projectNameById, effectiveConfig, creditsEnabled, actingId, canCollect, onCollect, onOpen, onRetry, onCancel, onPreview }: {
     task: GenerationTask;
     canvasById: Map<string, { title: string; projectId?: string }>;
     projectNameById: Map<string, string>;
     effectiveConfig: AiConfig;
     creditsEnabled: boolean;
     actingId: string;
+    canCollect: boolean;
+    onCollect: () => void;
     onOpen: () => void;
     onRetry: () => void;
     onCancel: () => void;
@@ -469,6 +491,7 @@ function TaskListRow({ task, canvasById, projectNameById, effectiveConfig, credi
             {creditsEnabled ? <TaskBilling billing={task.billing} /> : <span className="task-record-billing-empty" aria-hidden="true" />}
             <div className="task-record-actions">
                 <Tooltip title="查看详情"><Button type="text" size="small" icon={<Eye className="size-3.5" />} aria-label="查看详情" onClick={onOpen} /></Tooltip>
+                {canCollect ? <Tooltip title="收藏素材"><Button type="text" size="small" icon={<FolderPlus className="size-3.5" />} aria-label="收藏素材" loading={actingId === task.id} onClick={onCollect} /></Tooltip> : null}
                 {isFailed ? <Tooltip title="重试任务"><Button type="text" size="small" icon={<RotateCcw className="size-3.5" />} aria-label="重试任务" loading={actingId === task.id} disabled={task.errorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(task.error)} onClick={onRetry} /></Tooltip> : null}
                 {isActive ? <Tooltip title="取消任务"><Button type="text" size="small" danger icon={<X className="size-3.5" />} aria-label="取消任务" loading={actingId === task.id} onClick={onCancel} /></Tooltip> : null}
             </div>

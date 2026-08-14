@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import localforage from "localforage";
 import { App, Drawer, Modal, Popover, Spin, Tooltip } from "antd";
-import { ArrowUp, Check, ChevronDown, Clock3, Download, FileText, Film, FolderOpen, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Upload, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link } from "react-router";
 
@@ -15,18 +15,17 @@ import { generationErrorMessage } from "@/lib/generation-error";
 import { scopedStorageKey } from "@/lib/user-scope";
 import { VIDEO_RESOLUTION_OPTIONS } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch, type BackendGenerationResult } from "@/services/api/generation-task";
+import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch } from "@/services/api/generation-task";
+import { collectGenerationTaskMedia, persistGenerationImageResult, persistGenerationVideoResult } from "@/services/generation-media-collection";
 import { requestImageQuestion } from "@/services/api/image";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { storeGeneratedVideo } from "@/services/api/video";
 import { uploadMediaFile } from "@/services/file-storage";
-import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { uploadImage } from "@/services/image-storage";
 import { modelDisplayName, modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { useAssetStore, type Asset, type NewAsset } from "@/stores/use-asset-store";
+import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { buildCreationMentionReferences, creationReferenceMetadata, displayCreationPrompt, expandCreationPrompt, selectedCreationReferences, type CreationReference } from "./creation-references";
-import { creationAssetKey, creationAttachmentFromAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationImageAsset, creationVideoAsset, isSameCreationAsset, type CreationAssetIdentity, type CreationAttachment } from "./creation-assets";
+import { creationAttachmentFromAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationImageAsset, creationVideoAsset, type CreationAttachment } from "./creation-assets";
 
 type CreationMode = "text" | "image" | "video";
 type CreationStatus = "streaming" | "pending" | "done" | "error" | "cancelled";
@@ -79,31 +78,6 @@ function newMessage(role: CreationMessage["role"], content: string, extra: Parti
     return { id: createClientId(), role, content, createdAt: new Date().toISOString(), ...extra };
 }
 
-type CreationImageResult = NonNullable<BackendGenerationResult["images"]>[number];
-
-async function persistCreationImageResult(image: CreationImageResult): Promise<UploadedImage> {
-    if (!image.storageKey) return uploadImage(image.dataUrl);
-    const resourceID = resourceIdFromStorageKey(image.storageKey);
-    const url = resourceID ? resourceFileUrl(resourceID) : await resolveImageUrl(image.storageKey, image.dataUrl);
-    if (!url) throw new Error("图片结果资源不可用");
-    return {
-        url,
-        storageKey: image.storageKey,
-        width: image.width || 1024,
-        height: image.height || 1024,
-        bytes: image.bytes || 0,
-        mimeType: image.mimeType || "image/png",
-    };
-}
-
-function addCreationAssetOnce(asset: NewAsset, identity: CreationAssetIdentity) {
-    const store = useAssetStore.getState();
-    const key = creationAssetKey(identity);
-    if (key && store.assets.some((existing) => isSameCreationAsset(existing, identity))) return false;
-    store.addAsset(key ? { ...asset, metadata: { ...asset.metadata, creationAssetKey: key } } : asset);
-    return true;
-}
-
 export default function CreatePage() {
     const { message: toast } = App.useApp();
     const config = useEffectiveConfig();
@@ -124,6 +98,7 @@ export default function CreatePage() {
     const [videoQuality, setVideoQuality] = useState(config.vquality || "720");
     const [count, setCount] = useState(String(Math.max(1, Math.min(4, Number(config.count) || 1))));
     const [busy, setBusy] = useState(false);
+    const [collectingMessageId, setCollectingMessageId] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
@@ -287,6 +262,32 @@ export default function CreatePage() {
         }));
     }, [updateActive]);
 
+    const collectCreationMessageMedia = async (item: CreationMessage) => {
+        const taskIds = Array.from(new Set(item.taskIds || []));
+        if (!taskIds.length) {
+            toast.warning("当前结果没有关联任务，无法收藏到素材库");
+            return;
+        }
+        setCollectingMessageId(item.id);
+        try {
+            const settled = await Promise.allSettled(taskIds.map(async (taskId) => collectGenerationTaskMedia(await queryGenerationTask(taskId))));
+            const completed = settled.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
+            if (!completed.length) {
+                const failed = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+                throw failed?.reason instanceof Error ? failed.reason : new Error("收藏素材失败");
+            }
+            const added = completed.reduce((total, result) => total + result.added, 0);
+            const failedCount = settled.length - completed.length;
+            if (added) toast.success(`已收藏 ${added} 个素材`);
+            else toast.info("生成结果已在素材库中");
+            if (failedCount) toast.warning(`${failedCount} 个任务收藏失败，请重试`);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "收藏素材失败");
+        } finally {
+            setCollectingMessageId("");
+        }
+    };
+
     const selectMode = (next: CreationMode) => {
         setMode(next);
         const nextModels = selectableModelsByCapability(config, next);
@@ -443,8 +444,7 @@ export default function CreatePage() {
                 });
                 const taskFailures = settled.filter((entry): entry is PromiseRejectedResult => entry.status === "rejected");
                 const storedImages = await Promise.allSettled(generatedImages.map(async ({ image, taskId, resultIndex }) => {
-                    const uploaded = await persistCreationImageResult(image);
-                    addCreationAssetOnce(creationImageAsset({ title: expandedPrompt.slice(0, 24), uploaded, metadata: { source: "create-generation", conversationId: activeConversation.id, messageId: assistantMessage.id, taskId, taskIds: boundTaskIdList, resultIndex, prompt: expandedPrompt } }), { taskId, messageId: assistantMessage.id, resultIndex });
+                    const uploaded = await persistGenerationImageResult(image);
                     return uploaded.url;
                 }));
                 const resultUrls = storedImages.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
@@ -468,10 +468,8 @@ export default function CreatePage() {
                     onTaskUpdate: bindTask,
                 });
                 if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
-                const storedVideo = await storeGeneratedVideo({ url: result.video.dataUrl, mimeType: result.video.mimeType || "video/mp4" });
+                const storedVideo = await persistGenerationVideoResult(result.video);
                 if (!storedVideo.url) throw new Error("视频结果资源不可用");
-                const taskId = Array.from(boundTaskIds)[0];
-                addCreationAssetOnce(creationVideoAsset({ title: expandedPrompt.slice(0, 24), uploaded: storedVideo, metadata: { source: "create-generation", conversationId: activeConversation.id, messageId: assistantMessage.id, taskId, taskIds: Array.from(boundTaskIds), resultIndex: 0, prompt: expandedPrompt } }), { taskId, messageId: assistantMessage.id, resultIndex: 0 });
                 updateAssistant(assistantMessage.id, (item) => ({ ...item, status: "done", content: "视频已生成", resultUrls: [storedVideo.url] }));
             }
             updateAssistant(assistantMessage.id, (item) => ({ ...item, status: "done" }));
@@ -599,7 +597,7 @@ export default function CreatePage() {
                     <CreationIntro mode={mode} />
                     <div className="creation-empty-composer"><CreationComposer {...composerProps} variant="empty" /></div>
                 </section> : <>
-                    <section className="creation-thread-stage"><div className="creation-results">{activeConversation.messages.map((item, index) => <CreationMessageView key={item.id} item={item} modelName={item.model ? modelDisplayName(config, item.model) : ""} onRetryFailure={() => retryFailedMessage(item, index)} onCreateVariant={() => createVariant(item, index)} />)}</div></section>
+                    <section className="creation-thread-stage"><div className="creation-results">{activeConversation.messages.map((item, index) => <CreationMessageView key={item.id} item={item} modelName={item.model ? modelDisplayName(config, item.model) : ""} onRetryFailure={() => retryFailedMessage(item, index)} onCreateVariant={() => createVariant(item, index)} onCollect={() => void collectCreationMessageMedia(item)} collected={isCreationMessageMediaCollected(item, assets)} collecting={collectingMessageId === item.id} />)}</div></section>
                     <section className="creation-thread-composer">
                         <CreationComposer {...composerProps} variant="thread" />
                     </section>
@@ -725,11 +723,11 @@ function CreationHistoryDrawer({ open, conversations, activeId, onClose, onSelec
     </Drawer>;
 }
 
-function CreationMessageView({ item, modelName, onRetryFailure, onCreateVariant }: { item: CreationMessage; modelName: string; onRetryFailure: () => void; onCreateVariant: () => void }) {
+function CreationMessageView({ item, modelName, onRetryFailure, onCreateVariant, onCollect, collected, collecting }: { item: CreationMessage; modelName: string; onRetryFailure: () => void; onCreateVariant: () => void; onCollect: () => void; collected: boolean; collecting: boolean }) {
     if (item.role === "user") return <CreationUserMessage item={item} />;
     const mode = item.mode || "text";
     const stateLabel = item.status === "pending" ? "生成中" : item.status === "cancelled" ? "已停止" : "";
-    return <article className="creation-assistant-message"><div className="creation-message-heading"><span className="creation-message-mark"><Sparkles /></span><span>{modeLabels[mode]}</span>{modelName ? <span className="creation-message-model">{modelName}</span> : null}{stateLabel ? <span className={`creation-message-state is-${item.status}`}>{stateLabel}</span> : null}</div>{mode === "text" ? <div className="creation-message-content">{item.content ? <ReactMarkdown>{item.content}</ReactMarkdown> : <span>正在生成…</span>}</div> : <MediaResult item={item} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} />}{item.error ? <div className="creation-message-error"><span>{generationErrorMessage(item.error)}</span><button type="button" onClick={onRetryFailure}><RefreshCw />重新生成</button></div> : null}</article>;
+    return <article className="creation-assistant-message"><div className="creation-message-heading"><span className="creation-message-mark"><Sparkles /></span><span>{modeLabels[mode]}</span>{modelName ? <span className="creation-message-model">{modelName}</span> : null}{stateLabel ? <span className={`creation-message-state is-${item.status}`}>{stateLabel}</span> : null}</div>{mode === "text" ? <div className="creation-message-content">{item.content ? <ReactMarkdown>{item.content}</ReactMarkdown> : <span>正在生成…</span>}</div> : <MediaResult item={item} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} onCollect={onCollect} collected={collected} collecting={collecting} />}{item.error ? <div className="creation-message-error"><span>{generationErrorMessage(item.error)}</span><button type="button" onClick={onRetryFailure}><RefreshCw />重新生成</button></div> : null}</article>;
 }
 
 function CreationUserMessage({ item }: { item: CreationMessage }) {
@@ -748,7 +746,7 @@ function CreationMessageReferences({ references }: { references: CreationReferen
     })}</div>;
 }
 
-function MediaResult({ item, onRetryFailure, onCreateVariant }: { item: CreationMessage; onRetryFailure: () => void; onCreateVariant: () => void }) {
+function MediaResult({ item, onRetryFailure, onCreateVariant, onCollect, collected, collecting }: { item: CreationMessage; onRetryFailure: () => void; onCreateVariant: () => void; onCollect: () => void; collected: boolean; collecting: boolean }) {
     const [previewUrl, setPreviewUrl] = useState("");
     const [previewType, setPreviewType] = useState<"image" | "video">("image");
     const resultUrls = item.resultUrls;
@@ -756,7 +754,7 @@ function MediaResult({ item, onRetryFailure, onCreateVariant }: { item: Creation
     if (item.status === "pending") return <div className="creation-media-pending"><Spin size="small" />正在生成{item.mode === "video" ? "视频" : "图片"}…</div>;
     if ((item.status === "error" || item.status === "cancelled") && !resultUrls?.length) return null;
     if (!resultUrls?.length) return <div className="creation-media-empty">没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;
-    return <div className="creation-media-result">{item.mode === "video" ? <button type="button" className="creation-video-result" onClick={() => openPreview(resultUrls[0], "video")} aria-label="预览生成视频"><video muted preload="metadata" className="size-full object-cover" src={resultUrls[0]} /><span><Maximize2 />预览视频</span></button> : <div className="creation-image-result-grid">{resultUrls.map((url) => <button key={url} type="button" className="creation-image-result" onClick={() => openPreview(url, "image")} aria-label="预览生成图片"><img src={url} alt="生成结果" /><span><Maximize2 /></span></button>)}</div>}<div className="creation-media-actions"><span>{item.mode === "video" ? "视频结果" : `${resultUrls.length} 张图片`}</span><button type="button" onClick={onCreateVariant}><RefreshCw />生成变体</button><Link to="/canvas">添加到画布</Link>{resultUrls.map((url, index) => <a key={`${url}-download`} href={url} download>{resultUrls.length > 1 ? `下载 ${index + 1}` : <><Download />下载</>}</a>)}</div><CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} /></div>;
+    return <div className="creation-media-result">{item.mode === "video" ? <button type="button" className="creation-video-result" onClick={() => openPreview(resultUrls[0], "video")} aria-label="预览生成视频"><video muted preload="metadata" className="size-full object-cover" src={resultUrls[0]} /><span><Maximize2 />预览视频</span></button> : <div className="creation-image-result-grid">{resultUrls.map((url) => <button key={url} type="button" className="creation-image-result" onClick={() => openPreview(url, "image")} aria-label="预览生成图片"><img src={url} alt="生成结果" /><span><Maximize2 /></span></button>)}</div>}<div className="creation-media-actions"><span>{item.mode === "video" ? "视频结果" : `${resultUrls.length} 张图片`}</span>{item.taskIds?.length ? <button type="button" onClick={onCollect} disabled={collecting || collected}>{collected ? <><Check />已收藏</> : <><FolderPlus />{collecting ? "收藏中…" : "收藏素材"}</>}</button> : null}<button type="button" onClick={onCreateVariant}><RefreshCw />生成变体</button><Link to="/canvas">添加到画布</Link>{resultUrls.map((url, index) => <a key={`${url}-download`} href={url} download>{resultUrls.length > 1 ? `下载 ${index + 1}` : <><Download />下载</>}</a>)}</div><CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} /></div>;
 }
 
 function CreationMediaPreviewModal({ url, type, onClose }: { url: string; type: "image" | "video"; onClose: () => void }) {
@@ -1035,7 +1033,6 @@ function creationTaskClientContext(inputJson?: string): GenerationTask["clientCo
 type PersistedCreationTask = GenerationTask & { creationResultUrls?: string[]; creationError?: string };
 
 async function persistCreationTaskResults(tasks: GenerationTask[]): Promise<PersistedCreationTask[]> {
-    const addAsset = useAssetStore.getState().addAsset;
     return Promise.all(tasks.map(async (task): Promise<PersistedCreationTask> => {
         if (task.status !== "succeeded" || !task.clientContext) return task;
         try {
@@ -1043,8 +1040,7 @@ async function persistCreationTaskResults(tasks: GenerationTask[]): Promise<Pers
             const images = result?.images?.length ? result.images : task.previewUrl && task.previewKind !== "video" ? [{ dataUrl: task.previewUrl }] : [];
             if (images.length) {
                 const storedImages = await Promise.all(images.map(async (image, resultIndex) => {
-                    const uploaded = await persistCreationImageResult(image);
-                    addCreationAssetOnce(creationImageAsset({ title: task.prompt.slice(0, 24), uploaded, metadata: { source: "create-generation", taskId: task.id, conversationId: task.clientContext?.conversationId, messageId: task.clientContext?.messageId, batchIndex: task.clientContext?.batchIndex, resultIndex, prompt: task.prompt } }), { taskId: task.id, messageId: task.clientContext?.messageId, resultIndex });
+                    const uploaded = await persistGenerationImageResult(image);
                     return uploaded.url;
                 }));
                 return { ...task, creationResultUrls: storedImages };
@@ -1052,9 +1048,8 @@ async function persistCreationTaskResults(tasks: GenerationTask[]): Promise<Pers
 
             const videoUrl = result?.video?.dataUrl || (task.previewKind === "video" ? task.previewUrl : "");
             if (videoUrl) {
-                const storedVideo = await storeGeneratedVideo({ url: videoUrl, mimeType: result?.video?.mimeType || "video/mp4" });
+                const storedVideo = await persistGenerationVideoResult(result?.video || { dataUrl: videoUrl, mimeType: "video/mp4" });
                 if (!storedVideo.url) throw new Error("视频结果资源不可用");
-                addCreationAssetOnce(creationVideoAsset({ title: task.prompt.slice(0, 24), uploaded: storedVideo, metadata: { source: "create-generation", taskId: task.id, conversationId: task.clientContext?.conversationId, messageId: task.clientContext?.messageId, batchIndex: task.clientContext?.batchIndex, resultIndex: 0, prompt: task.prompt } }), { taskId: task.id, messageId: task.clientContext?.messageId, resultIndex: 0 });
                 return { ...task, creationResultUrls: [storedVideo.url] };
             }
             return task;
@@ -1109,6 +1104,14 @@ function reconcileCreationTaskMessages(conversations: CreationConversation[], ta
 function creationTaskResultUrls(task: PersistedCreationTask) {
     if (task.creationResultUrls?.length) return task.creationResultUrls;
     return [];
+}
+
+function isCreationMessageMediaCollected(message: CreationMessage, assets: Asset[]) {
+    const taskIds = new Set(message.taskIds || []);
+    const resultCount = message.resultUrls?.length || 0;
+    if (message.role !== "assistant" || !taskIds.size || !resultCount) return false;
+    const collectedCount = assets.filter((asset) => asset.metadata?.source === "create-generation" && typeof asset.metadata.taskId === "string" && taskIds.has(asset.metadata.taskId)).length;
+    return collectedCount >= resultCount;
 }
 
 function conversationTimestamp(value: string) {
