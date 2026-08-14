@@ -9,7 +9,7 @@ import { channelRequest } from "@/services/api/custom-channel-relay";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 import { withOpenAIPromptCacheKey } from "@/lib/openai-prompt-cache";
-import { imageSizeRequest, modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { imageSizeRequest, isGptImage2Model, modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -117,6 +117,12 @@ const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 const VOLCENGINE_ARK_IMAGE_MAX_PIXELS = 4624220;
+const GPT_IMAGE_2_RATIOS = new Set(["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"]);
+const GPT_IMAGE_2_PRESET_LONG_EDGES = {
+    "1k": { square: 1024, landscape: 1280, portrait: 1280 },
+    "2k": { square: 2048, landscape: 2048, portrait: 2560 },
+    "4k": { square: 2480, landscape: 3312, portrait: 3328 },
+} as const;
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
@@ -195,6 +201,42 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
+function gptImage2Tier(quality: string | undefined) {
+    switch (quality?.trim().toLowerCase()) {
+        case "4k":
+        case "high":
+            return "4k";
+        case "2k":
+        case "medium":
+            return "2k";
+        default:
+            return "1k";
+    }
+}
+
+function resolveGptImage2Size(quality: string | undefined, size: string) {
+    // 比例预设由分辨率档位落到 16 倍数像素；用户填写的合法 WxH 不再被重算。
+    const value = size.trim().toLowerCase().replace("×", "x");
+    if (!value || value === "auto") return "auto";
+    const dimensions = parseImageDimensions(value);
+    if (dimensions) {
+        if (dimensions.width % IMAGE_SIZE_STEP || dimensions.height % IMAGE_SIZE_STEP) {
+            throw new Error("gpt-image-2 的自定义宽高必须是 16 的倍数");
+        }
+        return `${dimensions.width}x${dimensions.height}`;
+    }
+    if (!GPT_IMAGE_2_RATIOS.has(value)) {
+        throw new Error("gpt-image-2 仅支持 1:1、3:2、2:3、4:3、3:4、5:4、4:5、16:9、9:16、21:9 或合法 WxH");
+    }
+    const [rawWidth, rawHeight] = value.split(":").map(Number);
+    const preset = GPT_IMAGE_2_PRESET_LONG_EDGES[gptImage2Tier(quality)];
+    if (rawWidth === rawHeight) return `${preset.square}x${preset.square}`;
+    const landscape = rawWidth > rawHeight;
+    const longEdge = landscape ? preset.landscape : preset.portrait;
+    const shortEdge = Math.ceil((longEdge * Math.min(rawWidth, rawHeight)) / Math.max(rawWidth, rawHeight) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+    return landscape ? `${longEdge}x${shortEdge}` : `${shortEdge}x${longEdge}`;
+}
+
 function resolveAspectRatio(value: string) {
     const normalized = value.trim().toLowerCase().replace("×", "x");
     if (normalized.includes(":")) return normalized;
@@ -209,11 +251,17 @@ function dimensionGCD(left: number, right: number) {
     return Math.max(1, left);
 }
 
-function resolveImageRequestSize(profile: ImageCapabilityConfig, quality: string | undefined, size: string) {
+function resolveImageRequestSize(profile: ImageCapabilityConfig, quality: string | undefined, size: string, model = "") {
+    if (isGptImage2Model(model)) return { parameter: "size", value: resolveGptImage2Size(quality, size) };
     const request = imageSizeRequest(profile, size);
     if (!request) return undefined;
     const value = request.parameter === "size" ? resolveRequestSize(quality, request.value) : resolveAspectRatio(request.value);
     return value ? { parameter: request.parameter, value } : undefined;
+}
+
+function geminiImageAspectRatio(profile: ImageCapabilityConfig, size: string) {
+    const request = imageSizeRequest(profile, size);
+    return request ? resolveAspectRatio(request.value) : undefined;
 }
 
 function validateImageCapability(profile: ImageCapabilityConfig, references: ReferenceImage[], mask?: ReferenceImage) {
@@ -385,6 +433,11 @@ function toChatCompletionMessages(messages: ResponseInputMessage[]) {
 
 function toChatCompletionToolChoice(toolChoice: ToolChoice) {
     return typeof toolChoice === "object" ? { type: "function", function: { name: toolChoice.name } } : toolChoice;
+}
+
+function isToolChoiceCompatibilityError(error: unknown) {
+    const message = error instanceof Error ? error.message : "";
+    return /tool[_\s-]?choice|thinking\s+mode/i.test(message);
 }
 
 function parseChatCompletionPayload(payload: ChatCompletionPayload): ToolResponseResult {
@@ -768,12 +821,12 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
     return { content, toolCalls };
 }
 
-async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
-    const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, options));
+async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, aspectRatio: string | undefined, options?: RequestOptions) {
+    const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, aspectRatio, options));
     return (await Promise.all(requests)).flat();
 }
 
-async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], aspectRatio: string | undefined, options?: RequestOptions) {
     const parts: GeminiPart[] = [{ text: prompt }];
     for (const image of references) {
         parts.push(toGeminiImagePart(await imageToDataUrl(image)));
@@ -782,7 +835,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     const response = await axios.post<GeminiPayload>(
         request.url,
         {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }),
+            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...(aspectRatio ? { imageConfig: { aspectRatio } } : {}) } }),
             contents: [{ role: "user", parts }],
         },
         { headers: request.headers, withCredentials: request.credentials === "include", signal: options?.signal },
@@ -815,7 +868,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const n = Number(normalizedImage.count);
     if (requestConfig.apiFormat === "gemini") {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, options);
+            return await requestGeminiImages(requestConfig, prompt, [], n, geminiImageAspectRatio(imageProfile, normalizedImage.size), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -844,8 +897,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "Grok 图片生成失败"));
         }
     }
-    const quality = imageProfile.quality.supported && normalizedImage.quality !== "auto" ? normalizeQuality(normalizedImage.quality) || normalizedImage.quality : undefined;
-    const requestSize = resolveImageRequestSize(imageProfile, quality, normalizedImage.size);
+    const gptImage2 = isGptImage2Model(requestConfig.model);
+    const quality = !gptImage2 && imageProfile.quality.supported && normalizedImage.quality !== "auto" ? normalizeQuality(normalizedImage.quality) || normalizedImage.quality : undefined;
+    const requestSize = resolveImageRequestSize(imageProfile, normalizedImage.quality, normalizedImage.size, requestConfig.model);
     const isVolcengineArk = requestConfig.interfaceType === "volcengine-ark-image";
     const normalizedRequestSize = requestSize?.parameter === "size" && isVolcengineArk ? { ...requestSize, value: normalizeVolcengineArkImageSize(requestSize.value)! } : requestSize;
     try {
@@ -902,7 +956,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (requestConfig.apiFormat === "gemini") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+            return await requestGeminiImages(requestConfig, requestPrompt, references, n, geminiImageAspectRatio(imageProfile, normalizedImage.size), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -937,8 +991,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (requestConfig.interfaceType === "volcengine-ark-image") {
         if (mask) throw new Error("火山方舟图片协议不支持蒙版编辑，请移除蒙版后重试");
-        const quality = imageProfile.quality.supported && normalizedImage.quality !== "auto" ? normalizeQuality(normalizedImage.quality) || normalizedImage.quality : undefined;
-        const sizeRequest = resolveImageRequestSize(imageProfile, quality, normalizedImage.size);
+        const sizeRequest = resolveImageRequestSize(imageProfile, normalizedImage.quality, normalizedImage.size, requestConfig.model);
         const requestSize = sizeRequest?.parameter === "size" ? { ...sizeRequest, value: normalizeVolcengineArkImageSize(sizeRequest.value)! } : sizeRequest;
         try {
             const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
@@ -958,8 +1011,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, "火山方舟图片生成失败"));
         }
     }
-    const quality = imageProfile.quality.supported && normalizedImage.quality !== "auto" ? normalizeQuality(normalizedImage.quality) || normalizedImage.quality : undefined;
-    const requestSize = resolveImageRequestSize(imageProfile, quality, normalizedImage.size);
+    const gptImage2 = isGptImage2Model(requestConfig.model);
+    const quality = !gptImage2 && imageProfile.quality.supported && normalizedImage.quality !== "auto" ? normalizeQuality(normalizedImage.quality) || normalizedImage.quality : undefined;
+    const requestSize = resolveImageRequestSize(imageProfile, normalizedImage.quality, normalizedImage.size, requestConfig.model);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
@@ -997,7 +1051,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === "没有返回内容") onDelta(answer);
             return answer;
         }
-        if (requestConfig.interfaceType === "chat-completion") {
+        if (requestConfig.interfaceType === "chat-completion" || !requestConfig.interfaceType) {
             const answer =
                 (
                     await requestStreamingChatCompletion(
@@ -1038,19 +1092,31 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
         }
-        if (requestConfig.interfaceType === "chat-completion") {
-            return await requestStreamingChatCompletion(
-                requestConfig,
-                {
-                    model: requestConfig.model,
-                    messages: toChatCompletionMessages(withSystemMessage(requestConfig, messages)),
-                    tools,
-                    tool_choice: toChatCompletionToolChoice(toolChoice),
-                    parallel_tool_calls: false,
-                },
-                onDelta,
-                options,
-            );
+        if (requestConfig.interfaceType === "chat-completion" || !requestConfig.interfaceType) {
+            const chatPayload: Record<string, unknown> = {
+                model: requestConfig.model,
+                messages: toChatCompletionMessages(withSystemMessage(requestConfig, messages)),
+                tools,
+                tool_choice: toChatCompletionToolChoice(toolChoice),
+                parallel_tool_calls: false,
+            };
+            try {
+                return await requestStreamingChatCompletion(requestConfig, chatPayload, onDelta, options);
+            } catch (error) {
+                if (!isToolChoiceCompatibilityError(error)) throw error;
+
+                // 部分 OpenAI 兼容上游仅支持 auto，思考模式则可能要求完全省略该字段。
+                if (toolChoice !== "auto") {
+                    try {
+                        return await requestStreamingChatCompletion(requestConfig, { ...chatPayload, tool_choice: toChatCompletionToolChoice("auto") }, onDelta, options);
+                    } catch (autoError) {
+                        if (!isToolChoiceCompatibilityError(autoError)) throw autoError;
+                    }
+                }
+                const { tool_choice: _ignored, ...withoutToolChoice } = chatPayload;
+                void _ignored;
+                return await requestStreamingChatCompletion(requestConfig, withoutToolChoice, onDelta, options);
+            }
         }
         return await requestStreamingResponse(
             requestConfig,

@@ -254,7 +254,7 @@ export type UserPromptPreference = {
 
 export type AdminOSSSetting = {
     enabled: boolean;
-    provider: "aliyun";
+    provider: "aliyun" | "tencent";
     region: string;
     endpoint: string;
     bucket: string;

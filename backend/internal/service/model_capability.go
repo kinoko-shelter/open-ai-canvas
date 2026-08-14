@@ -94,10 +94,10 @@ func DefaultModelCapabilityConfig(protocol string) *ModelCapabilityConfig {
 	return DefaultModelCapabilityConfigForModel(protocol, "")
 }
 
-func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapabilityConfig {
+func DefaultImageCapabilityConfig(protocol string, modelName string, apiFormats ...string) *ImageCapabilityConfig {
 	image := &ImageCapabilityConfig{
 		References:            ImageReferenceConfig{PromptMaxChars: 32000, MaxImages: 16, MaxImageBytes: 30 * 1024 * 1024, MaskSupported: true},
-		Size:                  ImageSizeConfig{Parameter: "size", Values: []string{"1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "21:9", "9:16", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"}, Default: "1:1", AllowCustom: true},
+		Size:                  ImageSizeConfig{Parameter: "size", Values: []string{"1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "21:9", "9:16", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"}, Default: "1:1", AllowCustom: true},
 		Quality:               ImageQualityConfig{Supported: true, Values: []string{"auto", "low", "medium", "high"}, Default: "auto"},
 		TransparentBackground: VideoBooleanConfig{Supported: true, Default: false},
 		ResponseFormat:        ParameterSupport{Supported: true},
@@ -139,7 +139,80 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		image.OutputFormat = ParameterSupport{Supported: false}
 		image.MaxOutputs = 1
 	}
+	if isGPTImage2Model(modelName) {
+		image.Size = ImageSizeConfig{Parameter: "size", Values: []string{"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"}, Default: "auto", AllowCustom: true}
+		image.Quality = ImageQualityConfig{Supported: true, Values: []string{"1k", "2k", "4k"}, Default: "1k"}
+	}
+	if isGeminiImageConfig(protocol, modelName, apiFormats...) {
+		image.Size = ImageSizeConfig{Parameter: "aspect_ratio", Values: geminiImageRatioValues(modelName), Default: "1:1", AllowCustom: false}
+		image.Quality = ImageQualityConfig{Supported: false, Values: []string{}, Default: "auto"}
+		image.TransparentBackground = VideoBooleanConfig{Supported: false, Default: false}
+		image.ResponseFormat = ParameterSupport{Supported: false}
+		image.OutputFormat = ParameterSupport{Supported: false}
+	}
 	return image
+}
+
+func isGPTImage2Model(modelName string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "gpt-image-2")
+}
+
+func isGeminiImageConfig(protocol string, modelName string, apiFormats ...string) bool {
+	if strings.EqualFold(strings.TrimSpace(protocol), "gemini-image") {
+		return true
+	}
+	if len(apiFormats) == 0 || !strings.EqualFold(strings.TrimSpace(apiFormats[0]), "gemini") {
+		return false
+	}
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	return (strings.HasPrefix(modelName, "gemini-") && strings.Contains(modelName, "image")) || strings.Contains(modelName, "nano-banana")
+}
+
+func geminiImageRatioValues(modelName string) []string {
+	values := []string{"1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "3:2", "2:3", "5:4", "4:5"}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "gemini-3.1-flash-image-preview") {
+		return append(values, "1:4", "1:8", "4:1", "8:1")
+	}
+	return values
+}
+
+func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocol string, modelName string, apiFormat string) *ImageCapabilityConfig {
+	if profile == nil {
+		return nil
+	}
+	canonical := DefaultImageCapabilityConfig(protocol, modelName, apiFormat)
+	if isGPTImage2Model(modelName) {
+		result := *profile
+		result.Size = canonicalImageSizeConfig(profile.Size, canonical.Size)
+		result.Quality = canonicalImageQualityConfig(profile.Quality, canonical.Quality)
+		return &result
+	}
+	if isGeminiImageConfig(protocol, modelName, apiFormat) {
+		result := *profile
+		result.References = profile.References
+		result.References.MaskSupported = false
+		result.Size = canonicalImageSizeConfig(profile.Size, canonical.Size)
+		result.Quality = canonicalImageQualityConfig(profile.Quality, canonical.Quality)
+		result.TransparentBackground = canonical.TransparentBackground
+		result.ResponseFormat = canonical.ResponseFormat
+		result.OutputFormat = canonical.OutputFormat
+		return &result
+	}
+	return profile
+}
+
+func canonicalImageSizeConfig(current ImageSizeConfig, canonical ImageSizeConfig) ImageSizeConfig {
+	if containsCapabilityString(canonical.Values, current.Default) {
+		canonical.Default = current.Default
+	}
+	return canonical
+}
+
+func canonicalImageQualityConfig(current ImageQualityConfig, canonical ImageQualityConfig) ImageQualityConfig {
+	if containsCapabilityString(canonical.Values, current.Default) {
+		canonical.Default = current.Default
+	}
+	return canonical
 }
 
 func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *ModelCapabilityConfig {
@@ -175,6 +248,12 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 	case model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceXAIVideo:
 		video.GenerateAudio = VideoBooleanConfig{Supported: false, Default: false}
+	case model.ChannelInterfaceNovitaVideo:
+		video.References.MaxImages, video.References.MaxImageBytes = 1, 10*1024*1024
+		video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{5, 10}, Default: 5}
+		video.Ratios = []string{"16:9", "9:16", "1:1"}
+		video.Resolutions = []string{"1080p"}
+		video.DefaultResolution = "1080p"
 	}
 	return &ModelCapabilityConfig{Version: 1, Image: DefaultImageCapabilityConfig(protocol, modelName), Video: video}
 }
@@ -190,7 +269,7 @@ func DecodeModelCapabilityConfig(raw string) (*ModelCapabilityConfig, error) {
 	return &value, nil
 }
 
-func NormalizeModelCapabilityConfig(capability string, _ string, input *ModelCapabilityConfig) (*ModelCapabilityConfig, error) {
+func NormalizeModelCapabilityConfig(capability string, protocol string, modelName string, apiFormat string, input *ModelCapabilityConfig) (*ModelCapabilityConfig, error) {
 	if capability != "image" && capability != "video" {
 		return nil, nil
 	}
@@ -198,7 +277,7 @@ func NormalizeModelCapabilityConfig(capability string, _ string, input *ModelCap
 		if input == nil || input.Image == nil {
 			return nil, BadAuthRequest("请配置图片模型能力参数")
 		}
-		value := &ModelCapabilityConfig{Version: 1, Image: input.Image}
+		value := &ModelCapabilityConfig{Version: 1, Image: applyModelSpecificImageCapability(input.Image, protocol, modelName, apiFormat)}
 		if err := validateImageCapabilityConfig(value.Image); err != nil {
 			return nil, err
 		}
@@ -321,11 +400,11 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	}
 	if channelID == "" {
 		if taskInput.Mode == "image" {
-			profile := DefaultImageCapabilityConfig(taskInput.Config.InterfaceType, taskInput.Config.Model)
+			profile := DefaultImageCapabilityConfig(taskInput.Config.InterfaceType, taskInput.Config.Model, taskInput.Config.APIFormat)
 			if taskInput.Config.CapabilityConfig != nil && taskInput.Config.CapabilityConfig.Image != nil {
 				profile = taskInput.Config.CapabilityConfig.Image
 			}
-			return validateImageTask(profile, taskInput)
+			return validateImageTask(applyModelSpecificImageCapability(profile, taskInput.Config.InterfaceType, taskInput.Config.Model, taskInput.Config.APIFormat), taskInput)
 		}
 		if taskInput.Config.CapabilityConfig == nil || taskInput.Config.CapabilityConfig.Video == nil {
 			return nil
@@ -345,7 +424,7 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 		if profile != nil && profile.Image != nil {
 			imageProfile = profile.Image
 		}
-		return validateImageTask(imageProfile, taskInput)
+		return validateImageTask(applyModelSpecificImageCapability(imageProfile, string(item.Protocol), item.ModelKey, taskInput.Config.APIFormat), taskInput)
 	}
 	if err != nil || profile == nil || profile.Video == nil {
 		return BadAuthRequest("当前视频模型尚未配置能力参数")

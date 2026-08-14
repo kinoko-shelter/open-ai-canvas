@@ -7,7 +7,7 @@ import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { ModelIcon } from "@/components/model-picker";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker, type ModelCapabilityChoice } from "@/components/model-protocol-picker";
-import { defaultModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, hasModelSpecificImageCapability, normalizeModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, type ModelProtocol } from "@/lib/model-protocols";
 import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
@@ -95,12 +95,15 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const startEdit = (item: ChannelModel) => {
         setEditing(item);
-        form.setFieldsValue({ modelKey: item.modelKey, displayName: item.displayName, capability: item.capability || undefined, protocol: item.protocol, billingMode: item.billingMode, unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000, outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000, enabled: item.enabled, capabilityConfig: item.capability === "image" || item.capability === "video" ? item.capabilityConfig || defaultModelCapabilityConfig(item.protocol, item.modelKey) : undefined });
+        form.setFieldsValue({ modelKey: item.modelKey, displayName: item.displayName, capability: item.capability || undefined, protocol: item.protocol, billingMode: item.billingMode, unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000, outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000, enabled: item.enabled, capabilityConfig: item.capability === "image" || item.capability === "video" ? normalizeModelCapabilityConfig(item.capabilityConfig, item.protocol, item.modelKey, channel.apiFormat) : undefined });
         setEditorOpen(true);
     };
 
     const save = async () => {
         const values = await form.validateFields();
+        const capabilityConfig = values.capability === "image" || values.capability === "video"
+            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, values.modelKey.trim(), channel.apiFormat)
+            : undefined;
         setSaving(true);
         try {
             const payload = {
@@ -115,7 +118,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 cachedTokenPriceMicrocredits: Math.round((values.cachedTokenPrice || 0) * 1_000_000),
                 priceConfigured: true,
                 enabled: values.enabled !== false,
-                capabilityConfig: values.capability === "image" || values.capability === "video" ? values.capabilityConfig : undefined,
+                capabilityConfig,
             };
             if (editing) await updateAdminChannelModel(channel.id, editing.id, payload);
             else await createAdminChannelModel(channel.id, payload);
@@ -133,13 +136,16 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const testModel = async () => {
         const values = await form.validateFields(["modelKey", "capability", "protocol", ...(modelCapability === "image" || modelCapability === "video" ? ["capabilityConfig"] : [])]);
+        const capabilityConfig = values.capability === "image" || values.capability === "video"
+            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, values.modelKey.trim(), channel.apiFormat)
+            : undefined;
         setTesting(true);
         try {
             const result = await testAdminChannelModel(channel.id, {
                 modelKey: values.modelKey.trim(),
                 capability: values.capability,
                 protocol: values.protocol,
-                capabilityConfig: values.capabilityConfig,
+                capabilityConfig,
             });
             message.success(`模型测试通过，耗时 ${(result.durationMs / 1000).toFixed(2)} 秒`);
         } catch (error) {
@@ -160,20 +166,25 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         }
     };
 
-    const handleFormValuesChange = (changed: Partial<FormValues>) => {
-        if (changed.protocol && (modelCapability === "image" || modelCapability === "video")) {
-            form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(changed.protocol, form.getFieldValue("modelKey")));
+    const handleFormValuesChange = (changed: Partial<FormValues>, values: FormValues) => {
+        const nextCapability = values.capability;
+        const nextProtocol = values.protocol;
+        if (changed.protocol && (nextCapability === "image" || nextCapability === "video")) {
+            form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(changed.protocol, form.getFieldValue("modelKey"), channel.apiFormat));
+        }
+        if (changed.modelKey !== undefined && nextCapability === "image" && (hasModelSpecificImageCapability(nextProtocol, changed.modelKey, channel.apiFormat) || hasModelSpecificImageCapability(nextProtocol, modelKey, channel.apiFormat))) {
+            form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(nextProtocol, changed.modelKey, channel.apiFormat));
         }
         if (!changed.capability) return;
         const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
         if ((currentBillingMode === "per_second" && changed.capability !== "video") || (currentBillingMode === "token" && changed.capability !== "text")) {
             form.setFieldValue("billingMode", "fixed_request");
         }
-        const current = form.getFieldValue("protocol") as ModelProtocol | undefined;
+        const current = nextProtocol;
         if (modelProtocolCapability(current) !== changed.capability) {
             const nextProtocol = MODEL_PROTOCOLS.find((item) => item.capability === changed.capability)?.value;
             form.setFieldValue("protocol", nextProtocol);
-            form.setFieldValue("capabilityConfig", changed.capability === "image" || changed.capability === "video" ? defaultModelCapabilityConfig(nextProtocol, form.getFieldValue("modelKey")) : undefined);
+            form.setFieldValue("capabilityConfig", changed.capability === "image" || changed.capability === "video" ? defaultModelCapabilityConfig(nextProtocol, form.getFieldValue("modelKey"), channel.apiFormat) : undefined);
         }
     };
 

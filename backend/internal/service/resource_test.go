@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
+	"hash/crc64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,6 +39,155 @@ func TestSignedOSSObjectURLUsesExpiringQuerySignature(t *testing.T) {
 	}
 	if strings.Contains(value, "secret-value") {
 		t.Fatalf("signed URL leaked access key secret: %q", value)
+	}
+}
+
+func TestSignedOSSObjectURLSupportsTencentCOS(t *testing.T) {
+	value, err := signedOSSObjectURL(ossSettingValue{
+		Provider: tencentCOSProvider, Region: "ap-guangzhou", Bucket: "private-bucket-1250000000",
+		AccessKeyID: "secret-id", AccessKeySecret: "secret-key",
+	}, "users/u-1/image/test image.png", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("signedOSSObjectURL() error = %v", err)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	if parsed.Host != "private-bucket-1250000000.cos.ap-guangzhou.myqcloud.com" || query.Get("q-sign-algorithm") != "sha1" || query.Get("q-ak") != "secret-id" || query.Get("q-signature") == "" {
+		t.Fatalf("signed COS URL = %q", value)
+	}
+	if strings.Contains(value, "secret-key") {
+		t.Fatalf("signed COS URL leaked secret key: %q", value)
+	}
+}
+
+func TestPutOSSObjectSupportsTencentCOS(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	payload := []byte("cos upload payload")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/users/u-1/image/test.png" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "image/png" {
+			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
+		}
+		authorization := r.Header.Get("Authorization")
+		if !strings.Contains(authorization, "q-sign-algorithm=sha1") || !strings.Contains(authorization, "q-ak=secret-id") {
+			t.Errorf("Authorization = %q", authorization)
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if !bytes.Equal(data, payload) {
+			t.Errorf("body = %q", data)
+		}
+		w.Header().Set("ETag", `"cos-etag"`)
+		w.Header().Set("x-cos-hash-crc64ecma", strconv.FormatUint(crc64.Checksum(data, crc64.MakeTable(crc64.ECMA)), 10))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	etag, err := putOSSObject(ossSettingValue{
+		Provider: tencentCOSProvider, Endpoint: server.URL, Bucket: "private-bucket-1250000000",
+		AccessKeyID: "secret-id", AccessKeySecret: "secret-key",
+	}, "users/u-1/image/test.png", "image/png", int64(len(payload)), bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if etag != "cos-etag" {
+		t.Fatalf("ETag = %q", etag)
+	}
+}
+
+func TestGetOSSObjectRangeSupportsTencentCOS(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "bytes=0-3" {
+			t.Errorf("Range = %q", r.Header.Get("Range"))
+		}
+		authorization := r.Header.Get("Authorization")
+		if !strings.Contains(authorization, "q-sign-algorithm=sha1") || !strings.Contains(authorization, "q-ak=secret-id") {
+			t.Errorf("Authorization = %q", authorization)
+		}
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Range", "bytes 0-3/7")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("data"))
+	}))
+	defer server.Close()
+
+	stream, err := getOSSObjectRange(ossSettingValue{
+		Provider: tencentCOSProvider, Endpoint: server.URL, Bucket: "private-bucket-1250000000",
+		AccessKeyID: "secret-id", AccessKeySecret: "secret-key",
+	}, "users/u-1/image/test.png", "bytes=0-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.body.Close()
+	data, err := io.ReadAll(stream.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.statusCode != http.StatusPartialContent || stream.contentRange != "bytes 0-3/7" || string(data) != "data" {
+		t.Fatalf("stream = %#v, data = %q", stream, data)
+	}
+}
+
+func TestTencentCOSSettingDerivesEndpointAndDoesNotReuseAliyunSecret(t *testing.T) {
+	normalized := normalizeOSSSetting(ossSettingValue{Provider: tencentCOSProvider, Region: "ap-shanghai"})
+	if normalized.Endpoint != "https://cos.ap-shanghai.myqcloud.com" {
+		t.Fatalf("Endpoint = %q", normalized.Endpoint)
+	}
+
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	_, err := ossSettingFromRequest(OSSSettingRequest{
+		Enabled: true, Provider: tencentCOSProvider, Endpoint: server.URL, Bucket: "private-bucket-1250000000", AccessKeyID: "secret-id",
+	}, ossSettingValue{Provider: aliyunOSSProvider, AccessKeySecret: "aliyun-secret"})
+	if err == nil || !strings.Contains(err.Error(), "AccessKey Secret") {
+		t.Fatalf("ossSettingFromRequest() error = %v", err)
+	}
+}
+
+func TestPlatformProviderSwitchKeepsHistoricalCredentials(t *testing.T) {
+	current := ossSettingValue{Provider: aliyunOSSProvider, AccessKeyID: "aliyun-id", AccessKeySecret: "aliyun-secret"}
+	next := archiveOSSProviderCredentials(ossSettingValue{Provider: tencentCOSProvider, AccessKeyID: "cos-id", AccessKeySecret: "cos-secret"}, current)
+	historical, err := ossSettingForProvider(next, aliyunOSSProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historical.Provider != aliyunOSSProvider || historical.AccessKeyID != "aliyun-id" || historical.AccessKeySecret != "aliyun-secret" {
+		t.Fatalf("historical setting = %#v", historical)
+	}
+	if _, ok := next.ArchivedCredentials[tencentCOSProvider]; ok {
+		t.Fatalf("active provider credentials were archived: %#v", next.ArchivedCredentials)
+	}
+}
+
+func TestArchivedProviderCredentialsAreEncryptedAtRest(t *testing.T) {
+	svc := &Service{dataDir: t.TempDir()}
+	value := ossSettingValue{
+		Provider: tencentCOSProvider, AccessKeyID: "cos-id", AccessKeySecret: "cos-secret", CDNAuthKey: "cdn-auth-key",
+		ArchivedCredentials: map[string]ossProviderCredentials{
+			aliyunOSSProvider: {AccessKeyID: "aliyun-id", AccessKeySecret: "aliyun-secret"},
+		},
+	}
+	stored, err := svc.encryptOSSSettingSecrets(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(stored.AccessKeySecret, encryptedSettingPrefix) || !strings.HasPrefix(stored.CDNAuthKey, encryptedSettingPrefix) || !strings.HasPrefix(stored.ArchivedCredentials[aliyunOSSProvider].AccessKeySecret, encryptedSettingPrefix) {
+		t.Fatalf("stored credentials are not encrypted: %#v", stored)
+	}
+	if _, err := svc.decryptOSSSettingSecrets(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.AccessKeySecret != "cos-secret" || stored.CDNAuthKey != "cdn-auth-key" || stored.ArchivedCredentials[aliyunOSSProvider].AccessKeySecret != "aliyun-secret" {
+		t.Fatalf("decrypted credentials = %#v", stored)
 	}
 }
 
@@ -173,6 +325,60 @@ func TestHydrateNewAPIChannel1ResourceUsesSignedOSSURL(t *testing.T) {
 	}
 	if err := svc.hydrateProviderMedia("other-user", &providerMedia{StorageKey: "resource:resource-1"}, true); err == nil {
 		t.Fatal("hydrateProviderMedia() allowed another user's resource")
+	}
+}
+
+func TestHydrateNewAPIChannel1ResourceBypassesInvalidCDNAuthKey(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value", CDNBaseURL: "https://media.example.com", CDNAuthKey: encryptedSettingPrefix + "invalid",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-cdn-fallback", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	media := providerMedia{StorageKey: "resource:resource-cdn-fallback"}
+	if err := svc.hydrateProviderMedia("user-1", &media, true); err != nil {
+		t.Fatalf("hydrateProviderMedia() error = %v", err)
+	}
+	parsed, err := url.Parse(media.URL)
+	if err != nil || parsed.Host != "private-bucket.oss-cn-test.aliyuncs.com" || parsed.Query().Get("Signature") == "" {
+		t.Fatalf("provider media URL = %q, %v", media.URL, err)
+	}
+}
+
+func TestDirectResourceURLFallsBackToOSSWhenCDNAuthKeyCannotDecrypt(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value", CDNBaseURL: "https://media.example.com", CDNAuthKey: encryptedSettingPrefix + "invalid",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-direct-cdn-fallback", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	value, err := svc.DirectResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatalf("DirectResourceURL() error = %v", err)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host != "private-bucket.oss-cn-test.aliyuncs.com" || parsed.Query().Get("Signature") == "" {
+		t.Fatalf("DirectResourceURL() = %q, %v", value, err)
 	}
 }
 

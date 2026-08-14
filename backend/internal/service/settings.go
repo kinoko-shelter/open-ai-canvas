@@ -23,6 +23,11 @@ import (
 const ossSettingKey = "oss"
 const encryptedSettingPrefix = "enc:v1:"
 
+const (
+	aliyunOSSProvider  = "aliyun"
+	tencentCOSProvider = "tencent"
+)
+
 type OSSSettingRequest struct {
 	Enabled         bool   `json:"enabled"`
 	Provider        string `json:"provider"`
@@ -66,6 +71,13 @@ type ossSettingValue struct {
 	CDNAuthKey      string `json:"cdnAuthKey"`
 	PublicBaseURL   string `json:"publicBaseUrl"`
 	PathPrefix      string `json:"pathPrefix"`
+	// 平台切换云厂商后仍需读取历史资源，因此仅归档非当前厂商的访问密钥。
+	ArchivedCredentials map[string]ossProviderCredentials `json:"archivedCredentials,omitempty"`
+}
+
+type ossProviderCredentials struct {
+	AccessKeyID     string `json:"accessKeyId"`
+	AccessKeySecret string `json:"accessKeySecret"`
 }
 
 func (s *Service) AdminOSSSetting(actor *model.User) (*PublicOSSSetting, error) {
@@ -100,12 +112,8 @@ func (s *Service) UpdateOSSSetting(actor *model.User, req OSSSettingRequest) (*P
 			return nil, fmt.Errorf("服务器访问地址无效：%w", err)
 		}
 	}
-	stored := next
-	stored.AccessKeySecret, err = s.encryptSettingSecret(next.AccessKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	stored.CDNAuthKey, err = s.encryptSettingSecret(next.CDNAuthKey)
+	next = archiveOSSProviderCredentials(next, currentValue)
+	stored, err := s.encryptOSSSettingSecrets(next)
 	if err != nil {
 		return nil, err
 	}
@@ -155,8 +163,7 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 	if err != nil {
 		return nil, err
 	}
-	stored := next
-	stored.AccessKeySecret, err = s.encryptSettingSecret(next.AccessKeySecret)
+	stored, err := s.encryptOSSSettingSecrets(next)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +181,16 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 }
 
 func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error) {
+	return s.readOSSSettingWithSecrets(true)
+}
+
+// readOSSStorageSetting 仅解密 OSS 读写必需的访问凭据。CDN 是可选分发能力，
+// 不能因为其鉴权密钥异常而阻断上传、下载或模型参考素材签名。
+func (s *Service) readOSSStorageSetting() (*model.SystemSetting, ossSettingValue, error) {
+	return s.readOSSSettingWithSecrets(false)
+}
+
+func (s *Service) readOSSSettingWithSecrets(includeCDN bool) (*model.SystemSetting, ossSettingValue, error) {
 	setting, err := s.repo.SystemSetting(ossSettingKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, defaultOSSSetting(), nil
@@ -187,23 +204,22 @@ func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error
 			return nil, ossSettingValue{}, errors.New("平台 OSS 配置格式无效")
 		}
 	}
-	storedAccessKeySecret := value.AccessKeySecret
-	storedCDNAuthKey := value.CDNAuthKey
-	value.AccessKeySecret, err = s.decryptSettingSecret(value.AccessKeySecret)
+	needsMigration := false
+	if includeCDN {
+		needsMigration, err = s.decryptOSSSettingSecrets(&value)
+	} else {
+		needsMigration, err = s.decryptOSSStorageSecrets(&value)
+	}
 	if err != nil {
 		return nil, ossSettingValue{}, err
 	}
-	value.CDNAuthKey, err = s.decryptSettingSecret(value.CDNAuthKey)
-	if err != nil {
-		return nil, ossSettingValue{}, err
-	}
-	if (storedAccessKeySecret != "" && !strings.HasPrefix(storedAccessKeySecret, encryptedSettingPrefix)) || (storedCDNAuthKey != "" && !strings.HasPrefix(storedCDNAuthKey, encryptedSettingPrefix)) {
-		migrated := value
-		migrated.AccessKeySecret, err = s.encryptSettingSecret(value.AccessKeySecret)
-		if err != nil {
-			return nil, ossSettingValue{}, err
+	if needsMigration {
+		var migrated ossSettingValue
+		if includeCDN {
+			migrated, err = s.encryptOSSSettingSecrets(value)
+		} else {
+			migrated, err = s.encryptOSSStorageSecrets(value)
 		}
-		migrated.CDNAuthKey, err = s.encryptSettingSecret(value.CDNAuthKey)
 		if err != nil {
 			return nil, ossSettingValue{}, err
 		}
@@ -247,13 +263,76 @@ func (s *Service) userOSSSettingValue(setting *model.UserOSSSetting) (ossSetting
 			return ossSettingValue{}, errors.New("用户 OSS 配置格式无效")
 		}
 	}
-	secret, err := s.decryptSettingSecret(value.AccessKeySecret)
+	if _, err := s.decryptOSSSettingSecrets(&value); err != nil {
+		return ossSettingValue{}, err
+	}
+	value.Enabled = setting.Enabled
+	return normalizeOSSSetting(value), nil
+}
+
+func (s *Service) encryptOSSSettingSecrets(value ossSettingValue) (ossSettingValue, error) {
+	value, err := s.encryptOSSStorageSecrets(value)
 	if err != nil {
 		return ossSettingValue{}, err
 	}
+	value.CDNAuthKey, err = s.encryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return ossSettingValue{}, err
+	}
+	return value, nil
+}
+
+func (s *Service) encryptOSSStorageSecrets(value ossSettingValue) (ossSettingValue, error) {
+	var err error
+	value.AccessKeySecret, err = s.encryptSettingSecret(value.AccessKeySecret)
+	if err != nil {
+		return ossSettingValue{}, err
+	}
+	value.ArchivedCredentials = cloneOSSProviderCredentials(value.ArchivedCredentials)
+	for provider, credentials := range value.ArchivedCredentials {
+		credentials.AccessKeySecret, err = s.encryptSettingSecret(credentials.AccessKeySecret)
+		if err != nil {
+			return ossSettingValue{}, err
+		}
+		value.ArchivedCredentials[provider] = credentials
+	}
+	return value, nil
+}
+
+func (s *Service) decryptOSSSettingSecrets(value *ossSettingValue) (bool, error) {
+	needsMigration, err := s.decryptOSSStorageSecrets(value)
+	if err != nil {
+		return false, err
+	}
+	if value.CDNAuthKey != "" && !strings.HasPrefix(value.CDNAuthKey, encryptedSettingPrefix) {
+		needsMigration = true
+	}
+	value.CDNAuthKey, err = s.decryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return false, err
+	}
+	return needsMigration, nil
+}
+
+func (s *Service) decryptOSSStorageSecrets(value *ossSettingValue) (bool, error) {
+	needsMigration := value.AccessKeySecret != "" && !strings.HasPrefix(value.AccessKeySecret, encryptedSettingPrefix)
+	secret, err := s.decryptSettingSecret(value.AccessKeySecret)
+	if err != nil {
+		return false, err
+	}
 	value.AccessKeySecret = secret
-	value.Enabled = setting.Enabled
-	return normalizeOSSSetting(value), nil
+	value.ArchivedCredentials = cloneOSSProviderCredentials(value.ArchivedCredentials)
+	for provider, credentials := range value.ArchivedCredentials {
+		if credentials.AccessKeySecret != "" && !strings.HasPrefix(credentials.AccessKeySecret, encryptedSettingPrefix) {
+			needsMigration = true
+		}
+		credentials.AccessKeySecret, err = s.decryptSettingSecret(credentials.AccessKeySecret)
+		if err != nil {
+			return false, err
+		}
+		value.ArchivedCredentials[provider] = credentials
+	}
+	return needsMigration, nil
 }
 
 func (s *Service) encryptSettingSecret(value string) (string, error) {
@@ -420,7 +499,7 @@ func (s *Service) decryptTaskSecrets(value interface{}) error {
 }
 
 func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossSettingValue, error) {
-	next := ossSettingValue{
+	next := normalizeOSSSetting(ossSettingValue{
 		Enabled:         req.Enabled,
 		Provider:        strings.TrimSpace(req.Provider),
 		Region:          strings.TrimSpace(req.Region),
@@ -432,14 +511,16 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 		CDNAuthKey:      strings.TrimSpace(req.CDNAuthKey),
 		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(req.PublicBaseURL), "/"),
 		PathPrefix:      strings.Trim(strings.TrimSpace(req.PathPrefix), "/"),
+	})
+	if next.Provider != aliyunOSSProvider && next.Provider != tencentCOSProvider {
+		return next, BadAuthRequest("仅支持阿里云 OSS 和腾讯云 COS")
 	}
-	if next.Provider == "" {
-		next.Provider = "aliyun"
+	if next.Provider != aliyunOSSProvider && (next.CDNBaseURL != "" || next.CDNAuthKey != "") {
+		return next, BadAuthRequest("媒体 CDN 仅支持阿里云 OSS")
 	}
-	if next.Provider != "aliyun" {
-		return next, BadAuthRequest("暂时只支持阿里云 OSS")
-	}
-	if next.AccessKeySecret == "" {
+	current = normalizeOSSSetting(current)
+	// 不同云厂商的密钥不能复用；只有继续使用同一厂商时，留空才表示保留原密钥。
+	if next.AccessKeySecret == "" && next.Provider == current.Provider {
 		next.AccessKeySecret = current.AccessKeySecret
 	}
 	if next.CDNAuthKey == "" && next.CDNBaseURL != "" {
@@ -450,10 +531,13 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 	}
 	if next.Enabled {
 		if next.Bucket == "" {
-			return next, BadAuthRequest("请填写 OSS Bucket")
+			return next, BadAuthRequest("请填写对象存储 Bucket")
 		}
 		if next.Endpoint == "" {
-			return next, BadAuthRequest("请填写 OSS Endpoint")
+			if next.Provider == tencentCOSProvider {
+				return next, BadAuthRequest("请填写腾讯云 COS Region 或 Endpoint")
+			}
+			return next, BadAuthRequest("请填写阿里云 OSS Endpoint")
 		}
 		if _, err := ValidateOutboundURL(next.Endpoint); err != nil {
 			return next, err
@@ -476,13 +560,42 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 	return next, nil
 }
 
+func archiveOSSProviderCredentials(next ossSettingValue, current ossSettingValue) ossSettingValue {
+	next.ArchivedCredentials = cloneOSSProviderCredentials(current.ArchivedCredentials)
+	if current.Provider != next.Provider && (current.AccessKeyID != "" || current.AccessKeySecret != "") {
+		if next.ArchivedCredentials == nil {
+			next.ArchivedCredentials = make(map[string]ossProviderCredentials)
+		}
+		next.ArchivedCredentials[current.Provider] = ossProviderCredentials{AccessKeyID: current.AccessKeyID, AccessKeySecret: current.AccessKeySecret}
+	}
+	delete(next.ArchivedCredentials, next.Provider)
+	return next
+}
+
+func cloneOSSProviderCredentials(source map[string]ossProviderCredentials) map[string]ossProviderCredentials {
+	if len(source) == 0 {
+		return nil
+	}
+	cloned := make(map[string]ossProviderCredentials, len(source))
+	for provider, credentials := range source {
+		cloned[strings.ToLower(strings.TrimSpace(provider))] = ossProviderCredentials{
+			AccessKeyID:     strings.TrimSpace(credentials.AccessKeyID),
+			AccessKeySecret: strings.TrimSpace(credentials.AccessKeySecret),
+		}
+	}
+	return cloned
+}
+
 func normalizeOSSSetting(value ossSettingValue) ossSettingValue {
-	value.Provider = strings.TrimSpace(value.Provider)
+	value.Provider = strings.ToLower(strings.TrimSpace(value.Provider))
 	if value.Provider == "" {
-		value.Provider = "aliyun"
+		value.Provider = aliyunOSSProvider
 	}
 	value.Region = strings.TrimSpace(value.Region)
 	value.Endpoint = strings.TrimRight(strings.TrimSpace(value.Endpoint), "/")
+	if value.Provider == tencentCOSProvider && value.Endpoint == "" && value.Region != "" {
+		value.Endpoint = "https://cos." + value.Region + ".myqcloud.com"
+	}
 	value.Bucket = strings.TrimSpace(value.Bucket)
 	value.AccessKeyID = strings.TrimSpace(value.AccessKeyID)
 	value.AccessKeySecret = strings.TrimSpace(value.AccessKeySecret)
@@ -490,11 +603,12 @@ func normalizeOSSSetting(value ossSettingValue) ossSettingValue {
 	value.CDNAuthKey = strings.TrimSpace(value.CDNAuthKey)
 	value.PublicBaseURL = strings.TrimRight(strings.TrimSpace(value.PublicBaseURL), "/")
 	value.PathPrefix = strings.Trim(strings.TrimSpace(value.PathPrefix), "/")
+	value.ArchivedCredentials = cloneOSSProviderCredentials(value.ArchivedCredentials)
 	return value
 }
 
 func defaultOSSSetting() ossSettingValue {
-	return ossSettingValue{Provider: "aliyun"}
+	return ossSettingValue{Provider: aliyunOSSProvider}
 }
 
 func publicOSSSetting(setting *model.SystemSetting, value ossSettingValue) PublicOSSSetting {

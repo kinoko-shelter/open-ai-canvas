@@ -188,7 +188,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) {
+	if input.Config.APIFormat == "gemini" && input.Mode != "image" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) {
 		return nil, errors.New("后端任务队列暂不支持 Gemini 调用格式，请使用 OpenAI 兼容渠道")
 	}
 	if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
@@ -435,7 +435,7 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
-	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
+	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Image != nil {
@@ -443,6 +443,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 		} else {
 			input.ImageCapability = fallback
 		}
+		input.ImageCapability = applyModelSpecificImageCapability(input.ImageCapability, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 		return validateImageTask(input.ImageCapability, *input)
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, strings.TrimPrefix(strings.TrimSpace(input.Config.Model), "models/"))
@@ -458,6 +459,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 	} else {
 		input.ImageCapability = fallback
 	}
+	input.ImageCapability = applyModelSpecificImageCapability(input.ImageCapability, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	return validateImageTask(input.ImageCapability, *input)
 }
 
@@ -491,7 +493,7 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requirePublicURL bool) error {
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
 		if requirePublicURL && strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
-			return errors.New("当前 JSON 视频协议的参考素材不能使用内嵌数据，请先上传到 OSS 或提供公网素材地址")
+			return errors.New("当前 JSON 视频协议的参考素材不能使用内嵌数据，请先上传到对象存储或提供公网素材地址")
 		}
 		return nil
 	}
@@ -504,7 +506,7 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 		if resource.Status != "ready" {
 			return errors.New("任务参考资源尚未上传完成")
 		}
-		signedURL, err := s.directResourceURL(resource, time.Now().Add(providerResourceURLTTL))
+		signedURL, err := s.providerResourceURL(resource, time.Now().Add(providerResourceURLTTL))
 		if err != nil {
 			return fmt.Errorf("生成 JSON 视频协议参考素材地址失败：%w", err)
 		}
@@ -572,7 +574,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		}
 		return config, nil
 	}
-	channel, err := s.repo.SystemChannel(channelID)
+	channel, err := s.SystemChannel(channelID)
 	if err != nil {
 		return providerConfig{}, errors.New("系统渠道不存在或已停用")
 	}
@@ -595,7 +597,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	}
 	config.InterfaceType = string(channelModel.Protocol)
 	// 模型协议是实际请求契约；混合渠道中鉴权格式也必须随模型协议切换。
-	if config.InterfaceType == string(model.ChannelInterfaceGeminiVeo) {
+	if config.InterfaceType == string(model.ChannelInterfaceGeminiVeo) || config.InterfaceType == string(model.ChannelInterfaceGeminiImage) {
 		config.APIFormat = "gemini"
 	} else if config.InterfaceType != "" {
 		config.APIFormat = "openai"
@@ -638,6 +640,9 @@ func systemChannelIDFromBaseURL(baseURL string) string {
 }
 
 func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.Config.APIFormat == "gemini" {
+		return runGeminiImageTask(ctx, input)
+	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceGrokImage) {
 		return runGrokImageTask(ctx, input)
 	}
@@ -672,10 +677,12 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		if imageTransparentBackgroundSupported(input.ImageCapability) && input.Config.TransparentBackground == "true" {
 			writeField(writer, "background", "transparent")
 		}
-		if imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
+		if !isGPTImage2Model(input.Config.Model) && imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
 			writeField(writer, "quality", normalizeImageQuality(input.Config.Quality))
 		}
-		if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+		if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+			return nil, err
+		} else if value != "" {
 			writeField(writer, key, value)
 		}
 		for _, image := range input.ReferenceImages {
@@ -709,10 +716,12 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		if imageTransparentBackgroundSupported(input.ImageCapability) && input.Config.TransparentBackground == "true" {
 			body["background"] = "transparent"
 		}
-		if imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
+		if !isGPTImage2Model(input.Config.Model) && imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
 			body["quality"] = normalizeImageQuality(input.Config.Quality)
 		}
-		if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+		if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+			return nil, err
+		} else if value != "" {
 			body[key] = value
 		}
 		if err := postJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
@@ -722,6 +731,70 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 	images, err := imageDataURLs(payload)
 	if err != nil {
 		return nil, err
+	}
+	return map[string]interface{}{"mode": "image", "images": images}, nil
+}
+
+func runGeminiImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.Mask != nil {
+		return nil, errors.New("Gemini 图片协议暂不支持蒙版编辑")
+	}
+	parts := []geminiImagePart{{Text: strings.TrimSpace(input.Prompt)}}
+	for _, image := range input.ReferenceImages {
+		raw, mimeType, err := mediaBytes(image)
+		if err != nil {
+			return nil, fmt.Errorf("读取 Gemini 参考图失败：%w", err)
+		}
+		parts = append(parts, geminiImagePart{InlineData: &geminiImageInlineData{MIMEType: mimeType, Data: base64.StdEncoding.EncodeToString(raw)}})
+	}
+	_, aspectRatio, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size)
+	if err != nil {
+		return nil, err
+	}
+	if aspectRatio != "" && aspectRatio != "auto" {
+		aspectRatio = normalizeImageAspectRatio(aspectRatio)
+		if aspectRatio == "" {
+			return nil, errors.New("Gemini 图片宽高比无效")
+		}
+	}
+	body := geminiImageRequest{
+		Contents: []geminiImageContent{{Role: "user", Parts: parts}},
+		GenerationConfig: geminiImageGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+		},
+	}
+	if aspectRatio != "" && aspectRatio != "auto" {
+		body.GenerationConfig.ImageConfig = &geminiImageConfig{AspectRatio: aspectRatio}
+	}
+	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
+		body.SystemInstruction = &geminiImageContent{Parts: []geminiImagePart{{Text: systemPrompt}}}
+	}
+	var payload geminiImageResponse
+	if err := postGeminiJSON(ctx, input.Config, "/models/"+url.PathEscape(input.Config.Model)+":generateContent", body, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
+		return nil, fmt.Errorf("Gemini 图片生成失败：%s", payload.Error.Message)
+	}
+	if payload.PromptFeedback != nil && strings.TrimSpace(payload.PromptFeedback.BlockReason) != "" {
+		return nil, fmt.Errorf("Gemini 拒绝了本次图片请求：%s", payload.PromptFeedback.BlockReason)
+	}
+	images := make([]map[string]string, 0)
+	for _, candidate := range payload.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData == nil || strings.TrimSpace(part.InlineData.Data) == "" {
+				continue
+			}
+			raw, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+			if err != nil {
+				return nil, fmt.Errorf("Gemini 图片响应编码无效：%w", err)
+			}
+			mimeType := normalizedMediaMimeType(part.InlineData.MIMEType, raw)
+			images = append(images, map[string]string{"dataUrl": dataURL(mimeType, raw)})
+		}
+	}
+	if len(images) == 0 {
+		return nil, errors.New("Gemini 接口没有返回图片")
 	}
 	return map[string]interface{}{"mode": "image", "images": images}, nil
 }
@@ -751,9 +824,9 @@ func grokImageRequestBody(input canvasGenerationInput) (grokImageRequest, string
 		Prompt:         withSystemPrompt(input.Config, input.Prompt),
 		N:              1,
 		ResponseFormat: "url",
-		Size:           strings.TrimSpace(input.Config.Size),
-		AspectRatio:    normalizeGrokImageAspectRatio(input.Config.Size),
-		Resolution:     normalizeGrokImageResolution(input.Config.Quality),
+		// Grok 图片协议用 aspect_ratio 表达画布比例；同时发送 size 会被上游按 OpenAI 枚举校验并拒绝。
+		AspectRatio: normalizeGrokImageAspectRatio(input.Config.Size),
+		Resolution:  normalizeGrokImageResolution(input.Config.Quality),
 	}
 	if len(input.ReferenceImages) == 0 {
 		return body, "/images/generations", nil
@@ -833,7 +906,10 @@ func grokImageInputURL(media providerMedia) (string, error) {
 	return openAIImageInputURL(media)
 }
 
-const volcengineArkImageMaxPixels = 4624220
+const (
+	volcengineArkImageMinPixels = 3686400
+	volcengineArkImageMaxPixels = 4624220
+)
 
 func runVolcengineArkImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
 	if input.Mask != nil {
@@ -860,7 +936,9 @@ func volcengineArkImageBody(input canvasGenerationInput) (map[string]interface{}
 		"prompt": withSystemPrompt(input.Config, input.Prompt),
 		"n":      1,
 	}
-	if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+	if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+		return nil, err
+	} else if value != "" {
 		if key == "size" {
 			value = normalizeVolcengineArkImageSize(value)
 		}
@@ -896,12 +974,26 @@ func normalizeVolcengineArkImageSize(value string) string {
 	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
 		return size
 	}
-	if int64(width)*int64(height) <= volcengineArkImageMaxPixels {
+	pixels := int64(width) * int64(height)
+	if pixels >= volcengineArkImageMinPixels && pixels <= volcengineArkImageMaxPixels {
 		return size
 	}
-	scale := math.Sqrt(float64(volcengineArkImageMaxPixels) / (float64(width) * float64(height)))
-	width = int(math.Floor(float64(width)*scale/2)) * 2
-	height = int(math.Floor(float64(height)*scale/2)) * 2
+	targetPixels := volcengineArkImageMaxPixels
+	round := math.Floor
+	if pixels < volcengineArkImageMinPixels {
+		targetPixels = volcengineArkImageMinPixels
+		round = math.Ceil
+	}
+	scale := math.Sqrt(float64(targetPixels) / float64(pixels))
+	width = int(round(float64(width)*scale/2)) * 2
+	height = int(round(float64(height)*scale/2)) * 2
+	for width > 2 && height > 2 && int64(width)*int64(height) < volcengineArkImageMinPixels {
+		if width >= height {
+			width += 2
+		} else {
+			height += 2
+		}
+	}
 	for width > 2 && height > 2 && int64(width)*int64(height) > volcengineArkImageMaxPixels {
 		if width >= height {
 			width -= 2
@@ -1322,6 +1414,9 @@ func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]
 	if input.Config.InterfaceType == "gemini-veo" {
 		return runGeminiVeoVideoTask(ctx, input)
 	}
+	if input.Config.InterfaceType == string(model.ChannelInterfaceNovitaVideo) {
+		return runNovitaVideoTask(ctx, input)
+	}
 	if input.Config.InterfaceType == "newapi-channel-2" {
 		return runNewAPIChannel2VideoTask(ctx, input)
 	}
@@ -1488,6 +1583,126 @@ func runGeminiVeoVideoTask(ctx context.Context, input canvasGenerationInput) (ma
 		}
 	}
 	return nil, fmt.Errorf("Gemini Veo 视频生成超时（任务 %s）", id)
+}
+
+func runNovitaVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
+		return nil, errors.New("Novita 视频当前只支持 1 张起始图，不支持参考视频或参考音频")
+	}
+	id := resumedProviderRequestID(ctx)
+	if id == "" {
+		body := map[string]interface{}{
+			"model":    input.Config.Model,
+			"prompt":   strings.TrimSpace(input.Prompt),
+			"duration": normalizeNovitaVideoDuration(input.Config.VideoSeconds),
+		}
+		if len(input.ReferenceImages) == 1 {
+			imageValue, err := novitaVideoImageValue(input.ReferenceImages[0])
+			if err != nil {
+				return nil, err
+			}
+			body["image"] = imageValue
+		} else {
+			body["aspect_ratio"] = normalizeNovitaVideoRatio(input.Config.Size)
+		}
+		var created map[string]interface{}
+		if err := postNovitaJSON(ctx, input.Config, "/video/create", body, &created); err != nil {
+			return nil, err
+		}
+		id = strings.TrimSpace(stringField(created, "task_id"))
+	}
+	if id == "" {
+		return nil, errors.New("Novita 视频接口没有返回任务 ID")
+	}
+	for deadline := providerPollingDeadline(ctx); time.Now().Before(deadline); {
+		var result map[string]interface{}
+		if err := getNovitaJSON(ctx, input.Config, "/async/task-result?task_id="+url.QueryEscape(id), &result); err != nil {
+			return nil, err
+		}
+		task, _ := result["task"].(map[string]interface{})
+		switch stringField(task, "status") {
+		case "TASK_STATUS_SUCCEED":
+			videos, _ := result["videos"].([]interface{})
+			if len(videos) == 0 {
+				return nil, fmt.Errorf("Novita 视频任务 %s 已完成但没有返回视频", id)
+			}
+			first, _ := videos[0].(map[string]interface{})
+			videoURL := strings.TrimSpace(stringField(first, "video_url"))
+			if videoURL == "" {
+				return nil, fmt.Errorf("Novita 视频任务 %s 已完成但没有返回视频地址", id)
+			}
+			data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), videoURL)
+			if err != nil {
+				return nil, fmt.Errorf("Novita 视频结果下载失败（任务 %s）：%w", id, err)
+			}
+			mimeType = normalizedMediaMimeType(mimeType, data)
+			return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, nil
+		case "TASK_STATUS_FAILED":
+			reason := firstNonEmptyString(stringField(task, "reason"), "上游返回失败")
+			return nil, fmt.Errorf("Novita 视频生成失败（任务 %s）：%s", id, reason)
+		}
+		if err := sleepContext(ctx, 5*time.Second); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("Novita 视频生成超时（任务 %s）", id)
+}
+
+func novitaVideoImageValue(media providerMedia) (string, error) {
+	if isPublicMediaURL(media.URL) {
+		if _, err := ValidateOutboundURL(media.URL); err != nil {
+			return "", err
+		}
+		return media.URL, nil
+	}
+	raw, mimeType, err := mediaBytes(media)
+	if err != nil {
+		return "", err
+	}
+	return dataURL(mimeType, raw), nil
+}
+
+func normalizeNovitaVideoDuration(value string) string {
+	if normalizeSeedanceDuration(value) >= 8 {
+		return "10"
+	}
+	return "5"
+}
+
+func normalizeNovitaVideoRatio(value string) string {
+	switch strings.TrimSpace(value) {
+	case "16:9", "9:16", "1:1":
+		return strings.TrimSpace(value)
+	default:
+		return "16:9"
+	}
+}
+
+func novitaVideoURL(baseURL string, path string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return base + "/" + strings.TrimLeft(path, "/")
+}
+
+func postNovitaJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
+	data, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, novitaVideoURL(config.BaseURL, path), bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	ApplyOutboundHeaders(req, config.Headers)
+	return doJSON(req, target)
+}
+
+func getNovitaJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, novitaVideoURL(config.BaseURL, path), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	ApplyOutboundHeaders(req, config.Headers)
+	return doJSON(req, target)
 }
 
 func postGeminiJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
@@ -1817,7 +2032,7 @@ func videoGenerationsMediaURL(media providerMedia) (string, error) {
 	if isPublicMediaURL(value) || strings.HasPrefix(value, "data:") {
 		return value, nil
 	}
-	return "", errors.New("NewAPI Video Generations 的参考素材需要公网 URL；私有素材请先保存到 OSS")
+	return "", errors.New("NewAPI Video Generations 的参考素材需要公网 URL；私有素材请先保存到对象存储")
 }
 
 func normalizeNewAPIChannel2Ratio(value string, modelName string) string {
@@ -1972,7 +2187,7 @@ func newAPIChannel1VideoBody(input canvasGenerationInput) (map[string]interface{
 func newAPIChannel1MediaURL(media providerMedia) (string, error) {
 	value := strings.TrimSpace(media.URL)
 	if !isPublicMediaURL(value) {
-		return "", errors.New("NewAPI 媒体任务的参考素材必须使用公网 HTTP(S) URL，请启用 OSS 或提供公网素材地址")
+		return "", errors.New("NewAPI 媒体任务的参考素材必须使用公网 HTTP(S) URL，请启用对象存储或提供公网素材地址")
 	}
 	if _, err := ValidateOutboundURL(value); err != nil {
 		return "", err
@@ -2013,8 +2228,8 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	}
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
-		"image": {"openai-image": true, "grok-image": true, "volcengine-ark-image": true, "volcengine-jimeng-image": true},
-		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "volcengine-ark-video": true, "volcengine-jimeng-video": true, "gemini-veo": true},
+		"image": {"openai-image": true, "gemini-image": true, "grok-image": true, "volcengine-ark-image": true, "volcengine-jimeng-image": true},
+		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "volcengine-ark-video": true, "volcengine-jimeng-video": true, "gemini-veo": true, "novita-video": true},
 		"audio": {"openai-audio": true, "async-audio": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {

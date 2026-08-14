@@ -498,7 +498,25 @@ func (s *Service) PublicSystemChannels() ([]PublicModelChannel, error) {
 }
 
 func (s *Service) SystemChannel(id string) (*model.ModelChannel, error) {
-	return s.repo.SystemChannel(id)
+	channel, err := s.repo.SystemChannel(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decryptSystemChannelSecrets(channel); err != nil {
+		return nil, err
+	}
+	return channel, nil
+}
+
+func (s *Service) adminSystemChannel(id string) (*model.ModelChannel, error) {
+	channel, err := s.repo.AdminSystemChannel(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decryptSystemChannelSecrets(channel); err != nil {
+		return nil, err
+	}
+	return channel, nil
 }
 
 func (s *Service) AdminSystemChannelPage(actor *model.User, query AdminListQuery) (*AdminChannelPage, error) {
@@ -539,6 +557,9 @@ func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*P
 	if err != nil {
 		return nil, err
 	}
+	if err := s.encryptSystemChannelSecrets(&channel); err != nil {
+		return nil, err
+	}
 	if err := s.repo.Create(&channel); err != nil {
 		return nil, err
 	}
@@ -561,6 +582,9 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 	if err != nil {
 		return nil, err
 	}
+	if err := s.decryptSystemChannelSecrets(channel); err != nil {
+		return nil, err
+	}
 	req = mergeChannelRequest(req, *channel)
 	next, err := channelFromRequest(req, *channel)
 	if err != nil {
@@ -576,6 +600,9 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 	if req.SecretKey == "" {
 		next.SecretKey = channel.SecretKey
 	}
+	if err := s.encryptSystemChannelSecrets(&next); err != nil {
+		return nil, err
+	}
 	if err := s.repo.Save(&next); err != nil {
 		return nil, err
 	}
@@ -588,6 +615,34 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 	}
 	public := publicChannel(next, true, items)
 	return &public, nil
+}
+
+func (s *Service) encryptSystemChannelSecrets(channel *model.ModelChannel) error {
+	apiKey, err := s.encryptSettingSecret(channel.APIKey)
+	if err != nil {
+		return err
+	}
+	secretKey, err := s.encryptSettingSecret(channel.SecretKey)
+	if err != nil {
+		return err
+	}
+	channel.APIKey = apiKey
+	channel.SecretKey = secretKey
+	return nil
+}
+
+func (s *Service) decryptSystemChannelSecrets(channel *model.ModelChannel) error {
+	apiKey, err := s.decryptSettingSecret(channel.APIKey)
+	if err != nil {
+		return err
+	}
+	secretKey, err := s.decryptSettingSecret(channel.SecretKey)
+	if err != nil {
+		return err
+	}
+	channel.APIKey = apiKey
+	channel.SecretKey = secretKey
+	return nil
 }
 
 func (s *Service) DeleteSystemChannel(actor *model.User, id string) error {
@@ -785,7 +840,7 @@ func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) Channel
 
 func validChannelInterfaceType(value model.ChannelInterfaceType) bool {
 	switch value {
-	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceGrokImage, model.ChannelInterfaceVolcengineArkImage, model.ChannelInterfaceVolcengineJiMengImage, model.ChannelInterfaceOpenAIAudio, model.ChannelInterfaceAsyncAudio, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceVolcengineArkVideo, model.ChannelInterfaceVolcengineJiMengVideo, model.ChannelInterfaceGeminiVeo:
+	case model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse, model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceGeminiImage, model.ChannelInterfaceGrokImage, model.ChannelInterfaceVolcengineArkImage, model.ChannelInterfaceVolcengineJiMengImage, model.ChannelInterfaceOpenAIAudio, model.ChannelInterfaceAsyncAudio, model.ChannelInterfaceNewAPIVideo, model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceVolcengineArkVideo, model.ChannelInterfaceVolcengineJiMengVideo, model.ChannelInterfaceGeminiVeo:
 		return true
 	default:
 		return false
@@ -801,7 +856,12 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 		}
 		models = append(models, item.ModelKey)
 		if item.Enabled && item.PriceConfigured {
-			capabilityConfig, _ := DecodeModelCapabilityConfig(item.CapabilityConfigJSON)
+			capabilityConfig, decodeErr := DecodeModelCapabilityConfig(item.CapabilityConfigJSON)
+			if decodeErr == nil && capabilityConfig != nil {
+				if normalized, normalizeErr := NormalizeModelCapabilityConfig(item.Capability, string(item.Protocol), item.ModelKey, channel.APIFormat, capabilityConfig); normalizeErr == nil {
+					capabilityConfig = normalized
+				}
+			}
 			modelCosts = append(modelCosts, PublicChannelModelPrice{Model: item.ModelKey, DisplayName: item.DisplayName, Capability: item.Capability, Protocol: item.Protocol, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputTokenPriceMicrocredits: item.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: item.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: item.CachedTokenPriceMicrocredits, CapabilityConfig: capabilityConfig})
 		}
 	}

@@ -142,8 +142,29 @@ func TestVolcengineArkImageBodyUsesJSONReferencesAndDownscalesSize(t *testing.T)
 	}
 	width, _ := strconv.Atoi(parts[0])
 	height, _ := strconv.Atoi(parts[1])
-	if width%2 != 0 || height%2 != 0 || int64(width)*int64(height) > volcengineArkImageMaxPixels {
+	if width%2 != 0 || height%2 != 0 || int64(width)*int64(height) < volcengineArkImageMinPixels || int64(width)*int64(height) > volcengineArkImageMaxPixels {
 		t.Fatalf("downscaled size = %q", size)
+	}
+}
+
+func TestVolcengineArkImageBodyUpscalesPresetBelowMinimumPixels(t *testing.T) {
+	body, err := volcengineArkImageBody(canvasGenerationInput{
+		Prompt: "vertical image",
+		Config: providerConfig{Model: "doubao-seedream-test", Size: "9:16"},
+	})
+	if err != nil {
+		t.Fatalf("volcengineArkImageBody() error = %v", err)
+	}
+	size, _ := body["size"].(string)
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		t.Fatalf("size = %q", size)
+	}
+	width, _ := strconv.Atoi(parts[0])
+	height, _ := strconv.Atoi(parts[1])
+	pixels := int64(width) * int64(height)
+	if width%2 != 0 || height%2 != 0 || pixels < volcengineArkImageMinPixels || pixels > volcengineArkImageMaxPixels {
+		t.Fatalf("normalized size = %q", size)
 	}
 }
 
@@ -208,8 +229,20 @@ func TestGrokImageRequestBodyMapsAspectRatio(t *testing.T) {
 	if path != "/images/generations" {
 		t.Fatalf("path = %q", path)
 	}
-	if body.AspectRatio != "9:16" || body.Size != "9:16" || body.Resolution != "2k" {
+	if body.AspectRatio != "9:16" || body.Resolution != "2k" {
 		t.Fatalf("body = %#v", body)
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	// Grok 使用 aspect_ratio；测试锁定请求 JSON，防止非法 size 字段再次混入。
+	if _, exists := payload["size"]; exists {
+		t.Fatalf("request body must not contain size: %s", encoded)
 	}
 	if got := normalizeGrokImageAspectRatio("1280x720"); got != "16:9" {
 		t.Fatalf("normalize 1280x720 = %q", got)
@@ -270,6 +303,74 @@ func TestNormalizePixelSizeConvertsCanvasAspectRatios(t *testing.T) {
 				t.Fatalf("normalizePixelSize(%q) = %q, want %q", input, got, want)
 			}
 		})
+	}
+}
+
+func TestResolveGPTImage2SizeUsesPresetAndPassesExactDimensions(t *testing.T) {
+	tests := []struct {
+		quality string
+		size    string
+		want    string
+	}{
+		{quality: "1k", size: "1:1", want: "1024x1024"},
+		{quality: "2k", size: "16:9", want: "2048x1152"},
+		{quality: "2k", size: "9:16", want: "1440x2560"},
+		{quality: "4k", size: "16:9", want: "3312x1872"},
+		{quality: "4k", size: "9:16", want: "1872x3328"},
+		{quality: "1k", size: "5:4", want: "1280x1024"},
+		{quality: "1k", size: "auto", want: "auto"},
+		{quality: "4k", size: "2160x3840", want: "2160x3840"},
+	}
+	for _, test := range tests {
+		t.Run(test.size+"/"+test.quality, func(t *testing.T) {
+			got, err := resolveGPTImage2Size(test.quality, test.size)
+			if err != nil || got != test.want {
+				t.Fatalf("resolveGPTImage2Size(%q, %q) = %q, %v; want %q", test.quality, test.size, got, err, test.want)
+			}
+		})
+	}
+	if _, err := resolveGPTImage2Size("1k", "1025x1024"); err == nil {
+		t.Fatal("expected non-16-aligned dimensions to fail")
+	}
+}
+
+func TestRunGeminiImageTaskSendsAspectRatio(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1beta/models/gemini-2.5-flash-image:generateContent" {
+			t.Fatalf("path = %q", request.URL.Path)
+		}
+		if request.Header.Get("x-goog-api-key") != "test-key" {
+			t.Fatalf("x-goog-api-key = %q", request.Header.Get("x-goog-api-key"))
+		}
+		var body struct {
+			GenerationConfig struct {
+				ImageConfig struct {
+					AspectRatio string `json:"aspectRatio"`
+				} `json:"imageConfig"`
+			} `json:"generationConfig"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.GenerationConfig.ImageConfig.AspectRatio != "16:9" {
+			t.Fatalf("aspectRatio = %q", body.GenerationConfig.ImageConfig.AspectRatio)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := runGeminiImageTask(context.Background(), canvasGenerationInput{
+		Prompt:          "a blue square",
+		Config:          providerConfig{BaseURL: server.URL, APIKey: "test-key", APIFormat: "gemini", Model: "gemini-2.5-flash-image", Size: "16:9"},
+		ImageCapability: DefaultImageCapabilityConfig("", "gemini-2.5-flash-image", "gemini"),
+	})
+	if err != nil {
+		t.Fatalf("runGeminiImageTask() error = %v", err)
+	}
+	images, ok := result["images"].([]map[string]string)
+	if !ok || len(images) != 1 || images[0]["dataUrl"] != "data:image/png;base64,aGVsbG8=" {
+		t.Fatalf("images = %#v", result["images"])
 	}
 }
 
@@ -1243,5 +1344,85 @@ func TestEquivalentStyleProfileJSONIgnoresObjectKeyOrder(t *testing.T) {
 	equal, err := equivalentStyleProfileJSON(`{"schemaVersion":1,"presetId":"style-1","assets":[]}`, `{"assets":[],"presetId":"style-1","schemaVersion":1}`)
 	if err != nil || !equal {
 		t.Fatalf("equivalentStyleProfileJSON() equal = %v, err = %v", equal, err)
+	}
+}
+
+func TestRunNovitaVideoTaskDownloadsSucceededVideo(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	paths := make([]string, 0, 3)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.String())
+		switch r.Method + " " + r.URL.Path {
+		case "POST /video/create":
+			if auth := r.Header.Get("Authorization"); auth != "Bearer test-key" {
+				t.Errorf("Authorization = %q", auth)
+			}
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if body["model"] != "kling2.5_turbo_pro_t2v" || body["prompt"] != "make it move" || body["duration"] != "5" || body["aspect_ratio"] != "16:9" {
+				t.Errorf("body = %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"novita-task-1"}`))
+		case "GET /async/task-result":
+			if r.URL.Query().Get("task_id") != "novita-task-1" {
+				t.Errorf("task_id = %q", r.URL.Query().Get("task_id"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task":{"status":"TASK_STATUS_SUCCEED"},"videos":[{"video_url":"` + server.URL + `/video.mp4"}]}`))
+		case "GET /video.mp4":
+			if authorization := r.Header.Get("Authorization"); authorization != "" {
+				t.Errorf("file Authorization = %q, want empty", authorization)
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("video"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := runVideoTask(context.Background(), canvasGenerationInput{
+		Prompt: "make it move",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "kling2.5_turbo_pro_t2v", InterfaceType: "novita-video", VideoSeconds: "5", Size: "16:9"},
+	})
+	if err != nil {
+		t.Fatalf("runVideoTask() error = %v", err)
+	}
+	video := result["video"].(map[string]interface{})
+	if video["dataUrl"] != "data:video/mp4;base64,dmlkZW8=" {
+		t.Fatalf("video = %#v", video)
+	}
+	want := "POST /video/create,GET /async/task-result?task_id=novita-task-1,GET /video.mp4"
+	if got := strings.Join(paths, ","); got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+}
+
+func TestRunNovitaVideoTaskReturnsFailureReason(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /video/create":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"novita-task-2"}`))
+		case "GET /async/task-result":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task":{"status":"TASK_STATUS_FAILED","reason":"content violates policy"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := runVideoTask(context.Background(), canvasGenerationInput{
+		Prompt: "make it move",
+		Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "kling2.5_turbo_pro_t2v", InterfaceType: "novita-video"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "content violates policy") {
+		t.Fatalf("runVideoTask() error = %v, want reason in message", err)
 	}
 }

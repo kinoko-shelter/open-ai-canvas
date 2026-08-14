@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -68,9 +70,13 @@ func imageTransparentBackgroundSupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.TransparentBackground.Supported
 }
 
-func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, string) {
+func imageSizeParameter(profile *ImageCapabilityConfig, modelName string, quality string, value string) (string, string, error) {
+	if isGPTImage2Model(modelName) {
+		resolved, err := resolveGPTImage2Size(quality, value)
+		return "size", resolved, err
+	}
 	if profile == nil {
-		return "size", normalizePixelSize(value)
+		return "size", normalizePixelSize(value), nil
 	}
 	value = strings.TrimSpace(value)
 	if value == "" || value == "auto" {
@@ -78,11 +84,93 @@ func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, s
 	}
 	switch profile.Size.Parameter {
 	case "size":
-		return "size", normalizePixelSize(value)
+		return "size", normalizePixelSize(value), nil
 	case "aspect_ratio":
-		return "aspect_ratio", normalizeImageAspectRatio(value)
+		return "aspect_ratio", normalizeImageAspectRatio(value), nil
 	default:
-		return "", ""
+		return "", "", nil
+	}
+}
+
+func resolveGPTImage2Size(quality string, value string) (string, error) {
+	// 比例预设按档位转为标准像素，合法的显式 WxH 必须原样透传给上游。
+	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "×", "x")))
+	if value == "" || value == "auto" {
+		return "auto", nil
+	}
+	if strings.Contains(value, "x") {
+		parts := strings.Split(value, "x")
+		if len(parts) != 2 {
+			return "", errors.New("gpt-image-2 尺寸格式无效")
+		}
+		width, widthErr := strconv.Atoi(parts[0])
+		height, heightErr := strconv.Atoi(parts[1])
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			return "", errors.New("gpt-image-2 尺寸必须是正整数")
+		}
+		if width%16 != 0 || height%16 != 0 {
+			return "", errors.New("gpt-image-2 自定义宽高必须是 16 的倍数")
+		}
+		return fmt.Sprintf("%dx%d", width, height), nil
+	}
+	if !gptImage2RatioSupported(value) {
+		return "", errors.New("gpt-image-2 不支持该宽高比")
+	}
+	parts := strings.Split(value, ":")
+	width, _ := strconv.Atoi(parts[0])
+	height, _ := strconv.Atoi(parts[1])
+	tier := gptImage2Tier(quality)
+	if width == height {
+		edge := map[string]int{"1k": 1024, "2k": 2048, "4k": 2480}[tier]
+		return fmt.Sprintf("%dx%d", edge, edge), nil
+	}
+	landscape := width > height
+	longEdge := gptImage2LongEdge(tier, landscape)
+	shortRatio, longRatio := width, height
+	if landscape {
+		shortRatio, longRatio = height, width
+	}
+	shortEdge := ((longEdge*shortRatio + longRatio*16 - 1) / (longRatio * 16)) * 16
+	if landscape {
+		return fmt.Sprintf("%dx%d", longEdge, shortEdge), nil
+	}
+	return fmt.Sprintf("%dx%d", shortEdge, longEdge), nil
+}
+
+func gptImage2RatioSupported(value string) bool {
+	for _, ratio := range []string{"1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"} {
+		if value == ratio {
+			return true
+		}
+	}
+	return false
+}
+
+func gptImage2Tier(quality string) string {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "4k", "high":
+		return "4k"
+	case "2k", "medium":
+		return "2k"
+	default:
+		return "1k"
+	}
+}
+
+func gptImage2LongEdge(tier string, landscape bool) int {
+	switch tier {
+	case "4k":
+		if landscape {
+			return 3312
+		}
+		return 3328
+	case "2k":
+		if landscape {
+			return 2048
+		}
+		return 2560
+	default:
+		return 1280
 	}
 }
 
