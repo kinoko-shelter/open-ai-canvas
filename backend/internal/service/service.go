@@ -221,6 +221,7 @@ func (s *Service) StartWorker() {
 		s.startTextReplayCleanup()
 		s.startProviderCancellationReconciliation()
 		s.startBillingReviewAudit()
+		s.startHelloDemo()
 		go func() {
 			s.runTaskWorker(workerScope)
 			s.backgroundTasks.Wait()

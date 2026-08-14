@@ -342,6 +342,11 @@ export function linuxDOLoginURL(next: string) {
     return `${base}/auth/linuxdo/start?next=${encodeURIComponent(next)}`;
 }
 
+export function kolLoginURL(next: string) {
+    const base = String(api.defaults.baseURL || "/api").replace(/\/$/, "");
+    return `${base}/auth/kol/start?next=${encodeURIComponent(next)}`;
+}
+
 export function getAuthSession() {
     return request<AuthSessionPayload>(api.get("/auth/session"));
 }
@@ -364,6 +369,10 @@ export function updateAdminFeatureAvailability(features: Pick<FeatureAvailabilit
 
 export function login(input: { username: string; password: string }) {
     return request<{ user: LocalUser }>(api.post("/auth/login", input));
+}
+
+export function loginFromKOL(input: { kolToken: string }) {
+    return request<{ user: LocalUser }>(api.post("/auth/kol/login", input));
 }
 
 export function sendRegistrationEmailCode(email: string) {

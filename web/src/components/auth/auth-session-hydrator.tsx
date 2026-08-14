@@ -8,8 +8,13 @@ import { useUserStore } from "@/stores/use-user-store";
 
 export function AuthSessionHydrator({ children }: { children: ReactNode }) {
     const hydrated = useUserStore((state) => state.hydrated);
+    const isKOLCallback = window.location.pathname === "/auth/kol/callback";
 
     useEffect(() => {
+        if (isKOLCallback) {
+            useUserStore.getState().setHydrated(true);
+            return;
+        }
         let cancelled = false;
         getAuthSession()
             .then(async (payload) => {
@@ -21,7 +26,8 @@ export function AuthSessionHydrator({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [isKOLCallback]);
 
+    if (isKOLCallback) return children;
     return hydrated ? children : <FullScreenLoader />;
 }

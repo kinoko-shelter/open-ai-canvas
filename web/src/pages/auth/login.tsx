@@ -4,7 +4,7 @@ import { ArrowRight, LockKeyhole, UserRound } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { applyUserSession } from "@/lib/user-session";
-import { getAuthSession, getAuthSettings, linuxDOLoginURL, login } from "@/services/api/auth";
+import { getAuthSession, getAuthSettings, kolLoginURL, linuxDOLoginURL, login } from "@/services/api/auth";
 import { LinuxDOIcon } from "./auth-scene";
 
 export default function LoginPage() {
@@ -43,6 +43,8 @@ export default function LoginPage() {
             <AuthField label="用户名 / 邮箱"><Input size="large" prefix={<UserRound className="size-4 text-white/35" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="用户名或邮箱" autoComplete="username" required /></AuthField>
             <AuthField label="密码"><Input.Password size="large" prefix={<LockKeyhole className="size-4 text-white/35" />} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" autoComplete="current-password" required /></AuthField>
             <Button type="primary" htmlType="submit" size="large" block loading={submitting} icon={<ArrowRight className="size-4" />} iconPlacement="end">登录</Button>
+            <Divider plain className="!border-white/10 !text-white/30">或</Divider>
+            <Button size="large" block href={kolLoginURL(next)}>使用 KOL 系统登录</Button>
             {linuxdoEnabled ? <><Divider plain className="!border-white/10 !text-white/30">或</Divider><Button size="large" block icon={<LinuxDOIcon />} href={linuxDOLoginURL(next)}>使用 Linux.do 登录</Button></> : null}
         </form>
     );

@@ -24,6 +24,7 @@ const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-se
 const StoryboardPromptsPage = lazy(() => import("@/pages/admin/storyboard-prompts/storyboard-prompts-page"));
 const UsersPage = lazy(() => import("@/pages/admin/users/users-page"));
 const AssetsPage = lazy(() => import("@/pages/assets"));
+const KOLCallbackPage = lazy(() => import("@/pages/auth/kol-callback"));
 const LoginPage = lazy(() => import("@/pages/auth/login"));
 const RegisterPage = lazy(() => import("@/pages/auth/register"));
 const CanvasPage = lazy(() => import("@/pages/canvas"));
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
         children: [
             { path: "/login", element: deferred(<LoginPage />) },
             { path: "/register", element: deferred(<RegisterPage />) },
+            { path: "/auth/kol/callback", element: deferred(<KOLCallbackPage />) },
         ],
     },
     { path: "/share/canvas/:token", element: deferred(<SharedCanvasPage />), errorElement: <RouteErrorPage /> },
