@@ -12,6 +12,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
 import { createClientId } from "@/lib/client-id";
 import { generationErrorMessage } from "@/lib/generation-error";
+import { scopedStorageKey } from "@/lib/user-scope";
 import { VIDEO_RESOLUTION_OPTIONS } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch, type BackendGenerationResult } from "@/services/api/generation-task";
@@ -133,6 +134,8 @@ export default function CreatePage() {
     const pendingTaskSyncInFlightRef = useRef(false);
     const historyTaskSyncWarningRef = useRef(false);
     const historyTaskSyncInFlightRef = useRef(false);
+    // 身份切换会在离开页面前切换全局 scope；当前会话必须始终写回挂载时所属用户。
+    const creationStorageKeyRef = useRef(scopedStorageKey(STORAGE_KEY));
 
     const activeConversation = useMemo(() => conversations.find((item) => item.id === activeId) || conversations[0], [activeId, conversations]);
     const historyConversations = useMemo(
@@ -167,7 +170,7 @@ export default function CreatePage() {
 
     useEffect(() => {
         let cancelled = false;
-        void localforage.getItem<CreationConversation[]>(STORAGE_KEY).then((stored) => {
+        void localforage.getItem<CreationConversation[]>(creationStorageKeyRef.current).then((stored) => {
             if (cancelled) return;
             const next = stored?.length ? stored : [newConversation()];
             setConversations(next);
@@ -181,7 +184,7 @@ export default function CreatePage() {
     }, []);
 
     useEffect(() => {
-        if (hydrated) void localforage.setItem(STORAGE_KEY, conversations);
+        if (hydrated) void localforage.setItem(creationStorageKeyRef.current, conversations);
     }, [conversations, hydrated]);
 
     useEffect(() => {
