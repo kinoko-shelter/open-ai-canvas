@@ -5,7 +5,7 @@ import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker } from "@/components/model-protocol-picker";
-import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol } from "@/lib/model-protocols";
 import { modelMatchesCapability, modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 
@@ -43,6 +43,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     };
 
     const activeModelCost = activeModel ? channel.modelCosts?.find((item) => item.model === activeModel) : undefined;
+    const activeModelCapabilityConfig = activeModel ? modelCapabilityConfigFor({ channels: [channel] }, `${channel.id}::${activeModel}`) : undefined;
     const activeProtocol = activeModel ? activeModelCost?.protocol || defaultProtocolForModel(channel, activeModel) : undefined;
     const activeCapability = activeModel ? activeModelCost?.capability || modelProtocolCapability(activeProtocol) || "text" : undefined;
     const activeBillingMode = activeModelCost?.billingMode || "fixed_request";
@@ -168,7 +169,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                             </div>
                         ) : null}
                         {activeCapability === "image" || activeCapability === "video" ? (
-                            <ModelCapabilityEditor capability={activeCapability} model={activeModel} value={activeModelCost?.capabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel)} protocol={activeProtocol} onChange={(capabilityConfig) => updateCost(activeModel, { capabilityConfig })} />
+                            <ModelCapabilityEditor capability={activeCapability} model={activeModel} value={activeModelCapabilityConfig || defaultModelCapabilityConfig(activeProtocol, activeModel, channel.apiFormat)} protocol={activeProtocol} onChange={(capabilityConfig) => updateCost(activeModel, { capabilityConfig })} />
                         ) : null}
                     </div>
                 ) : null}
@@ -179,6 +180,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
 
 function defaultProtocolForModel(channel: ModelChannel, model: string): ModelProtocol {
     if (channel.interfaceType) return channel.interfaceType;
+    if (channel.apiFormat === "gemini" && modelMatchesCapability(model, "image")) return "gemini-image";
     if (channel.apiFormat === "gemini" && modelMatchesCapability(model, "video")) return "gemini-veo";
     if (modelMatchesCapability(model, "video")) return "newapi";
     if (modelOptionName(model).trim().toLowerCase().startsWith("grok-imagine-image")) return "grok-image";

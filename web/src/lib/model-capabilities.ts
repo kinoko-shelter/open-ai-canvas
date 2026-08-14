@@ -62,9 +62,34 @@ export type VideoCapabilityConfig = {
     defaultOperation: string;
 };
 
-const defaultImageSizes = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "21:9", "9:16", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"];
+const defaultImageSizes = ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "21:9", "9:16", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"];
+const gptImage2Ratios = ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"];
+const geminiImageRatios = ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "3:2", "2:3", "5:4", "4:5"];
+const geminiNano2ExtraRatios = ["1:4", "1:8", "4:1", "8:1"];
 
-export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
+export function isGptImage2Model(model: string) {
+    return model.trim().toLowerCase().startsWith("gpt-image-2");
+}
+
+function isGeminiImageModel(model: string) {
+    const value = model.trim().toLowerCase();
+    return (value.startsWith("gemini-") && value.includes("image")) || value.includes("nano-banana");
+}
+
+function usesGeminiImageProfile(protocol: ModelProtocol | undefined, model: string, apiFormat: "openai" | "gemini" | undefined) {
+    return protocol === "gemini-image" || (apiFormat === "gemini" && isGeminiImageModel(model));
+}
+
+export function hasModelSpecificImageCapability(protocol: ModelProtocol | undefined, model: string, apiFormat?: "openai" | "gemini") {
+    return isGptImage2Model(model) || usesGeminiImageProfile(protocol, model, apiFormat);
+}
+
+function geminiImageRatioValues(model: string) {
+    const value = model.trim().toLowerCase();
+    return value.startsWith("gemini-3.1-flash-image-preview") ? [...geminiImageRatios, ...geminiNano2ExtraRatios] : geminiImageRatios;
+}
+
+export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "", apiFormat?: "openai" | "gemini"): ImageCapabilityConfig {
     const image: ImageCapabilityConfig = {
         references: { promptMaxChars: 32000, maxImages: 16, maxImageBytes: 30 * 1024 * 1024, maskSupported: true },
         size: { parameter: "size", values: [...defaultImageSizes], default: "1:1", allowCustom: true },
@@ -119,10 +144,48 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.outputFormat = { supported: false };
         image.maxOutputs = 1;
     }
+    if (isGptImage2Model(model)) {
+        image.size = { parameter: "size", values: ["auto", ...gptImage2Ratios], default: "auto", allowCustom: true };
+        image.quality = { supported: true, values: ["1k", "2k", "4k"], default: "1k" };
+    }
+    if (usesGeminiImageProfile(protocol, model, apiFormat)) {
+        image.size = { parameter: "aspect_ratio", values: geminiImageRatioValues(model), default: "1:1", allowCustom: false };
+        image.quality = { supported: false, values: [], default: "auto" };
+        image.transparentBackground = { supported: false, default: false };
+        image.responseFormat = { supported: false };
+        image.outputFormat = { supported: false };
+    }
     return image;
 }
 
-export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
+function applyModelSpecificImageCapability(image: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string, apiFormat: "openai" | "gemini" | undefined) {
+    const canonical = defaultImageCapabilityConfig(protocol, model, apiFormat);
+    if (isGptImage2Model(model)) {
+        return {
+            ...image,
+            size: withCanonicalDefault(image.size, canonical.size),
+            quality: withCanonicalDefault(image.quality, canonical.quality),
+        };
+    }
+    if (usesGeminiImageProfile(protocol, model, apiFormat)) {
+        return {
+            ...image,
+            references: { ...image.references, maskSupported: false },
+            size: withCanonicalDefault(image.size, canonical.size),
+            quality: withCanonicalDefault(image.quality, canonical.quality),
+            transparentBackground: canonical.transparentBackground,
+            responseFormat: canonical.responseFormat,
+            outputFormat: canonical.outputFormat,
+        };
+    }
+    return image;
+}
+
+function withCanonicalDefault<T extends { values: string[]; default: string }>(current: T, canonical: T) {
+    return { ...canonical, default: canonical.values.includes(current.default) ? current.default : canonical.default };
+}
+
+export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "", apiFormat?: "openai" | "gemini"): ModelCapabilityConfig {
     const video: VideoCapabilityConfig = {
         references: {
             promptMaxChars: 1000,
@@ -168,12 +231,12 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = ["1080p"];
         video.defaultResolution = "1080p";
     }
-	const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
-	if (fixedGrokVideoResolution) {
-		video.resolutions = [fixedGrokVideoResolution];
-		video.defaultResolution = fixedGrokVideoResolution;
-	}
-    return { version: 1, image: defaultImageCapabilityConfig(protocol, model), video };
+    const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
+    if (fixedGrokVideoResolution) {
+        video.resolutions = [fixedGrokVideoResolution];
+        video.defaultResolution = fixedGrokVideoResolution;
+    }
+    return { version: 1, image: defaultImageCapabilityConfig(protocol, model, apiFormat), video };
 }
 
 function grokVideoResolutionFromModel(model: string) {
@@ -181,21 +244,29 @@ function grokVideoResolutionFromModel(model: string) {
     return match ? match[1].toLowerCase() : "";
 }
 
-export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; models: string[]; modelCosts?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
+export function normalizeModelCapabilityConfig(input: ModelCapabilityConfig | undefined, protocol?: ModelProtocol, model = "", apiFormat?: "openai" | "gemini") {
+    const fallback = defaultModelCapabilityConfig(protocol, model, apiFormat);
+    const resolved = input
+        ? { ...fallback, ...input, image: input.image || fallback.image, video: input.video || fallback.video }
+        : fallback;
+    if (resolved.image) resolved.image = applyModelSpecificImageCapability(resolved.image, protocol, model, apiFormat);
+    const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
+    if (fixedGrokVideoResolution && resolved.video) {
+        resolved.video = { ...resolved.video, resolutions: [fixedGrokVideoResolution], defaultResolution: fixedGrokVideoResolution };
+    }
+    return resolved;
+}
+
+export function modelCapabilityConfigFor(
+    config: { channels: Array<{ id: string; models: string[]; apiFormat?: "openai" | "gemini"; interfaceType?: ModelProtocol; modelCosts?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
+    model: string,
+) {
     const separator = model.indexOf("::");
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
     const channel = config.channels.find((item) => item.id === channelId) || config.channels.find((item) => item.models.includes(modelName));
     const cost = channel?.modelCosts?.find((item) => item.model === modelName);
-    const fallback = defaultModelCapabilityConfig(cost?.protocol, modelName);
-    const resolved = cost?.capabilityConfig
-        ? { ...fallback, ...cost.capabilityConfig, image: cost.capabilityConfig.image || fallback.image, video: cost.capabilityConfig.video || fallback.video }
-        : fallback;
-    const fixedGrokVideoResolution = grokVideoResolutionFromModel(modelName);
-    if (fixedGrokVideoResolution && resolved.video) {
-        resolved.video = { ...resolved.video, resolutions: [fixedGrokVideoResolution], defaultResolution: fixedGrokVideoResolution };
-    }
-    return resolved;
+    return normalizeModelCapabilityConfig(cost?.capabilityConfig, cost?.protocol || channel?.interfaceType, modelName, channel?.apiFormat);
 }
 
 export function normalizeImageValue(profile: ImageCapabilityConfig, value: { size?: string; quality?: string; count?: string; transparentBackground?: string }) {

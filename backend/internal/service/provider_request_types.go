@@ -90,6 +90,50 @@ type geminiVeoParameters struct {
 	SampleCount     int    `json:"sampleCount"`
 }
 
+type geminiImageRequest struct {
+	SystemInstruction *geminiImageContent         `json:"systemInstruction,omitempty"`
+	Contents          []geminiImageContent        `json:"contents"`
+	GenerationConfig  geminiImageGenerationConfig `json:"generationConfig"`
+}
+
+type geminiImageContent struct {
+	Role  string            `json:"role,omitempty"`
+	Parts []geminiImagePart `json:"parts"`
+}
+
+type geminiImagePart struct {
+	Text       string                 `json:"text,omitempty"`
+	InlineData *geminiImageInlineData `json:"inlineData,omitempty"`
+}
+
+type geminiImageInlineData struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+type geminiImageGenerationConfig struct {
+	ResponseModalities []string           `json:"responseModalities"`
+	ImageConfig        *geminiImageConfig `json:"imageConfig,omitempty"`
+}
+
+type geminiImageConfig struct {
+	AspectRatio string `json:"aspectRatio"`
+}
+
+type geminiImageResponse struct {
+	Candidates     []geminiImageCandidate `json:"candidates"`
+	Error          *providerError         `json:"error,omitempty"`
+	PromptFeedback *geminiPromptFeedback  `json:"promptFeedback,omitempty"`
+}
+
+type geminiImageCandidate struct {
+	Content geminiImageContent `json:"content"`
+}
+
+type geminiPromptFeedback struct {
+	BlockReason string `json:"blockReason"`
+}
+
 type seedanceAgentPlanRequest struct {
 	Model         string                   `json:"model"`
 	Content       []map[string]interface{} `json:"content"`

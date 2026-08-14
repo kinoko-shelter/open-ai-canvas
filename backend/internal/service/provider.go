@@ -188,7 +188,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) {
+	if input.Config.APIFormat == "gemini" && input.Mode != "image" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) {
 		return nil, errors.New("后端任务队列暂不支持 Gemini 调用格式，请使用 OpenAI 兼容渠道")
 	}
 	if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
@@ -435,7 +435,7 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 }
 
 func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) error {
-	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model)
+	fallback := DefaultImageCapabilityConfig(input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Image != nil {
@@ -443,6 +443,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 		} else {
 			input.ImageCapability = fallback
 		}
+		input.ImageCapability = applyModelSpecificImageCapability(input.ImageCapability, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 		return validateImageTask(input.ImageCapability, *input)
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, strings.TrimPrefix(strings.TrimSpace(input.Config.Model), "models/"))
@@ -458,6 +459,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 	} else {
 		input.ImageCapability = fallback
 	}
+	input.ImageCapability = applyModelSpecificImageCapability(input.ImageCapability, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	return validateImageTask(input.ImageCapability, *input)
 }
 
@@ -595,7 +597,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	}
 	config.InterfaceType = string(channelModel.Protocol)
 	// 模型协议是实际请求契约；混合渠道中鉴权格式也必须随模型协议切换。
-	if config.InterfaceType == string(model.ChannelInterfaceGeminiVeo) {
+	if config.InterfaceType == string(model.ChannelInterfaceGeminiVeo) || config.InterfaceType == string(model.ChannelInterfaceGeminiImage) {
 		config.APIFormat = "gemini"
 	} else if config.InterfaceType != "" {
 		config.APIFormat = "openai"
@@ -638,6 +640,9 @@ func systemChannelIDFromBaseURL(baseURL string) string {
 }
 
 func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.Config.APIFormat == "gemini" {
+		return runGeminiImageTask(ctx, input)
+	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceGrokImage) {
 		return runGrokImageTask(ctx, input)
 	}
@@ -672,10 +677,12 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		if imageTransparentBackgroundSupported(input.ImageCapability) && input.Config.TransparentBackground == "true" {
 			writeField(writer, "background", "transparent")
 		}
-		if imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
+		if !isGPTImage2Model(input.Config.Model) && imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
 			writeField(writer, "quality", normalizeImageQuality(input.Config.Quality))
 		}
-		if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+		if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+			return nil, err
+		} else if value != "" {
 			writeField(writer, key, value)
 		}
 		for _, image := range input.ReferenceImages {
@@ -709,10 +716,12 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		if imageTransparentBackgroundSupported(input.ImageCapability) && input.Config.TransparentBackground == "true" {
 			body["background"] = "transparent"
 		}
-		if imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
+		if !isGPTImage2Model(input.Config.Model) && imageQualitySupported(input.ImageCapability) && input.Config.Quality != "" {
 			body["quality"] = normalizeImageQuality(input.Config.Quality)
 		}
-		if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+		if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+			return nil, err
+		} else if value != "" {
 			body[key] = value
 		}
 		if err := postJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
@@ -722,6 +731,70 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 	images, err := imageDataURLs(payload)
 	if err != nil {
 		return nil, err
+	}
+	return map[string]interface{}{"mode": "image", "images": images}, nil
+}
+
+func runGeminiImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.Mask != nil {
+		return nil, errors.New("Gemini 图片协议暂不支持蒙版编辑")
+	}
+	parts := []geminiImagePart{{Text: strings.TrimSpace(input.Prompt)}}
+	for _, image := range input.ReferenceImages {
+		raw, mimeType, err := mediaBytes(image)
+		if err != nil {
+			return nil, fmt.Errorf("读取 Gemini 参考图失败：%w", err)
+		}
+		parts = append(parts, geminiImagePart{InlineData: &geminiImageInlineData{MIMEType: mimeType, Data: base64.StdEncoding.EncodeToString(raw)}})
+	}
+	_, aspectRatio, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size)
+	if err != nil {
+		return nil, err
+	}
+	if aspectRatio != "" && aspectRatio != "auto" {
+		aspectRatio = normalizeImageAspectRatio(aspectRatio)
+		if aspectRatio == "" {
+			return nil, errors.New("Gemini 图片宽高比无效")
+		}
+	}
+	body := geminiImageRequest{
+		Contents: []geminiImageContent{{Role: "user", Parts: parts}},
+		GenerationConfig: geminiImageGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+		},
+	}
+	if aspectRatio != "" && aspectRatio != "auto" {
+		body.GenerationConfig.ImageConfig = &geminiImageConfig{AspectRatio: aspectRatio}
+	}
+	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
+		body.SystemInstruction = &geminiImageContent{Parts: []geminiImagePart{{Text: systemPrompt}}}
+	}
+	var payload geminiImageResponse
+	if err := postGeminiJSON(ctx, input.Config, "/models/"+url.PathEscape(input.Config.Model)+":generateContent", body, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
+		return nil, fmt.Errorf("Gemini 图片生成失败：%s", payload.Error.Message)
+	}
+	if payload.PromptFeedback != nil && strings.TrimSpace(payload.PromptFeedback.BlockReason) != "" {
+		return nil, fmt.Errorf("Gemini 拒绝了本次图片请求：%s", payload.PromptFeedback.BlockReason)
+	}
+	images := make([]map[string]string, 0)
+	for _, candidate := range payload.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData == nil || strings.TrimSpace(part.InlineData.Data) == "" {
+				continue
+			}
+			raw, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+			if err != nil {
+				return nil, fmt.Errorf("Gemini 图片响应编码无效：%w", err)
+			}
+			mimeType := normalizedMediaMimeType(part.InlineData.MIMEType, raw)
+			images = append(images, map[string]string{"dataUrl": dataURL(mimeType, raw)})
+		}
+	}
+	if len(images) == 0 {
+		return nil, errors.New("Gemini 接口没有返回图片")
 	}
 	return map[string]interface{}{"mode": "image", "images": images}, nil
 }
@@ -863,7 +936,9 @@ func volcengineArkImageBody(input canvasGenerationInput) (map[string]interface{}
 		"prompt": withSystemPrompt(input.Config, input.Prompt),
 		"n":      1,
 	}
-	if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
+	if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
+		return nil, err
+	} else if value != "" {
 		if key == "size" {
 			value = normalizeVolcengineArkImageSize(value)
 		}
@@ -2153,7 +2228,7 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	}
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
-		"image": {"openai-image": true, "grok-image": true, "volcengine-ark-image": true, "volcengine-jimeng-image": true},
+		"image": {"openai-image": true, "gemini-image": true, "grok-image": true, "volcengine-ark-image": true, "volcengine-jimeng-image": true},
 		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "volcengine-ark-video": true, "volcengine-jimeng-video": true, "gemini-veo": true, "novita-video": true},
 		"audio": {"openai-audio": true, "async-audio": true},
 	}

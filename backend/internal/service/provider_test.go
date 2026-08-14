@@ -306,6 +306,74 @@ func TestNormalizePixelSizeConvertsCanvasAspectRatios(t *testing.T) {
 	}
 }
 
+func TestResolveGPTImage2SizeUsesPresetAndPassesExactDimensions(t *testing.T) {
+	tests := []struct {
+		quality string
+		size    string
+		want    string
+	}{
+		{quality: "1k", size: "1:1", want: "1024x1024"},
+		{quality: "2k", size: "16:9", want: "2048x1152"},
+		{quality: "2k", size: "9:16", want: "1440x2560"},
+		{quality: "4k", size: "16:9", want: "3312x1872"},
+		{quality: "4k", size: "9:16", want: "1872x3328"},
+		{quality: "1k", size: "5:4", want: "1280x1024"},
+		{quality: "1k", size: "auto", want: "auto"},
+		{quality: "4k", size: "2160x3840", want: "2160x3840"},
+	}
+	for _, test := range tests {
+		t.Run(test.size+"/"+test.quality, func(t *testing.T) {
+			got, err := resolveGPTImage2Size(test.quality, test.size)
+			if err != nil || got != test.want {
+				t.Fatalf("resolveGPTImage2Size(%q, %q) = %q, %v; want %q", test.quality, test.size, got, err, test.want)
+			}
+		})
+	}
+	if _, err := resolveGPTImage2Size("1k", "1025x1024"); err == nil {
+		t.Fatal("expected non-16-aligned dimensions to fail")
+	}
+}
+
+func TestRunGeminiImageTaskSendsAspectRatio(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1beta/models/gemini-2.5-flash-image:generateContent" {
+			t.Fatalf("path = %q", request.URL.Path)
+		}
+		if request.Header.Get("x-goog-api-key") != "test-key" {
+			t.Fatalf("x-goog-api-key = %q", request.Header.Get("x-goog-api-key"))
+		}
+		var body struct {
+			GenerationConfig struct {
+				ImageConfig struct {
+					AspectRatio string `json:"aspectRatio"`
+				} `json:"imageConfig"`
+			} `json:"generationConfig"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.GenerationConfig.ImageConfig.AspectRatio != "16:9" {
+			t.Fatalf("aspectRatio = %q", body.GenerationConfig.ImageConfig.AspectRatio)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := runGeminiImageTask(context.Background(), canvasGenerationInput{
+		Prompt:          "a blue square",
+		Config:          providerConfig{BaseURL: server.URL, APIKey: "test-key", APIFormat: "gemini", Model: "gemini-2.5-flash-image", Size: "16:9"},
+		ImageCapability: DefaultImageCapabilityConfig("", "gemini-2.5-flash-image", "gemini"),
+	})
+	if err != nil {
+		t.Fatalf("runGeminiImageTask() error = %v", err)
+	}
+	images, ok := result["images"].([]map[string]string)
+	if !ok || len(images) != 1 || images[0]["dataUrl"] != "data:image/png;base64,aGVsbG8=" {
+		t.Fatalf("images = %#v", result["images"])
+	}
+}
+
 func TestDoBinaryRejectsOversizedProviderResponse(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -61,7 +61,8 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.AdminSystemChannel(channelID); err != nil {
+	channel, err := s.repo.AdminSystemChannel(channelID)
+	if err != nil {
 		return nil, err
 	}
 	items, err := s.ensureChannelModels(channelID, true)
@@ -72,9 +73,18 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 		if strings.TrimSpace(items[index].CapabilityConfigJSON) == "" {
 			continue
 		}
-		var config map[string]any
-		if json.Unmarshal([]byte(items[index].CapabilityConfigJSON), &config) == nil {
-			items[index].CapabilityConfig = config
+		config, decodeErr := DecodeModelCapabilityConfig(items[index].CapabilityConfigJSON)
+		if decodeErr != nil || config == nil {
+			continue
+		}
+		normalized, normalizeErr := NormalizeModelCapabilityConfig(items[index].Capability, string(items[index].Protocol), items[index].ModelKey, channel.APIFormat, config)
+		if normalizeErr != nil || normalized == nil {
+			continue
+		}
+		encoded, encodeErr := json.Marshal(normalized)
+		var value map[string]any
+		if encodeErr == nil && json.Unmarshal(encoded, &value) == nil {
+			items[index].CapabilityConfig = value
 		}
 	}
 	return items, nil
@@ -138,7 +148,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		return nil, err
 	}
 	if capability == "image" || capability == "video" {
-		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), req.CapabilityConfig); err != nil {
+		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
 			return nil, err
 		}
 	}
@@ -194,7 +204,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	item.CachedTokenPriceMicrocredits = req.CachedTokenPriceMicrocredits
 	item.PriceConfigured = req.PriceConfigured
 	if capability == "image" || capability == "video" {
-		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), req.CapabilityConfig)
+		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
@@ -235,7 +245,7 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 		return nil, err
 	}
 	if capability == "image" || capability == "video" {
-		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), req.CapabilityConfig); err != nil {
+		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
 			return nil, err
 		}
 	}
@@ -262,7 +272,7 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 	imageSize, imageQuality := "", ""
 	var imageProfile *ImageCapabilityConfig
 	if capability == "image" {
-		profile, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), req.CapabilityConfig)
+		profile, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
@@ -476,7 +486,7 @@ func (s *Service) syncChannelModelNames(channel *model.ModelChannel) error {
 
 func capabilityForProtocol(protocol model.ChannelInterfaceType) string {
 	switch protocol {
-	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceGrokImage, model.ChannelInterfaceVolcengineArkImage, model.ChannelInterfaceVolcengineJiMengImage:
+	case model.ChannelInterfaceOpenAIImage, model.ChannelInterfaceGeminiImage, model.ChannelInterfaceGrokImage, model.ChannelInterfaceVolcengineArkImage, model.ChannelInterfaceVolcengineJiMengImage:
 		return "image"
 	case model.ChannelInterfaceOpenAIAudio, model.ChannelInterfaceAsyncAudio:
 		return "audio"

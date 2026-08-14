@@ -80,3 +80,26 @@ func TestImageTestDefaultsUseModelCapability(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeModelCapabilityConfigReplacesLegacyGPTImage2Sizes(t *testing.T) {
+	legacy := DefaultImageCapabilityConfig(string(model.ChannelInterfaceOpenAIImage), "legacy-image")
+	legacy.Size = ImageSizeConfig{Parameter: "size", Values: []string{"1280x720", "720x1280", "1024x1024"}, Default: "1280x720", AllowCustom: true}
+
+	normalized, err := NormalizeModelCapabilityConfig("image", string(model.ChannelInterfaceOpenAIImage), "gpt-image-2-1k", "openai", &ModelCapabilityConfig{Version: 1, Image: legacy})
+	if err != nil {
+		t.Fatalf("NormalizeModelCapabilityConfig() error = %v", err)
+	}
+	want := []string{"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"}
+	if got := normalized.Image.Size.Values; len(got) != len(want) {
+		t.Fatalf("size values = %#v, want %#v", got, want)
+	} else {
+		for index := range want {
+			if got[index] != want[index] {
+				t.Fatalf("size values = %#v, want %#v", got, want)
+			}
+		}
+	}
+	if normalized.Image.Size.Default != "auto" {
+		t.Fatalf("size default = %q, want auto", normalized.Image.Size.Default)
+	}
+}
