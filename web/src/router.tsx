@@ -15,6 +15,7 @@ import StoryboardPromptsPage from "@/pages/admin/storyboard-prompts/storyboard-p
 import UsersPage from "@/pages/admin/users/users-page";
 import AssetsPage from "@/pages/assets";
 import { AuthScene } from "@/pages/auth/auth-scene";
+import KOLCallbackPage from "@/pages/auth/kol-callback";
 import LoginPage from "@/pages/auth/login";
 import RegisterPage from "@/pages/auth/register";
 import CanvasPage from "@/pages/canvas";
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
         children: [
             { path: "/login", element: <LoginPage /> },
             { path: "/register", element: <RegisterPage /> },
+            { path: "/auth/kol/callback", element: <KOLCallbackPage /> },
         ],
     },
     { path: "/share/canvas/:token", element: <SharedCanvasPage />, errorElement: <RouteErrorPage /> },

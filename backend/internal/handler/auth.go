@@ -99,6 +99,35 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		c.Redirect(http.StatusFound, target)
 	})
+	r.GET("/auth/kol/start", func(c *gin.Context) {
+		if !enforceRateLimit(c, "kol-start:"+c.ClientIP(), 20, 10*time.Minute) {
+			return
+		}
+		target, err := svc.BeginKOLLogin(c.Query("next"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Redirect(http.StatusFound, target)
+	})
+	r.POST("/auth/kol/login", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req service.KOLLoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if !enforceRateLimit(c, "kol-login:"+c.ClientIP(), 20, 10*time.Minute) {
+			return
+		}
+		result, err := svc.LoginFromKOL(req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		setSessionCookie(c, result.Session, result.MaxAgeSecs)
+		ok(c, gin.H{"user": result.User})
+	})
 	r.GET("/auth/linuxdo/callback", linuxDOCallbackHandler(svc))
 	r.POST("/auth/logout", func(c *gin.Context) {
 		_ = svc.Logout(sessionCookie(c))

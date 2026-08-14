@@ -6,6 +6,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (r *Repository) UserIdentity(provider string, subject string) (*model.UserIdentity, error) {
@@ -57,5 +58,17 @@ func (r *Repository) CreateOAuthUser(user *model.User, identity *model.UserIdent
 			return err
 		}
 		return tx.Create(&model.CreditAccount{UserID: user.ID}).Error
+	})
+}
+
+func (r *Repository) RepairOAuthUserIdentity(user *model.User, identity *model.UserIdentity) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		if err := tx.Save(identity).Error; err != nil {
+			return err
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.CreditAccount{UserID: user.ID}).Error
 	})
 }
