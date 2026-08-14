@@ -926,7 +926,7 @@ function CreationEmptyBanner() {
             <img src={frame.src} alt="" />
             <span>{frame.caption}</span>
         </figure>)}
-        <span className="creation-empty-art-caption"><span>影策</span>把每一帧，交给镜头导演</span>
+        <span className="creation-empty-art-caption"><span>故事创作</span>把每一帧，交给镜头导演</span>
     </div>;
 }
 
@@ -957,9 +957,9 @@ function CreationIntro({ mode }: { mode: CreationMode }) {
 type CreationThinking = { title: string; hint: string; steps: string[] };
 
 function thinkingFor(mode: CreationMode): CreationThinking {
-    if (mode === "image") return { title: "正在为你画这一镜", hint: "影策正在理解你的构图意图，并把画面交给模型出图。", steps: ["理解构图", "定调画风", "生成画面"] };
-    if (mode === "text") return { title: "正在为你写这段", hint: "影策正在梳理你的创作脉络，组织语言与结构。", steps: ["梳理脉络", "组织语言", "输出段落"] };
-    return { title: "正在为你拍这一镜", hint: "影策正在拆解你的镜头脚本，设计运镜与光线，并交给模型渲染成片。", steps: ["拆解镜头", "设计运镜", "定调布光", "渲染成片"] };
+    if (mode === "image") return { title: "正在为你画这一镜", hint: "故事创作正在理解你的构图意图，并把画面交给模型出图。", steps: ["理解构图", "定调画风", "生成画面"] };
+    if (mode === "text") return { title: "正在为你写这段", hint: "故事创作正在梳理你的创作脉络，组织语言与结构。", steps: ["梳理脉络", "组织语言", "输出段落"] };
+    return { title: "正在为你拍这一镜", hint: "故事创作正在拆解你的镜头脚本，设计运镜与光线，并交给模型渲染成片。", steps: ["拆解镜头", "设计运镜", "定调布光", "渲染成片"] };
 }
 
 function directorNoteFor(mode: CreationMode, settings: CreationSettings): string {
@@ -1041,11 +1041,11 @@ function StoryboardShotCard({ shot, shotNumber, modelName, busy, onRetryFailure,
                         </div>
                     </div>
                 </div> : null}
-                {briefVisible && user ? <div className="storyboard-workbench-handoff" aria-hidden="true"><span className="storyboard-workbench-handoff-rail" /><span className="storyboard-workbench-handoff-badge"><ArrowDown />交给影策 AI</span><span className="storyboard-workbench-handoff-rail" /></div> : null}
+                {briefVisible && user ? <div className="storyboard-workbench-handoff" aria-hidden="true"><span className="storyboard-workbench-handoff-rail" /><span className="storyboard-workbench-handoff-badge"><ArrowDown />交给故事创作 AI</span><span className="storyboard-workbench-handoff-rail" /></div> : null}
                 <div className="storyboard-workbench-turn is-ai">
                     <span className="storyboard-workbench-ai-avatar"><Clapperboard /></span>
                     <div className="storyboard-workbench-turn-copy">
-                        <div className="storyboard-workbench-turn-meta"><span className="storyboard-workbench-turn-role is-ai"><Sparkles />影策 AI</span>{modelName ? <span className="storyboard-workbench-turn-model">{modelName}</span> : null}{result?.createdAt ? <time className="storyboard-workbench-turn-time" dateTime={result.createdAt}>{formatMessageTime(result.createdAt)}</time> : null}</div>
+                        <div className="storyboard-workbench-turn-meta"><span className="storyboard-workbench-turn-role is-ai"><Sparkles />故事创作 AI</span>{modelName ? <span className="storyboard-workbench-turn-model">{modelName}</span> : null}{result?.createdAt ? <time className="storyboard-workbench-turn-time" dateTime={result.createdAt}>{formatMessageTime(result.createdAt)}</time> : null}</div>
                         <div className="storyboard-workbench-turn-bubble">
                             <StoryboardShotResult result={result} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} onCollect={onCollect} collected={collected} collecting={collecting} />
                         </div>
@@ -1072,7 +1072,7 @@ function StoryboardNextShotCard({ shotNumber, onCancel }: { shotNumber: number; 
                 <span className="storyboard-workbench-next-panel-icon"><Clapperboard /></span>
                 <div className="storyboard-workbench-next-panel-copy">
                     <strong>SC.{String(shotNumber).padStart(2, "0")} 等待你的脚本</strong>
-                    <span>在下方写下这一镜的镜头、画面或故事。影策会拆解脚本、设计运镜并渲染成片，这一镜会作为 SC.{String(shotNumber).padStart(2, "0")} 自动加入镜头轨道。</span>
+                    <span>在下方写下这一镜的镜头、画面或故事。故事创作会拆解脚本、设计运镜并渲染成片，这一镜会作为 SC.{String(shotNumber).padStart(2, "0")} 自动加入镜头轨道。</span>
                 </div>
             </div>
         </div>
