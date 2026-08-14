@@ -130,6 +130,7 @@ export default function CreatePage() {
     const pendingTaskSyncInFlightRef = useRef(false);
     const historyTaskSyncWarningRef = useRef(false);
     const historyTaskSyncInFlightRef = useRef(false);
+    const recoveredErrorTaskIDsRef = useRef(new Set<string>());
     // 身份切换会在离开页面前切换全局 scope；当前会话必须始终写回挂载时所属用户。
     const creationStorageKeyRef = useRef(scopedStorageKey(STORAGE_KEY));
 
@@ -159,6 +160,7 @@ export default function CreatePage() {
     const pendingMediaKey = useMemo(() => pendingCreationMediaKey(conversations), [conversations]);
     const pendingTaskIds = useMemo(() => pendingCreationTaskIds(conversations), [conversations]);
     const pendingMessageKeys = useMemo(() => pendingCreationMessageKeys(conversations), [conversations]);
+    const recoverableErrorTaskIds = useMemo(() => recoverableCreationErrorTaskIds(conversations), [conversations]);
     const shots = useMemo(() => shotsFromMessages(activeConversation?.messages || []), [activeConversation]);
     const visibleShotIndex = shots.length ? selectedShotIndex >= 0 && selectedShotIndex < shots.length ? selectedShotIndex : shots.length - 1 : -1;
 
@@ -229,6 +231,24 @@ export default function CreatePage() {
             window.clearInterval(timer);
         };
     }, [hydrated, pendingMediaKey, pendingTaskIds, toast]);
+
+    useEffect(() => {
+        if (!hydrated || !recoverableErrorTaskIds.length) return;
+        const taskIds = recoverableErrorTaskIds.filter((id) => !recoveredErrorTaskIDsRef.current.has(id));
+        if (!taskIds.length) return;
+        taskIds.forEach((id) => recoveredErrorTaskIDsRef.current.add(id));
+        let cancelled = false;
+        // 资源化瞬时失败不应永久覆盖已经成功的任务结果；每个错误任务仅在当前页面恢复一次。
+        void queryPendingCreationTasks(taskIds)
+            .then(persistCreationTaskResults)
+            .then((tasks) => {
+                if (!cancelled) setConversations((current) => reconcileCreationTaskMessages(current, tasks));
+            })
+            .catch((error) => console.warn("创作错误任务结果恢复失败", error));
+        return () => {
+            cancelled = true;
+        };
+    }, [hydrated, recoverableErrorTaskIds]);
 
     useEffect(() => {
         if (!hydrated || !pendingMediaKey || !pendingMessageKeys.length) return;
@@ -1173,6 +1193,14 @@ function pendingCreationMessageKeys(conversations: CreationConversation[]) {
     }));
 }
 
+function recoverableCreationErrorTaskIds(conversations: CreationConversation[]) {
+    const taskIds = conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
+        if (message.role !== "assistant" || message.status !== "error" || message.mode === "text" || message.resultUrls?.length) return [];
+        return message.taskIds || [];
+    }));
+    return Array.from(new Set(taskIds));
+}
+
 function creationMessageKey(context?: GenerationTask["clientContext"]) {
     if (!context?.conversationId || !context.messageId) return "";
     return `${context.conversationId}:${context.messageId}`;
@@ -1250,7 +1278,7 @@ function reconcileCreationTaskMessages(conversations: CreationConversation[], ta
         let conversationChanged = false;
         let completedAt = conversation.updatedAt;
         const messages = conversation.messages.map((message) => {
-            if (message.role !== "assistant" || message.status !== "pending" || message.mode === "text") return message;
+            if (message.role !== "assistant" || (message.status !== "pending" && message.status !== "error") || message.mode === "text") return message;
             const taskIds = new Set(message.taskIds || []);
             const matches = tasks
                 .filter((task) => taskIds.has(task.id) || (task.clientContext?.conversationId === conversation.id && task.clientContext.messageId === message.id))
