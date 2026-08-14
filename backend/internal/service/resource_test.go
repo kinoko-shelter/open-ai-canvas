@@ -328,6 +328,60 @@ func TestHydrateNewAPIChannel1ResourceUsesSignedOSSURL(t *testing.T) {
 	}
 }
 
+func TestHydrateNewAPIChannel1ResourceBypassesInvalidCDNAuthKey(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value", CDNBaseURL: "https://media.example.com", CDNAuthKey: encryptedSettingPrefix + "invalid",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-cdn-fallback", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	media := providerMedia{StorageKey: "resource:resource-cdn-fallback"}
+	if err := svc.hydrateProviderMedia("user-1", &media, true); err != nil {
+		t.Fatalf("hydrateProviderMedia() error = %v", err)
+	}
+	parsed, err := url.Parse(media.URL)
+	if err != nil || parsed.Host != "private-bucket.oss-cn-test.aliyuncs.com" || parsed.Query().Get("Signature") == "" {
+		t.Fatalf("provider media URL = %q, %v", media.URL, err)
+	}
+}
+
+func TestDirectResourceURLFallsBackToOSSWhenCDNAuthKeyCannotDecrypt(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		AccessKeyID: "access-id", AccessKeySecret: "secret-value", CDNBaseURL: "https://media.example.com", CDNAuthKey: encryptedSettingPrefix + "invalid",
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-direct-cdn-fallback", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "aliyun", Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "private-bucket",
+		ObjectKey: "users/user-1/image/reference.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	value, err := svc.DirectResourceURL("user-1", resource.ID)
+	if err != nil {
+		t.Fatalf("DirectResourceURL() error = %v", err)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host != "private-bucket.oss-cn-test.aliyuncs.com" || parsed.Query().Get("Signature") == "" {
+		t.Fatalf("DirectResourceURL() = %q, %v", value, err)
+	}
+}
+
 func TestHydrateNewAPIChannel1ResourceUsesSignedLocalURL(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

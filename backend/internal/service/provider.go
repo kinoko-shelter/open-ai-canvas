@@ -506,7 +506,7 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 		if resource.Status != "ready" {
 			return errors.New("任务参考资源尚未上传完成")
 		}
-		signedURL, err := s.directResourceURL(resource, time.Now().Add(providerResourceURLTTL))
+		signedURL, err := s.providerResourceURL(resource, time.Now().Add(providerResourceURLTTL))
 		if err != nil {
 			return fmt.Errorf("生成 JSON 视频协议参考素材地址失败：%w", err)
 		}

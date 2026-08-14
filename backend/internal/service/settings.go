@@ -181,6 +181,16 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 }
 
 func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error) {
+	return s.readOSSSettingWithSecrets(true)
+}
+
+// readOSSStorageSetting 仅解密 OSS 读写必需的访问凭据。CDN 是可选分发能力，
+// 不能因为其鉴权密钥异常而阻断上传、下载或模型参考素材签名。
+func (s *Service) readOSSStorageSetting() (*model.SystemSetting, ossSettingValue, error) {
+	return s.readOSSSettingWithSecrets(false)
+}
+
+func (s *Service) readOSSSettingWithSecrets(includeCDN bool) (*model.SystemSetting, ossSettingValue, error) {
 	setting, err := s.repo.SystemSetting(ossSettingKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, defaultOSSSetting(), nil
@@ -194,12 +204,22 @@ func (s *Service) readOSSSetting() (*model.SystemSetting, ossSettingValue, error
 			return nil, ossSettingValue{}, errors.New("平台 OSS 配置格式无效")
 		}
 	}
-	needsMigration, err := s.decryptOSSSettingSecrets(&value)
+	needsMigration := false
+	if includeCDN {
+		needsMigration, err = s.decryptOSSSettingSecrets(&value)
+	} else {
+		needsMigration, err = s.decryptOSSStorageSecrets(&value)
+	}
 	if err != nil {
 		return nil, ossSettingValue{}, err
 	}
 	if needsMigration {
-		migrated, err := s.encryptOSSSettingSecrets(value)
+		var migrated ossSettingValue
+		if includeCDN {
+			migrated, err = s.encryptOSSSettingSecrets(value)
+		} else {
+			migrated, err = s.encryptOSSStorageSecrets(value)
+		}
 		if err != nil {
 			return nil, ossSettingValue{}, err
 		}
@@ -251,12 +271,20 @@ func (s *Service) userOSSSettingValue(setting *model.UserOSSSetting) (ossSetting
 }
 
 func (s *Service) encryptOSSSettingSecrets(value ossSettingValue) (ossSettingValue, error) {
-	var err error
-	value.AccessKeySecret, err = s.encryptSettingSecret(value.AccessKeySecret)
+	value, err := s.encryptOSSStorageSecrets(value)
 	if err != nil {
 		return ossSettingValue{}, err
 	}
 	value.CDNAuthKey, err = s.encryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return ossSettingValue{}, err
+	}
+	return value, nil
+}
+
+func (s *Service) encryptOSSStorageSecrets(value ossSettingValue) (ossSettingValue, error) {
+	var err error
+	value.AccessKeySecret, err = s.encryptSettingSecret(value.AccessKeySecret)
 	if err != nil {
 		return ossSettingValue{}, err
 	}
@@ -272,16 +300,27 @@ func (s *Service) encryptOSSSettingSecrets(value ossSettingValue) (ossSettingVal
 }
 
 func (s *Service) decryptOSSSettingSecrets(value *ossSettingValue) (bool, error) {
-	needsMigration := (value.AccessKeySecret != "" && !strings.HasPrefix(value.AccessKeySecret, encryptedSettingPrefix)) || (value.CDNAuthKey != "" && !strings.HasPrefix(value.CDNAuthKey, encryptedSettingPrefix))
+	needsMigration, err := s.decryptOSSStorageSecrets(value)
+	if err != nil {
+		return false, err
+	}
+	if value.CDNAuthKey != "" && !strings.HasPrefix(value.CDNAuthKey, encryptedSettingPrefix) {
+		needsMigration = true
+	}
+	value.CDNAuthKey, err = s.decryptSettingSecret(value.CDNAuthKey)
+	if err != nil {
+		return false, err
+	}
+	return needsMigration, nil
+}
+
+func (s *Service) decryptOSSStorageSecrets(value *ossSettingValue) (bool, error) {
+	needsMigration := value.AccessKeySecret != "" && !strings.HasPrefix(value.AccessKeySecret, encryptedSettingPrefix)
 	secret, err := s.decryptSettingSecret(value.AccessKeySecret)
 	if err != nil {
 		return false, err
 	}
 	value.AccessKeySecret = secret
-	value.CDNAuthKey, err = s.decryptSettingSecret(value.CDNAuthKey)
-	if err != nil {
-		return false, err
-	}
 	value.ArchivedCredentials = cloneOSSProviderCredentials(value.ArchivedCredentials)
 	for provider, credentials := range value.ArchivedCredentials {
 		if credentials.AccessKeySecret != "" && !strings.HasPrefix(credentials.AccessKeySecret, encryptedSettingPrefix) {

@@ -72,10 +72,20 @@ func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.directResourceURL(resource, time.Now().Add(directResourceURLTTL))
+	return s.resourceURL(resource, time.Now().Add(directResourceURLTTL), true)
 }
 
 func (s *Service) directResourceURL(resource *model.Resource, expiresAt time.Time) (string, error) {
+	return s.resourceURL(resource, expiresAt, true)
+}
+
+// providerResourceURL 为模型上游提供直连 OSS 地址；CDN 只服务浏览器分发，
+// 不能成为上游参考素材传输的前置依赖。
+func (s *Service) providerResourceURL(resource *model.Resource, expiresAt time.Time) (string, error) {
+	return s.resourceURL(resource, expiresAt, false)
+}
+
+func (s *Service) resourceURL(resource *model.Resource, expiresAt time.Time, preferCDN bool) (string, error) {
 	if resource == nil {
 		return "", errors.New("资源不存在")
 	}
@@ -92,9 +102,14 @@ func (s *Service) directResourceURL(resource *model.Resource, expiresAt time.Tim
 	setting.Provider = firstNonEmpty(resource.Provider, setting.Provider)
 	setting.Endpoint = firstNonEmpty(resource.Endpoint, setting.Endpoint)
 	setting.Bucket = firstNonEmpty(resource.Bucket, setting.Bucket)
-	if setting.Provider == aliyunOSSProvider {
-		if cdnURL, ok := signedCDNResourceURL(setting, resource.ObjectKey, expiresAt); ok {
-			return cdnURL, nil
+	if preferCDN && setting.Provider == aliyunOSSProvider {
+		cdnSetting := setting
+		cdnAuthKey, err := s.decryptSettingSecret(cdnSetting.CDNAuthKey)
+		if err == nil {
+			cdnSetting.CDNAuthKey = cdnAuthKey
+			if cdnURL, ok := signedCDNResourceURL(cdnSetting, resource.ObjectKey, expiresAt); ok {
+				return cdnURL, nil
+			}
 		}
 	}
 	return signedOSSObjectURL(setting, resource.ObjectKey, expiresAt)
@@ -147,7 +162,7 @@ func (s *Service) signPublicResource(resourceID string, expires string) (string,
 }
 
 func (s *Service) publicResourceBaseURL() (*url.URL, error) {
-	_, setting, err := s.readOSSSetting()
+	_, setting, err := s.readOSSStorageSetting()
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +627,7 @@ func imageDimensions(data []byte) (int, int) {
 }
 
 func (s *Service) activeOSSSetting() (ossSettingValue, error) {
-	_, setting, err := s.readOSSSetting()
+	_, setting, err := s.readOSSStorageSetting()
 	if err != nil {
 		return ossSettingValue{}, err
 	}
@@ -628,7 +643,7 @@ func (s *Service) activeResourceOSSSetting(userID string) (ossSettingValue, stri
 		value, err = validateActiveOSSSetting(value, "用户 OSS 尚未启用", "你的 OSS 配置不完整")
 		return value, userSetting.ID, true, err
 	}
-	_, systemValue, err := s.readOSSSetting()
+	_, systemValue, err := s.readOSSStorageSetting()
 	if err != nil {
 		return ossSettingValue{}, "", false, err
 	}
@@ -645,7 +660,7 @@ func (s *Service) ossSettingForResource(userID string, resource *model.Resource)
 	if resource.StorageSettingID != "" {
 		_, setting, err = s.readUserOSSSettingByID(userID, resource.StorageSettingID)
 	} else {
-		_, setting, err = s.readOSSSetting()
+		_, setting, err = s.readOSSStorageSetting()
 	}
 	if err != nil {
 		return ossSettingValue{}, err
