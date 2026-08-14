@@ -160,11 +160,19 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.generateAudio = { supported: true, default: true };
     }
     if (protocol === "volcengine-ark-video") video.watermark = { supported: true, default: false };
-    const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
-    if (fixedGrokVideoResolution) {
-        video.resolutions = [fixedGrokVideoResolution];
-        video.defaultResolution = fixedGrokVideoResolution;
+    if (protocol === "novita-video") {
+        video.references.maxImages = 1;
+        video.references.maxImageBytes = 10 * 1024 * 1024;
+        video.duration = { selection: "enum", values: [5, 10], default: 5 };
+        video.ratios = ["16:9", "9:16", "1:1"];
+        video.resolutions = ["1080p"];
+        video.defaultResolution = "1080p";
     }
+	const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
+	if (fixedGrokVideoResolution) {
+		video.resolutions = [fixedGrokVideoResolution];
+		video.defaultResolution = fixedGrokVideoResolution;
+	}
     return { version: 1, image: defaultImageCapabilityConfig(protocol, model), video };
 }
 
