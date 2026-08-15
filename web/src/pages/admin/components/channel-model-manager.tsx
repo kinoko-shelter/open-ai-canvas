@@ -8,7 +8,7 @@ import { ModelIcon } from "@/components/model-picker";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker, type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig, hasModelSpecificImageCapability, normalizeModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
-import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, type ModelProtocol } from "@/lib/model-protocols";
+import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, modelProtocolSupportsTokenBilling, type ModelProtocol } from "@/lib/model-protocols";
 import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { AdminPageFrame } from "./admin-shell";
@@ -178,7 +178,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(nextProtocol, changed.modelKey, channel.apiFormat));
         }
         const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
-        const tokenBillingAllowed = nextCapability === "text" || (nextCapability === "video" && nextProtocol === "volcengine-ark-video");
+        const tokenBillingAllowed = modelProtocolSupportsTokenBilling(nextCapability, nextProtocol);
         if ((currentBillingMode === "per_second" && nextCapability !== "video") || (currentBillingMode === "token" && !tokenBillingAllowed)) {
             form.setFieldValue("billingMode", "fixed_request");
         }
