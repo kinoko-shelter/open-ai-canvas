@@ -7,7 +7,7 @@ import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
-import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue } from "@/lib/model-capabilities";
 import { resolveCompatibleModel, resolveVideoOperation, type ModelRequirements } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
@@ -294,22 +294,68 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const model = resolveCompatibleModel(config, preferredModel, requirements) || preferredModel;
     const imageProfile = mode === "image" ? modelCapabilityConfigFor(config, model).image! : undefined;
     const normalizedImage = imageProfile ? normalizeImageValue(imageProfile, { quality: node?.metadata?.quality || config.quality || defaultConfig.quality, size: node?.metadata?.size || config.size || defaultConfig.size, transparentBackground: node?.metadata?.transparentBackground || config.transparentBackground, count: String(node?.metadata?.count || config.canvasImageCount || config.count || defaultConfig.count) }) : undefined;
+    const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, model).video! : undefined;
+    const normalizedVideo = videoProfile
+        ? normalizeVideoValue(videoProfile, {
+              seconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
+              ratio: node?.metadata?.size || config.size || defaultConfig.size,
+              resolution: `${normalizeVideoResolution(node?.metadata?.vquality || config.vquality || defaultConfig.vquality)}p`,
+          })
+        : undefined;
     return {
         ...config,
         model,
         quality: normalizedImage?.quality || node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: normalizedImage?.size || node?.metadata?.size || config.size || defaultConfig.size,
+        size: normalizedImage?.size || normalizedVideo?.ratio || node?.metadata?.size || config.size || defaultConfig.size,
         transparentBackground: normalizedImage?.transparentBackground || ((node?.metadata?.transparentBackground || config.transparentBackground) === "true" ? "true" : "false"),
-        videoSeconds: normalizeVideoDuration(node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds),
-        vquality: normalizeVideoResolution(node?.metadata?.vquality || config.vquality || defaultConfig.vquality),
-        videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
+        videoSeconds: normalizedVideo?.seconds || normalizeVideoDuration(node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds),
+        vquality: normalizedVideo?.resolution.replace(/p$/i, "") || normalizeVideoResolution(node?.metadata?.vquality || config.vquality || defaultConfig.vquality),
+        videoGenerateAudio: videoProfile?.generateAudio.supported ? node?.metadata?.generateAudio || config.videoGenerateAudio || String(videoProfile.generateAudio.default) : "false",
+        videoWatermark: videoProfile?.watermark.supported ? node?.metadata?.watermark || config.videoWatermark || String(videoProfile.watermark.default) : "false",
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: normalizedImage?.count || String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
+}
+
+// Model changes must persist the normalized options; otherwise the closed setting summary and task payload can keep values from the previous model.
+export function generationModelSelectionPatch(config: AiConfig, node: Pick<CanvasNodeData, "metadata"> | undefined, mode: CanvasNodeGenerationMode, model: string): Partial<CanvasNodeMetadata> {
+    const selectedModel = resolveCanvasGenerationModel(config, model, mode) || model;
+    if (mode === "image") {
+        const profile = modelCapabilityConfigFor(config, selectedModel).image!;
+        const normalized = normalizeImageValue(profile, {
+            size: node?.metadata?.size,
+            quality: node?.metadata?.quality,
+            transparentBackground: node?.metadata?.transparentBackground,
+            count: node?.metadata?.count === undefined ? undefined : String(node.metadata.count),
+        });
+        return {
+            model: selectedModel,
+            size: normalized.size,
+            quality: normalized.quality,
+            transparentBackground: normalized.transparentBackground,
+            count: Number(normalized.count),
+        };
+    }
+    if (mode === "video") {
+        const profile = modelCapabilityConfigFor(config, selectedModel).video!;
+        const normalized = normalizeVideoValue(profile, {
+            seconds: node?.metadata?.seconds,
+            ratio: node?.metadata?.size,
+            resolution: node?.metadata?.vquality ? `${normalizeVideoResolution(node.metadata.vquality)}p` : undefined,
+        });
+        return {
+            model: selectedModel,
+            size: normalized.ratio,
+            seconds: normalized.seconds,
+            vquality: normalized.resolution.replace(/p$/i, ""),
+            generateAudio: profile.generateAudio.supported ? node?.metadata?.generateAudio || String(profile.generateAudio.default) : "false",
+            watermark: profile.watermark.supported ? node?.metadata?.watermark || String(profile.watermark.default) : "false",
+        };
+    }
+    return { model: selectedModel };
 }
 
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasNodeGenerationMode): string {
