@@ -106,8 +106,8 @@ export default function StorageSettingsPage() {
                                     <Form.Item name="pathPrefix" label="路径前缀"><Input autoComplete="off" placeholder="例如：uploads/infinite-canvas" /></Form.Item>
                                     <Form.Item name="accessKeyId" label={accessKeyIdLabel}><Input autoComplete="off" placeholder={isTencentCOS ? "腾讯云 SecretId" : "阿里云 AccessKey ID"} /></Form.Item>
                                     <Form.Item name="accessKeySecret" label={hasCurrentProviderSecret ? `${accessKeySecretLabel}（${configuredSecretText}）` : accessKeySecretLabel}><Input.Password autoComplete="new-password" placeholder={hasCurrentProviderSecret ? "留空保留原密钥" : isTencentCOS ? "腾讯云 SecretKey" : "阿里云 AccessKey Secret"} /></Form.Item>
+                                    <Form.Item name="cdnBaseUrl" label="媒体 CDN 地址" extra={isTencentCOS ? "选填。上传仍走 Endpoint，下载与预览改走 CDN；私有桶需开启 CDN 私有存储桶访问。" : "选填。上传仍走 Endpoint，下载与预览改走 CDN；私有 Bucket 需配置 CDN 私有回源。"} rules={[{ type: "url", message: "请填写完整的 HTTPS 地址" }]}><Input autoComplete="off" placeholder="https://media.example.com" prefix={<Globe className="size-4 text-foreground/35" />} /></Form.Item>
                                     {!isTencentCOS ? <>
-                                        <Form.Item name="cdnBaseUrl" label="媒体 CDN 地址" rules={[{ type: "url", message: "请填写完整的 HTTPS 地址" }]}><Input autoComplete="off" placeholder="https://media.example.com" prefix={<Globe className="size-4 text-foreground/35" />} /></Form.Item>
                                         <Form.Item name="cdnAuthKey" label={setting?.hasCdnAuthKey ? `CDN Type A 鉴权密钥（${configuredSecretText}）` : "CDN Type A 鉴权密钥"}><Input.Password autoComplete="new-password" placeholder={setting?.hasCdnAuthKey ? "留空保留原密钥" : "在 CDN 控制台启用 Type A 后填写"} /></Form.Item>
                                     </> : null}
                                 </>
@@ -146,7 +146,7 @@ export default function StorageSettingsPage() {
     );
 }
 
-function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? setting.provider === "tencent" ? "tencent" : "aliyun" : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", cdnBaseUrl: setting?.provider === "aliyun" ? setting.cdnBaseUrl || "" : "", cdnAuthKey: "", pathPrefix: setting?.pathPrefix || "" }; }
+function formValues(setting?: AdminOSSSetting | null): OSSFormValues { return { mode: setting?.enabled ? setting.provider === "tencent" ? "tencent" : "aliyun" : "local", publicBaseUrl: setting?.publicBaseUrl || "", region: setting?.region || "", endpoint: setting?.endpoint || "", bucket: setting?.bucket || "", accessKeyId: setting?.accessKeyId || "", accessKeySecret: "", cdnBaseUrl: setting?.cdnBaseUrl || "", cdnAuthKey: "", pathPrefix: setting?.pathPrefix || "" }; }
 function storageProviderLabel(provider?: AdminOSSSetting["provider"]) { return provider === "tencent" ? "腾讯云 COS" : "阿里云 OSS"; }
 function formatTime(value?: string) { return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--"; }
 function Notice({ icon, text }: { icon: ReactNode; text: string }) { return <div className="flex items-center gap-2 px-3 py-2.5"><span className="text-foreground/40">{icon}</span><span>{text}</span></div>; }
