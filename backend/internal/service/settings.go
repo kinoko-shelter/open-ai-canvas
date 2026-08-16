@@ -152,9 +152,6 @@ func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest)
 	if actor == nil {
 		return nil, Unauthorized("请先登录")
 	}
-	if strings.TrimSpace(req.CDNBaseURL) != "" || strings.TrimSpace(req.CDNAuthKey) != "" {
-		return nil, BadAuthRequest("媒体 CDN 仅支持管理员配置平台存储")
-	}
 	_, currentValue, err := s.readUserOSSSetting(actor.ID)
 	if err != nil {
 		return nil, err
