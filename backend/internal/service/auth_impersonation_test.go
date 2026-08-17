@@ -11,14 +11,17 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestUserImpersonationOnlyAllowsActiveNormalUsers(t *testing.T) {
+func TestUserImpersonationOnlyAllowsActiveNonAdminUsers(t *testing.T) {
 	db := newBulkUserTestDB(t)
 	createdAt := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	actor := model.User{ID: "admin-1", Username: "admin-one", DisplayName: "Admin One", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: createdAt, UpdatedAt: createdAt}
 	target := model.User{ID: "user-1", Username: "user-one", DisplayName: "User One", Role: model.UserRoleUser, Status: model.UserStatusActive, CreatedAt: createdAt.Add(time.Second), UpdatedAt: createdAt.Add(time.Second)}
 	otherAdmin := model.User{ID: "admin-2", Username: "admin-two", Role: model.UserRoleAdmin, Status: model.UserStatusActive, CreatedAt: createdAt.Add(2 * time.Second), UpdatedAt: createdAt.Add(2 * time.Second)}
 	disabledUser := model.User{ID: "user-2", Username: "user-two", Role: model.UserRoleUser, Status: model.UserStatusDisabled, CreatedAt: createdAt.Add(3 * time.Second), UpdatedAt: createdAt.Add(3 * time.Second)}
-	if err := db.Create(&[]model.User{actor, target, otherAdmin, disabledUser}).Error; err != nil {
+	teamLead := model.User{ID: "lead-1", Username: "lead-one", DisplayName: "Lead One", Role: model.UserRoleTeamLead, Status: model.UserStatusActive, CreatedAt: createdAt.Add(4 * time.Second), UpdatedAt: createdAt.Add(4 * time.Second)}
+	teamMember := model.User{ID: "member-1", Username: "member-one", DisplayName: "Member One", Role: model.UserRoleTeamMember, Status: model.UserStatusActive, CreatedAt: createdAt.Add(5 * time.Second), UpdatedAt: createdAt.Add(5 * time.Second)}
+	operationsManager := model.User{ID: "operations-1", Username: "operations-one", DisplayName: "Operations One", Role: model.UserRoleOperationsManager, Status: model.UserStatusActive, CreatedAt: createdAt.Add(6 * time.Second), UpdatedAt: createdAt.Add(6 * time.Second)}
+	if err := db.Create(&[]model.User{actor, target, otherAdmin, disabledUser, teamLead, teamMember, operationsManager}).Error; err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db)}
@@ -59,6 +62,21 @@ func TestUserImpersonationOnlyAllowsActiveNormalUsers(t *testing.T) {
 	}
 	if returnedContext.User.ID != actor.ID || returnedContext.Impersonator != nil {
 		t.Fatalf("returned context = %#v", returnedContext)
+	}
+
+	for _, nextTarget := range []model.User{teamLead, teamMember, operationsManager} {
+		freshAdminSession, err := svc.createAuthSession(&actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entered, err := svc.StartUserImpersonation(freshAdminSession.Session, nextTarget.ID)
+		if err != nil {
+			t.Fatalf("StartUserImpersonation(%q) error = %v", nextTarget.Role, err)
+		}
+		enteredContext, err := svc.CurrentAuthSession(entered.Session)
+		if err != nil || enteredContext.User.ID != nextTarget.ID || enteredContext.Impersonator == nil || enteredContext.Impersonator.ID != actor.ID {
+			t.Fatalf("impersonation context for %q = %#v, %v", nextTarget.Role, enteredContext, err)
+		}
 	}
 
 	for _, targetID := range []string{actor.ID, otherAdmin.ID, disabledUser.ID} {

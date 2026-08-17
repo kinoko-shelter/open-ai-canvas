@@ -74,7 +74,7 @@ export function createUserColumns({
             render: (_, user) => (
                 <AdminRowActions
                     primary={{ label: "详情", icon: <Eye className="size-3.5" />, onClick: () => onView(user) }}
-                    secondary={canImpersonateUsers && user.id !== actorId && user.role === "user" && user.status === "active" ? {
+                    secondary={canImpersonateUsers && user.id !== actorId && user.role !== "admin" && user.status === "active" ? {
                         label: "进入",
                         icon: <LogIn className="size-3.5" />,
                         confirm: {

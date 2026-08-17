@@ -320,11 +320,11 @@ func (s *Service) StartUserImpersonation(cookieValue string, targetID string) (*
 	if target.ID == actor.ID {
 		return nil, BadAuthRequest("不能进入当前管理员账号")
 	}
-	if target.Role != model.UserRoleUser {
+	if target.Role == model.UserRoleAdmin {
 		return nil, Forbidden("不能进入管理员账号")
 	}
 	if target.Status != model.UserStatusActive {
-		return nil, Forbidden("只能进入已启用的普通用户账号")
+		return nil, Forbidden("只能进入已启用的非管理员账号")
 	}
 	result, nextSession, err := s.newAuthSession(target, actor.ID)
 	if err != nil {
