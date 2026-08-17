@@ -23,6 +23,7 @@ import (
 
 type Service struct {
 	repo            *repository.Repository
+	kolRepo         *repository.KOLRepository
 	dataDir         string
 	cancelMu        sync.Mutex
 	registrationMu  sync.Mutex
@@ -202,6 +203,10 @@ func New(repo *repository.Repository, dataDir string) *Service {
 		coordinator: coordinator, runtimeErr: err, workerID: newID(),
 		workerStop: make(chan struct{}), workerDone: make(chan struct{}),
 	}
+}
+
+func (s *Service) SetKOLRepository(repo *repository.KOLRepository) {
+	s.kolRepo = repo
 }
 
 func (s *Service) StartWorker() {

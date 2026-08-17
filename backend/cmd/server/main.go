@@ -44,6 +44,13 @@ func main() {
 
 	repo := repository.New(db)
 	svc := service.New(repo, dataDir)
+	kolRepo, err := openKOLRepository()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if kolRepo != nil {
+		svc.SetKOLRepository(kolRepo)
+	}
 	if err := svc.ValidateRuntime(); err != nil {
 		log.Fatal(err)
 	}
@@ -165,6 +172,21 @@ func env(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func openKOLRepository() (*repository.KOLRepository, error) {
+	dsn := strings.TrimSpace(os.Getenv("CANVAS_KOL_MYSQL_DSN"))
+	if dsn == "" {
+		return nil, nil
+	}
+	db, err := database.Open(database.Config{Driver: "mysql", DSN: dsn})
+	if err != nil {
+		return nil, err
+	}
+	if err := database.ConfigurePool(db); err != nil {
+		return nil, err
+	}
+	return repository.NewKOLRepository(db), nil
 }
 
 func cors() gin.HandlerFunc {

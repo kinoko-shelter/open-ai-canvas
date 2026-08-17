@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -38,6 +40,12 @@ func Open(config Config) (*gorm.DB, error) {
 			return nil, errors.New("PostgreSQL 模式必须配置 DATABASE_URL")
 		}
 		return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	case "mysql":
+		dsn := strings.TrimSpace(config.DSN)
+		if dsn == "" {
+			return nil, errors.New("MySQL 模式必须配置 DSN")
+		}
+		return gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动：%s", driver)
 	}
@@ -51,6 +59,12 @@ func ConfigurePool(db *gorm.DB) error {
 	if db.Dialector.Name() == "postgres" {
 		sqlDB.SetMaxOpenConns(30)
 		sqlDB.SetMaxIdleConns(10)
+		return nil
+	}
+	if db.Dialector.Name() == "mysql" {
+		sqlDB.SetMaxOpenConns(10)
+		sqlDB.SetMaxIdleConns(4)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
 		return nil
 	}
 	sqlDB.SetMaxOpenConns(8)

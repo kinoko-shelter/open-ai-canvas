@@ -201,6 +201,19 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, response)
 	})
+	r.GET("/auth/kol/user-info", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		info, err := svc.KOLUserInfo(c.Request.Context(), user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, info)
+	})
 	r.GET("/channels/system", func(c *gin.Context) {
 		if _, err := currentUser(c, svc); err != nil {
 			failService(c, err)
