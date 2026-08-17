@@ -5,11 +5,13 @@ import { FileText, Image as ImageIcon, Music2, Pencil, Sparkles, UserRound, Vide
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { useAssetStore } from "@/stores/use-asset-store";
+import { buildAssetMentionReferences, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeType } from "@/types/canvas";
 
 type MentionState = {
     start: number;
+    end: number;
     query: string;
 };
 
@@ -39,13 +41,15 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     mentionMenuWidth?: number;
     sendOnEnter?: boolean;
     onContentSizeChange?: (height: number) => void;
+    includeAssetLibrary?: boolean;
 };
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 256, sendOnEnter = true, onContentSizeChange, ...props },
+    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, ...props },
     forwardedRef,
 ) {
     const rawTheme = useThemeStore((state) => state.theme);
+    const assets = useAssetStore((state) => state.assets);
     const theme = canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark;
     const containerRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -55,14 +59,19 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const lastRenderedValueRef = useRef("");
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
+    const assetReferences = useMemo(() => (includeAssetLibrary ? buildAssetMentionReferences(assets) : []), [assets, includeAssetLibrary]);
+    const activeCanvasReferences = useMemo(() => references.filter((item) => item.active), [references]);
+    const availableReferences = useMemo(() => [...activeCanvasReferences, ...assetReferences], [activeCanvasReferences, assetReferences]);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
-        const activeItems = references.filter((item) => item.active);
-        if (!query) return activeItems;
-        return activeItems.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
-    }, [mention, references]);
-    const activeReferences = useMemo(() => (highlightLabels ? references.filter((item) => item.active) : []), [highlightLabels, references]);
+        if (!query) return availableReferences;
+        return availableReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.category || ""} ${item.text || ""}`.toLowerCase().includes(query));
+    }, [availableReferences, mention]);
+    const activeReferences = useMemo(() => {
+        if (!highlightLabels) return [];
+        return [...activeCanvasReferences, ...assetReferences.filter((item) => value.includes(canvasResourceMentionToken(item)))];
+    }, [activeCanvasReferences, assetReferences, highlightLabels, value]);
     const useRichEditor = Boolean(activeReferences.length);
     const reportContentSize = useCallback((element: HTMLElement | null) => {
         if (!element || !onContentSizeChange) return;
@@ -129,12 +138,12 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
         const match = /@([^\s@,.;:!?，。；：！？、)\]}】）]*)$/.exec(prefix);
-        if (!match || !references.some((item) => item.active)) {
+        if (!match || !availableReferences.length) {
             closeMention();
             return;
         }
-        const nextMention = { start: match.index, query: match[1] };
-        const isSameMention = mention?.start === nextMention.start && mention.query === nextMention.query;
+        const nextMention = { start: match.index, end: cursor, query: match[1] };
+        const isSameMention = mention?.start === nextMention.start && mention.end === nextMention.end && mention.query === nextMention.query;
         if (!isSameMention) {
             setMention(nextMention);
             setActiveIndex(0);
@@ -143,10 +152,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const insertReference = (reference: CanvasResourceReference) => {
         if (!mention) return;
-        const selection = useRichEditor ? getEditableSelection(editorRef.current) : null;
-        const end = selection?.end ?? textareaRef.current?.selectionStart ?? value.length;
         const insertText = `${canvasResourceMentionToken(reference)} `;
-        const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
+        const next = `${value.slice(0, mention.start)}${insertText}${value.slice(mention.end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);
     };

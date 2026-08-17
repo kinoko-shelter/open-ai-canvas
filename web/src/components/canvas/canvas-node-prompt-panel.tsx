@@ -292,6 +292,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 <CanvasResourceMentionTextarea
                     value={prompt}
                     references={mentionReferences}
+                    includeAssetLibrary
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
                     className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-2 text-[var(--fs-body)] leading-5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
@@ -351,6 +352,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <CanvasResourceMentionTextarea
                             value={prompt}
                             references={mentionReferences}
+                            includeAssetLibrary
                             onChange={updatePrompt}
                             containerClassName="min-h-0 flex-1"
                             className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[var(--fs-body-lg)] leading-6 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"

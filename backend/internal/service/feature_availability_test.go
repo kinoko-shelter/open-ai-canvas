@@ -107,6 +107,13 @@ func TestCustomChannelFeatureGuardBlocksOnlyCustomTaskInput(t *testing.T) {
 	if err := svc.requireCustomChannelsForTaskInput(map[string]any{"config": map[string]any{"channelId": "system-1", "baseUrl": "https://api.example.com", "apiKey": "key"}}); err != nil {
 		t.Fatalf("system channel task input error = %v", err)
 	}
+	legacySystemInput, err := normalizeTaskInput(map[string]any{"config": providerConfig{BaseURL: "/api/ai/system/system-1", APIKey: "system", Model: "text-model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.requireCustomChannelsForTaskInput(legacySystemInput); err != nil {
+		t.Fatalf("legacy system proxy task input error = %v", err)
+	}
 }
 
 func newFeatureAvailabilityTestService(t *testing.T) (*Service, *gorm.DB) {

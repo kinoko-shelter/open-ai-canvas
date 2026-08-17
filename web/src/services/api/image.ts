@@ -71,7 +71,7 @@ type ChatCompletionPayload = {
     msg?: string;
 };
 type ChatCompletionStreamToolCall = { id: string; name: string; arguments: string };
-type ChatCompletionStreamState = { buffer: string; text: string; toolCalls: Map<number, ChatCompletionStreamToolCall>; error?: string };
+type ChatCompletionStreamState = { buffer: string; text: string; reasoning: string; toolCalls: Map<number, ChatCompletionStreamToolCall>; error?: string };
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
@@ -935,6 +935,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                   model: requestConfig.model,
                   prompt: withSystemPrompt(requestConfig, prompt),
                   n,
+                  watermark: false,
                   ...(normalizedRequestSize ? { [normalizedRequestSize.parameter]: normalizedRequestSize.value } : {}),
               }
             : {
@@ -1028,6 +1029,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     model: requestConfig.model,
                     prompt: withSystemPrompt(requestConfig, requestPrompt),
                     n,
+                    watermark: false,
                     ...(requestSize ? { [requestSize.parameter]: requestSize.value } : {}),
                     ...(images.length === 1 ? { image: images[0] } : images.length > 1 ? { image: images } : {}),
                 },

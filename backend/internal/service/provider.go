@@ -932,18 +932,48 @@ func runVolcengineArkImageTask(ctx context.Context, input canvasGenerationInput)
 	if err := postJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
 		return nil, err
 	}
-	images, err := imageDataURLs(payload)
+	images, err := volcengineArkImageDataURLs(ctx, input.Config, payload)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{"mode": "image", "images": images}, nil
 }
 
+func volcengineArkImageDataURLs(ctx context.Context, config providerConfig, payload imageResponse) ([]map[string]string, error) {
+	images, err := imageDataURLs(payload)
+	if err != nil {
+		return nil, err
+	}
+	for _, image := range images {
+		value := strings.TrimSpace(image["dataUrl"])
+		if strings.HasPrefix(value, "data:image/") {
+			continue
+		}
+		if !isPublicMediaURL(value) {
+			return nil, errors.New("火山方舟图片接口没有返回可下载的图片")
+		}
+		// 方舟默认返回临时 CDN 地址，先转为内联数据，后续才能原子持久化到资源存储。
+		data, mimeType, err := getProviderExternalBinary(ctx, config, value)
+		if err != nil {
+			return nil, fmt.Errorf("火山方舟图片结果下载失败：%w", err)
+		}
+		detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
+		mimeType = strings.ToLower(normalizedMediaMimeType(mimeType, data))
+		if len(data) == 0 || strings.Contains(detected, "json") || strings.HasPrefix(detected, "text/") || !strings.HasPrefix(mimeType, "image/") {
+			return nil, fmt.Errorf("火山方舟图片结果无效：%s", defaultString(detected, mimeType))
+		}
+		image["dataUrl"] = dataURL(mimeType, data)
+		image["mimeType"] = mimeType
+	}
+	return images, nil
+}
+
 func volcengineArkImageBody(input canvasGenerationInput) (map[string]interface{}, error) {
 	body := map[string]interface{}{
-		"model":  input.Config.Model,
-		"prompt": withSystemPrompt(input.Config, input.Prompt),
-		"n":      1,
+		"model":     input.Config.Model,
+		"prompt":    withSystemPrompt(input.Config, input.Prompt),
+		"n":         1,
+		"watermark": false,
 	}
 	if key, value, err := imageSizeParameter(input.ImageCapability, input.Config.Model, input.Config.Quality, input.Config.Size); err != nil {
 		return nil, err

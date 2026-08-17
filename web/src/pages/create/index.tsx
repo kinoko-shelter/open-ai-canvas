@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import localforage from "localforage";
 import { App, Drawer, Modal, Popover, Spin, Tooltip } from "antd";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import { Link } from "react-router";
 
+import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { GenerationToolCard, type GenerationToolStatus } from "@/components/ai/generation-tool-card";
 import { MessageReasoning } from "@/components/ai/message-reasoning";
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
@@ -1190,11 +1190,11 @@ function StoryboardShotResult({ result, onRetryFailure, onCreateVariant, onColle
     if (status === "error") return <div className="storyboard-workbench-error"><span>{generationErrorMessage(result.error || "")}</span><button type="button" onClick={onRetryFailure}><RefreshCw />重新生成</button></div>;
     if (mode === "text") return <>
         {result.reasoning ? <MessageReasoning reasoning={result.reasoning} isStreaming={status === "streaming"} /> : null}
-        <div className="creation-message-content storyboard-workbench-text">{result.content ? <ReactMarkdown>{result.content}</ReactMarkdown> : <span>正在生成…</span>}</div>
+        <div className="creation-message-content storyboard-workbench-text">{result.content ? <AIMessageMarkdown isStreaming={status === "streaming"}>{result.content}</AIMessageMarkdown> : <span>正在生成…</span>}</div>
     </>;
     if (!resultUrls.length) return <div className="storyboard-workbench-empty"><Film />没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;
     const note = result.settings ? directorNoteFor(mode, result.settings) : "";
-    const toolStatus: GenerationToolStatus = status === "pending" || status === "queued" ? "running" : status === "error" ? "error" : status === "cancelled" ? "cancelled" : "completed";
+    const toolStatus: GenerationToolStatus = status === "streaming" ? "running" : status === "cancelled" ? "cancelled" : "completed";
     const detailHeading = <span className="storyboard-workbench-generation-detail-heading">生成详情</span>;
     return <GenerationToolCard status={toolStatus} isBulk={(resultUrls.length || Number(result.settings?.count) || 1) > 1} heading={detailHeading}>
         {mode === "video" ? <button type="button" className="creation-video-result" onClick={() => openPreview(resultUrls[0], "video")} aria-label="预览生成视频"><video muted preload="metadata" className="size-full object-cover" src={resultUrls[0]} /><span><Maximize2 />预览视频</span></button> : <div className="creation-image-result-grid">{resultUrls.map((url) => <button key={url} type="button" className="creation-image-result" onClick={() => openPreview(url, "image")} aria-label="预览生成图片"><img src={url} alt="生成结果" /><span><Maximize2 /></span></button>)}</div>}

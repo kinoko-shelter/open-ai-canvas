@@ -7248,6 +7248,30 @@ html:not(.dark) .creation-user-message-reference { background: rgba(28, 32, 37, 
 .creation-message-content pre code { background: transparent; padding: 0; }
 .creation-message-content a { color: #83d6ec; text-decoration: none; }
 
+/* 流式回复和推理复用同一套 Markdown 排版，避免半截内容在不同面板跳动。 */
+.ai-message-markdown { min-width: 0; overflow-wrap: anywhere; }
+.ai-message-markdown-heading { margin: 18px 0 8px; color: inherit; font-weight: 650; line-height: 1.35; }
+.ai-message-markdown-heading:first-child { margin-top: 0; }
+.ai-message-markdown-heading-1 { font-size: 1.3em; }
+.ai-message-markdown-heading-2 { font-size: 1.18em; }
+.ai-message-markdown-heading-3, .ai-message-markdown-heading-4 { font-size: 1.05em; }
+.ai-message-markdown-paragraph { margin: 0 0 12px; }
+.ai-message-markdown-paragraph:last-child { margin-bottom: 0; }
+.ai-message-markdown-list { margin: 10px 0; padding-left: 22px; }
+.ai-message-markdown-list-unordered { list-style: disc; }
+.ai-message-markdown-list-ordered { list-style: decimal; }
+.ai-message-markdown-list-item + .ai-message-markdown-list-item { margin-top: 4px; }
+.ai-message-markdown-blockquote { margin: 14px 0; border-left: 2px solid color-mix(in srgb, currentColor 34%, transparent); padding: 2px 0 2px 12px; color: color-mix(in srgb, currentColor 68%, transparent); }
+.ai-message-markdown-pre { max-width: 100%; overflow-x: auto; border-radius: var(--r-md); background: color-mix(in srgb, var(--foreground) 92%, transparent); padding: 12px 14px; color: var(--background); }
+.ai-message-markdown-code { border-radius: var(--r-xs); background: color-mix(in srgb, currentColor 9%, transparent); padding: 2px 5px; font-size: 0.88em; }
+.ai-message-markdown-pre .ai-message-markdown-code { background: transparent; padding: 0; }
+.ai-message-markdown-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ai-message-markdown-rule { margin: 16px 0; border: 0; border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.ai-message-markdown-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.ai-message-markdown-table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+.ai-message-markdown-table-cell { border: 1px solid color-mix(in srgb, currentColor 16%, transparent); padding: 7px 9px; text-align: left; vertical-align: top; }
+.ai-message-markdown-table-header { background: color-mix(in srgb, currentColor 7%, transparent); font-weight: 650; }
+
 .creation-message-error { display: flex; max-width: 760px; align-items: center; gap: 10px; padding: 16px 0 0 34px; color: #ee8585; font-size: 13px; line-height: 1.6; }
 .creation-message-error button { display: inline-flex; height: 28px; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: rgba(226, 96, 96, .12); color: #ef8b8b; padding: 0 8px; font-size: 11px; }
 .creation-message-error button:hover { background: rgba(226, 96, 96, .2); }
