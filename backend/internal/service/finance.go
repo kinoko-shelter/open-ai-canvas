@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -82,6 +83,25 @@ type AdminCreditAdjustmentRequest struct {
 	Note               string `json:"note"`
 }
 
+type TeamCreditRecipient struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+}
+
+type TeamCreditTransferRequest struct {
+	UserID             string `json:"userId"`
+	AmountMicrocredits int64  `json:"amountMicrocredits"`
+	Note               string `json:"note"`
+	IdempotencyKey     string `json:"idempotencyKey"`
+}
+
+type TeamCreditTransferResult struct {
+	SenderAccount    model.CreditAccount `json:"senderAccount"`
+	RecipientAccount model.CreditAccount `json:"recipientAccount"`
+	Replayed         bool                `json:"replayed"`
+}
+
 type ResolveBillingRequest struct {
 	Action string `json:"action"`
 	Note   string `json:"note"`
@@ -152,6 +172,126 @@ func (s *Service) RedeemCredits(user *model.User, code string, redeemedIP string
 		return nil, BadAuthRequest("兑换码无效或已使用")
 	}
 	return account, err
+}
+
+func (s *Service) TeamCreditRecipients(actor *model.User) ([]TeamCreditRecipient, error) {
+	if err := s.requireTeamCreditManager(actor); err != nil {
+		return nil, err
+	}
+	if err := s.RequireFeature(FeatureCredits); err != nil {
+		return nil, err
+	}
+	users, err := s.repo.TeamCreditRecipients(*actor.DeptID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TeamCreditRecipient, 0, len(users))
+	for _, user := range users {
+		result = append(result, TeamCreditRecipient{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName})
+	}
+	return result, nil
+}
+
+func (s *Service) TransferTeamCredits(actor *model.User, req TeamCreditTransferRequest) (*TeamCreditTransferResult, error) {
+	if err := s.requireTeamCreditManager(actor); err != nil {
+		return nil, err
+	}
+	if err := s.RequireFeature(FeatureCredits); err != nil {
+		return nil, err
+	}
+	recipientID := strings.TrimSpace(req.UserID)
+	if recipientID == "" {
+		return nil, BadAuthRequest("请选择团队成员")
+	}
+	if recipientID == actor.ID {
+		return nil, BadAuthRequest("不能给自己充值积分")
+	}
+	if req.AmountMicrocredits <= 0 {
+		return nil, BadAuthRequest("充值积分必须大于 0")
+	}
+	note := strings.TrimSpace(req.Note)
+	if note == "" {
+		return nil, BadAuthRequest("请填写充值说明")
+	}
+	if utf8.RuneCountInString(note) > 360 {
+		return nil, BadAuthRequest("充值说明最多 360 个字符")
+	}
+	idempotencyKey, err := normalizeTeamCreditIdempotencyKey(req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	recipient, err := s.repo.User(recipientID)
+	if err != nil {
+		return nil, err
+	}
+	if recipient.Status != model.UserStatusActive || recipient.Role != model.UserRoleTeamMember || recipient.DeptID == nil || *recipient.DeptID != *actor.DeptID {
+		return nil, Forbidden("只能给本团队启用的团队成员充值")
+	}
+	result, err := s.repo.TransferTeamCredits(
+		actor.ID,
+		recipient.ID,
+		*actor.DeptID,
+		req.AmountMicrocredits,
+		actor.ID,
+		"team-credit-transfer:"+actor.ID+":"+idempotencyKey,
+		truncateRunes("给 @"+recipient.Username+" 充值："+note, 500),
+		truncateRunes("团队主管 @"+actor.Username+" 充值："+note, 500),
+	)
+	if errors.Is(err, repository.ErrInsufficientCredits) {
+		return nil, BadAuthRequest("可用积分不足，无法完成本次团队充值")
+	}
+	if errors.Is(err, repository.ErrCreditBalanceOverflow) {
+		return nil, BadAuthRequest("成员积分余额异常，无法完成本次充值")
+	}
+	if errors.Is(err, repository.ErrCreditTransferReplay) {
+		return nil, BadAuthRequest("该请求标识已用于另一笔团队充值")
+	}
+	if errors.Is(err, repository.ErrCreditTransferForbidden) {
+		return nil, Forbidden("团队或成员归属已变更，请刷新后重试")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &TeamCreditTransferResult{SenderAccount: result.SenderAccount, RecipientAccount: result.RecipientAccount, Replayed: result.Replayed}, nil
+}
+
+func (s *Service) requireTeamCreditManager(actor *model.User) error {
+	if actor == nil {
+		return Unauthorized("请先登录")
+	}
+	if actor.Status != model.UserStatusActive {
+		return Forbidden("当前账号已停用")
+	}
+	if actor.Role != model.UserRoleTeamLead {
+		return Forbidden("需要团队主管权限")
+	}
+	if actor.DeptID == nil {
+		return Forbidden("团队主管未设置团队")
+	}
+	department, err := s.repo.AigcDepartment(*actor.DeptID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return Forbidden("团队主管未设置有效团队")
+	}
+	if err != nil {
+		return err
+	}
+	if department.Status != "启用" {
+		return Forbidden("当前团队已停用")
+	}
+	return nil
+}
+
+func normalizeTeamCreditIdempotencyKey(value string) (string, error) {
+	key := strings.TrimSpace(value)
+	if key == "" || len(key) > 80 {
+		return "", BadAuthRequest("充值请求标识无效")
+	}
+	for _, char := range key {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return "", BadAuthRequest("充值请求标识无效")
+		}
+	}
+	return key, nil
 }
 
 func (s *Service) AdminCreateRedeemBatch(actor *model.User, req CreateRedeemBatchRequest) (*CreateRedeemBatchResult, error) {

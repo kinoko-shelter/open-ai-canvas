@@ -14,7 +14,7 @@ export type CreditAccount = {
 export type CreditLedgerEntry = {
     id: string;
     userId: string;
-    type: "redeem" | "admin_grant" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus";
+    type: "redeem" | "admin_grant" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus" | "transfer_out" | "transfer_in";
     amountMicrocredits: number;
     availableAfterMicrocredits: number;
     reservedAfterMicrocredits: number;
@@ -37,6 +37,18 @@ export type WalletSummary = {
         checkinBonusMicrocredits: number;
         checkedInToday: boolean;
     };
+};
+
+export type TeamCreditRecipient = {
+    id: string;
+    username: string;
+    displayName: string;
+};
+
+export type TeamCreditTransferResult = {
+    senderAccount: CreditAccount;
+    recipientAccount: CreditAccount;
+    replayed: boolean;
 };
 
 export type CreditPolicy = {
@@ -187,6 +199,14 @@ export function redeemCredits(code: string) {
 
 export function checkinCredits() {
     return request<{ account: CreditAccount; granted: boolean }>(api.post("/wallet/checkin"));
+}
+
+export function listTeamCreditRecipients() {
+    return request<{ users: TeamCreditRecipient[] }>(api.get("/wallet/team-credit-recipients"));
+}
+
+export function transferTeamCredits(input: { userId: string; amountMicrocredits: number; note: string; idempotencyKey: string }) {
+    return request<TeamCreditTransferResult>(api.post("/wallet/team-credit-transfers", input));
 }
 
 export function getAdminCreditPolicy() {

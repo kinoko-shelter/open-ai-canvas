@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -21,7 +22,16 @@ var (
 	ErrBillingStateConflict    = errors.New("billing state conflict")
 	ErrBillingUsageUnavailable = errors.New("billing usage unavailable")
 	ErrBillingUnderreserved    = errors.New("billing amount exceeds reservation")
+	ErrCreditBalanceOverflow   = errors.New("credit balance overflow")
+	ErrCreditTransferReplay    = errors.New("credit transfer replay conflict")
+	ErrCreditTransferForbidden = errors.New("credit transfer participant is no longer eligible")
 )
+
+type TeamCreditTransferResult struct {
+	SenderAccount    model.CreditAccount
+	RecipientAccount model.CreditAccount
+	Replayed         bool
+}
 
 // 先抢占唯一业务键再更新账户，确保注册和签到奖励在多实例并发下只入账一次。
 func (r *Repository) GrantCreditsOnce(userID string, entryType model.CreditLedgerType, amount int64, referenceKey string, note string) (*model.CreditAccount, bool, error) {
@@ -165,11 +175,13 @@ func (r *Repository) CreditLedger(userID string, entryType string, limit int, of
 	query := r.db.Model(&model.CreditLedgerEntry{}).Where("user_id = ? AND type <> ?", userID, model.CreditLedgerReserve)
 	switch entryType {
 	case "income":
-		query = query.Where("type IN ?", []model.CreditLedgerType{model.CreditLedgerRedeem, model.CreditLedgerAdminGrant, model.CreditLedgerAdminAdjust, model.CreditLedgerSignupBonus, model.CreditLedgerCheckinBonus})
+		query = query.Where("type IN ?", []model.CreditLedgerType{model.CreditLedgerRedeem, model.CreditLedgerAdminGrant, model.CreditLedgerAdminAdjust, model.CreditLedgerSignupBonus, model.CreditLedgerCheckinBonus, model.CreditLedgerTransferIn})
 	case "consume":
 		query = query.Where("type = ?", model.CreditLedgerConsume)
 	case "refund":
 		query = query.Where("type = ?", model.CreditLedgerRefund)
+	case "transfer":
+		query = query.Where("type IN ?", []model.CreditLedgerType{model.CreditLedgerTransferOut, model.CreditLedgerTransferIn})
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -188,6 +200,142 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	var count int64
 	err := r.db.Model(&model.CreditLedgerEntry{}).Where("reference_key = ?", referenceKey).Count(&count).Error
 	return count > 0, err
+}
+
+// TransferTeamCredits keeps both account changes and their matching ledgers in one transaction.
+// The debit reference is inserted first, so a retry with the same request key cannot deduct twice.
+func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID string, deptID int64, amount int64, actorUserID string, referencePrefix string, senderNote string, recipientNote string) (*TeamCreditTransferResult, error) {
+	result := &TeamCreditTransferResult{}
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		debitReference := referencePrefix + ":out"
+		creditReference := referencePrefix + ":in"
+		debit := model.CreditLedgerEntry{
+			ID: newRepositoryID(), UserID: senderUserID, Type: model.CreditLedgerTransferOut,
+			AmountMicrocredits: -amount, AvailableDeltaMicrocredits: -amount,
+			ActorUserID: actorUserID, Note: senderNote, ReferenceKey: &debitReference,
+		}
+		created := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "reference_key"}}, DoNothing: true}).Create(&debit)
+		if created.Error != nil {
+			return created.Error
+		}
+		if created.RowsAffected == 0 {
+			var existingDebit model.CreditLedgerEntry
+			var existingCredit model.CreditLedgerEntry
+			if err := tx.Where("reference_key = ?", debitReference).First(&existingDebit).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("reference_key = ?", creditReference).First(&existingCredit).Error; err != nil {
+				return err
+			}
+			if existingDebit.UserID != senderUserID || existingDebit.Type != model.CreditLedgerTransferOut || existingDebit.AmountMicrocredits != -amount || existingCredit.UserID != recipientUserID || existingCredit.Type != model.CreditLedgerTransferIn || existingCredit.AmountMicrocredits != amount {
+				return ErrCreditTransferReplay
+			}
+			if err := tx.First(&result.SenderAccount, "user_id = ?", senderUserID).Error; err != nil {
+				return err
+			}
+			if err := tx.First(&result.RecipientAccount, "user_id = ?", recipientUserID).Error; err != nil {
+				return err
+			}
+			result.Replayed = true
+			return nil
+		}
+
+		lockingTx := tx
+		if r.Dialect() == "postgres" {
+			lockingTx = lockingTx.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var department model.AigcDepartment
+		if err := lockingTx.First(&department, "dept_id = ?", deptID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrCreditTransferForbidden
+			}
+			return err
+		}
+		if department.Status != "启用" {
+			return ErrCreditTransferForbidden
+		}
+		var participants []model.User
+		if err := lockingTx.
+			Select("id", "dept_id", "role", "status").
+			Where("id IN ?", []string{senderUserID, recipientUserID}).
+			Order("id asc").Find(&participants).Error; err != nil {
+			return err
+		}
+		if len(participants) != 2 {
+			return ErrCreditTransferForbidden
+		}
+		var sender model.User
+		var recipient model.User
+		for _, participant := range participants {
+			switch participant.ID {
+			case senderUserID:
+				sender = participant
+			case recipientUserID:
+				recipient = participant
+			}
+		}
+		if sender.Role != model.UserRoleTeamLead || sender.Status != model.UserStatusActive || sender.DeptID == nil || *sender.DeptID != deptID || recipient.Role != model.UserRoleTeamMember || recipient.Status != model.UserStatusActive || recipient.DeptID == nil || *recipient.DeptID != deptID {
+			return ErrCreditTransferForbidden
+		}
+
+		for _, userID := range []string{senderUserID, recipientUserID} {
+			account := model.CreditAccount{UserID: userID}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+				return err
+			}
+		}
+
+		now := time.Now()
+		debitAccount := tx.Model(&model.CreditAccount{}).
+			Where("user_id = ? AND available_microcredits >= ?", senderUserID, amount).
+			Updates(map[string]any{
+				"available_microcredits": gorm.Expr("available_microcredits - ?", amount),
+				"version":                gorm.Expr("version + 1"),
+				"updated_at":             now,
+			})
+		if debitAccount.Error != nil {
+			return debitAccount.Error
+		}
+		if debitAccount.RowsAffected != 1 {
+			return ErrInsufficientCredits
+		}
+
+		creditAccount := tx.Model(&model.CreditAccount{}).
+			Where("user_id = ? AND available_microcredits <= ?", recipientUserID, math.MaxInt64-amount).
+			Updates(map[string]any{
+				"available_microcredits": gorm.Expr("available_microcredits + ?", amount),
+				"version":                gorm.Expr("version + 1"),
+				"updated_at":             now,
+			})
+		if creditAccount.Error != nil {
+			return creditAccount.Error
+		}
+		if creditAccount.RowsAffected != 1 {
+			return ErrCreditBalanceOverflow
+		}
+
+		if err := tx.First(&result.SenderAccount, "user_id = ?", senderUserID).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&result.RecipientAccount, "user_id = ?", recipientUserID).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&debit).Updates(map[string]any{
+			"available_after_microcredits": result.SenderAccount.AvailableMicrocredits,
+			"reserved_after_microcredits":  result.SenderAccount.ReservedMicrocredits,
+		}).Error; err != nil {
+			return err
+		}
+		credit := model.CreditLedgerEntry{
+			ID: newRepositoryID(), UserID: recipientUserID, Type: model.CreditLedgerTransferIn,
+			AmountMicrocredits: amount, AvailableDeltaMicrocredits: amount,
+			AvailableAfterMicrocredits: result.RecipientAccount.AvailableMicrocredits,
+			ReservedAfterMicrocredits:  result.RecipientAccount.ReservedMicrocredits,
+			ActorUserID:                actorUserID, Note: recipientNote, ReferenceKey: &creditReference,
+		}
+		return tx.Create(&credit).Error
+	})
+	return result, err
 }
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {

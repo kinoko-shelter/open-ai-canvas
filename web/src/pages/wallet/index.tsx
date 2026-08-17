@@ -1,31 +1,43 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Grid, Input, Segmented, Table, Tag } from "antd";
+import { App, Button, Form, Grid, Input, InputNumber, Modal, Segmented, Select, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowDownLeft, ArrowUpRight, CalendarCheck, Coins, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, TicketCheck } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, CalendarCheck, Coins, HandCoins, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, TicketCheck } from "lucide-react";
 
 import { formatCredits } from "@/constant/credits";
 import { PaginationBar, TableSurface } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { aceternityMotion } from "@/lib/aceternity-motion";
-import { checkinCredits, getWallet, redeemCredits, type CreditLedgerEntry, type WalletSummary } from "@/services/api/wallet";
+import { checkinCredits, getWallet, listTeamCreditRecipients, redeemCredits, transferTeamCredits as requestTeamCreditTransfer, type CreditLedgerEntry, type TeamCreditRecipient, type WalletSummary } from "@/services/api/wallet";
 import { modelDisplayName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 
-type LedgerFilter = "all" | "income" | "consume" | "refund";
+type LedgerFilter = "all" | "income" | "consume" | "refund" | "transfer";
+type TeamCreditTransferForm = { userId: string; amount: number; note: string };
+
+const maxSafeCreditInput = Math.floor(Number.MAX_SAFE_INTEGER / 1_000_000);
 
 const ledgerFilterOptions = [
     { label: "全部", value: "all" },
     { label: "充值与调整", value: "income" },
     { label: "模型消费", value: "consume" },
     { label: "退款", value: "refund" },
+    { label: "团队划拨", value: "transfer" },
 ];
+
+function createTeamTransferRequestKey() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export default function WalletPage() {
     const { message } = App.useApp();
     const screens = Grid.useBreakpoint();
     const reducedMotion = useReducedMotion();
     const config = useEffectiveConfig();
+    const user = useUserStore((state) => state.user);
+    const [teamTransferForm] = Form.useForm<TeamCreditTransferForm>();
     const [wallet, setWallet] = useState<WalletSummary | null>(null);
     const [code, setCode] = useState("");
     const [filter, setFilter] = useState<LedgerFilter>("all");
@@ -34,7 +46,13 @@ export default function WalletPage() {
     const [checkingIn, setCheckingIn] = useState(false);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
+    const [teamTransferOpen, setTeamTransferOpen] = useState(false);
+    const [teamRecipients, setTeamRecipients] = useState<TeamCreditRecipient[]>([]);
+    const [teamRecipientsLoading, setTeamRecipientsLoading] = useState(false);
+    const [teamTransferSubmitting, setTeamTransferSubmitting] = useState(false);
+    const [teamTransferRequestKey, setTeamTransferRequestKey] = useState("");
     const requestSequence = useRef(0);
+    const canTransferTeamCredits = user?.role === "team_lead" && user.status === "active" && Boolean(user.deptId);
 
     const reload = async (targetPage = page, targetPageSize = pageSize) => {
         const sequence = ++requestSequence.current;
@@ -88,6 +106,60 @@ export default function WalletPage() {
         }
     };
 
+    const loadTeamCreditRecipients = async () => {
+        setTeamRecipientsLoading(true);
+        try {
+            const result = await listTeamCreditRecipients();
+            setTeamRecipients(result.users);
+        } catch (error) {
+            setTeamRecipients([]);
+            message.error(error instanceof Error ? error.message : "读取团队成员失败");
+        } finally {
+            setTeamRecipientsLoading(false);
+        }
+    };
+
+    const openTeamTransfer = () => {
+        teamTransferForm.resetFields();
+        setTeamTransferRequestKey(createTeamTransferRequestKey());
+        setTeamTransferOpen(true);
+        void loadTeamCreditRecipients();
+    };
+
+    const submitTeamTransfer = async () => {
+        try {
+            const values = await teamTransferForm.validateFields();
+            const amountMicrocredits = Math.round(Number(values.amount) * 1_000_000);
+            if (!Number.isSafeInteger(amountMicrocredits) || amountMicrocredits <= 0) {
+                message.error("充值积分格式无效");
+                return;
+            }
+            if (amountMicrocredits > (wallet?.account.availableMicrocredits || 0)) {
+                message.error("可用积分不足，无法完成本次团队充值");
+                return;
+            }
+            const idempotencyKey = teamTransferRequestKey || createTeamTransferRequestKey();
+            setTeamTransferRequestKey(idempotencyKey);
+            setTeamTransferSubmitting(true);
+            const result = await requestTeamCreditTransfer({
+                userId: values.userId,
+                amountMicrocredits,
+                note: values.note.trim(),
+                idempotencyKey,
+            });
+            setTeamTransferOpen(false);
+            teamTransferForm.resetFields();
+            setPage(1);
+            await reload(1, pageSize);
+            window.dispatchEvent(new CustomEvent("wallet:updated"));
+            message.success(result.replayed ? "已确认本次团队充值到账" : "团队成员积分已到账");
+        } catch (error) {
+            if (error instanceof Error) message.error(error.message);
+        } finally {
+            setTeamTransferSubmitting(false);
+        }
+    };
+
     const entries = wallet?.entries || [];
     const account = wallet?.account;
     const totalMicrocredits = (account?.availableMicrocredits || 0) + (account?.reservedMicrocredits || 0);
@@ -135,6 +207,7 @@ export default function WalletPage() {
                             <Button className="library-primary-action" icon={<CalendarCheck className="size-4" />} type={wallet?.policy.checkedInToday ? "default" : "primary"} loading={checkingIn} disabled={wallet?.policy.checkedInToday} onClick={() => void checkin()}>
                                 {wallet?.policy.checkedInToday ? "今日已签到" : `签到 +${formatCredits(wallet?.policy.checkinBonusMicrocredits || 0)}`}
                             </Button>
+                            {canTransferTeamCredits ? <Button icon={<HandCoins className="size-4" />} onClick={openTeamTransfer}>团队充值</Button> : null}
                             <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                                 刷新余额
                             </Button>
@@ -229,6 +302,46 @@ export default function WalletPage() {
                     />
                 </section>
             </div>
+            <Modal
+                title="为团队成员充值"
+                open={teamTransferOpen}
+                onCancel={() => setTeamTransferOpen(false)}
+                onOk={() => void submitTeamTransfer()}
+                confirmLoading={teamTransferSubmitting}
+                okText="确认充值"
+                cancelText="取消"
+                okButtonProps={{ disabled: teamRecipientsLoading || teamRecipients.length === 0 }}
+                destroyOnHidden
+            >
+                <div className="mb-5 rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground/70">
+                    本次积分将从你的可用余额中扣除。当前可用 {formatCredits(account?.availableMicrocredits || 0, 6)} 积分。
+                </div>
+                <Form
+                    form={teamTransferForm}
+                    layout="vertical"
+                    requiredMark={false}
+                    onValuesChange={() => {
+                        if (!teamTransferSubmitting) setTeamTransferRequestKey(createTeamTransferRequestKey());
+                    }}
+                >
+                    <Form.Item name="userId" label="团队成员" rules={[{ required: true, message: "请选择团队成员" }]}>
+                        <Select
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder="选择本团队的成员"
+                            loading={teamRecipientsLoading}
+                            options={teamRecipients.map((member) => ({ value: member.id, label: `${member.displayName || member.username} · @${member.username}` }))}
+                            notFoundContent={teamRecipientsLoading ? "正在读取成员" : "当前团队没有可充值成员"}
+                        />
+                    </Form.Item>
+                    <Form.Item name="amount" label="充值积分" rules={[{ required: true, message: "请输入充值积分" }, { type: "number", min: 0.000001, max: maxSafeCreditInput, message: "请输入有效的充值积分" }]}>
+                        <InputNumber className="w-full" min={0.000001} max={maxSafeCreditInput} precision={6} step={1} addonAfter="积分" placeholder="输入本次充值数量" />
+                    </Form.Item>
+                    <Form.Item name="note" label="充值说明" rules={[{ required: true, whitespace: true, message: "请填写充值说明" }, { max: 360, message: "充值说明最多 360 个字符" }]}>
+                        <Input.TextArea autoSize={{ minRows: 3, maxRows: 5 }} maxLength={360} placeholder="例如：项目本周创作额度" />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </main>
     );
 }
@@ -294,6 +407,8 @@ function ledgerTypeMeta(type: CreditLedgerEntry["type"]) {
         admin_adjustment: { label: "管理员调账", tagColor: "default", icon: <SlidersHorizontal className="size-4" />, iconClass: "bg-foreground/8 text-foreground/70" },
         signup_bonus: { label: "注册奖励", tagColor: "default", icon: <Sparkles className="size-4" />, iconClass: "bg-foreground/8 text-foreground/70" },
         checkin_bonus: { label: "签到奖励", tagColor: "default", icon: <CalendarCheck className="size-4" />, iconClass: "bg-foreground/8 text-foreground/70" },
+        transfer_out: { label: "团队充值支出", tagColor: "error", icon: <HandCoins className="size-4" />, iconClass: "bg-rose-500/10 text-rose-600 dark:text-rose-300" },
+        transfer_in: { label: "团队充值到账", tagColor: "success", icon: <HandCoins className="size-4" />, iconClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
     } as const;
     return values[type] || { label: "其他积分变动", tagColor: "default", icon: <ArrowUpRight className="size-4" />, iconClass: "bg-foreground/8 text-foreground/70" };
 }
@@ -304,6 +419,8 @@ function ledgerTitle(entry: CreditLedgerEntry) {
     if (entry.type === "consume") return "模型调用";
     if (entry.type === "signup_bonus") return "新用户注册奖励";
     if (entry.type === "checkin_bonus") return "每日签到奖励";
+    if (entry.type === "transfer_out") return "团队成员充值";
+    if (entry.type === "transfer_in") return "团队主管充值";
     return entry.note || "积分调整";
 }
 

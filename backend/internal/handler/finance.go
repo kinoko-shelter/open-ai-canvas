@@ -66,6 +66,40 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"account": account, "granted": true})
 	})
+	r.GET("/wallet/team-credit-recipients", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		users, err := svc.TeamCreditRecipients(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"users": users})
+	})
+	r.POST("/wallet/team-credit-transfers", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "team-credit-transfer:"+user.ID, 60, time.Hour) {
+			return
+		}
+		var req service.TeamCreditTransferRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.TransferTeamCredits(user, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 
 	r.GET("/admin/settings/linuxdo", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

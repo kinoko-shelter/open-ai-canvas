@@ -209,6 +209,14 @@ func (r *Repository) AdminUsers(keyword string, role model.UserRole, status mode
 	return users, total, nil
 }
 
+func (r *Repository) TeamCreditRecipients(deptID int64) ([]model.User, error) {
+	var users []model.User
+	err := r.db.Select("id", "username", "display_name").
+		Where("dept_id = ? AND role = ? AND status = ?", deptID, model.UserRoleTeamMember, model.UserStatusActive).
+		Order("display_name asc, username asc").Find(&users).Error
+	return users, err
+}
+
 func (r *Repository) AdminUserReferences() ([]model.User, error) {
 	var users []model.User
 	err := r.db.Select("id", "username", "display_name").Order("created_at desc").Limit(100).Find(&users).Error
