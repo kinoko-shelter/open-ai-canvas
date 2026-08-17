@@ -37,7 +37,7 @@ export default function TeamCreditManagementPanel() {
         setLoading(true);
         try {
             const result = await getAdminTeamCreditManagement();
-            setLeads(result.leads);
+            setLeads(Array.isArray(result.leads) ? result.leads.map((lead) => ({ ...lead, members: Array.isArray(lead.members) ? lead.members : [] })) : []);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取团队积分失败");
         } finally {
@@ -130,7 +130,7 @@ export default function TeamCreditManagementPanel() {
         {
             title: "团队成员",
             width: 140,
-            render: (_, lead) => <Button type="link" icon={<UsersRound className="size-3.5" />} onClick={() => setMembersLead(lead)}>{lead.members.length} 人</Button>,
+            render: (_, lead) => <Button type="link" icon={<UsersRound className="size-3.5" />} onClick={() => setMembersLead(lead)}>{lead.members?.length ?? 0} 人</Button>,
         },
         {
             title: "操作",

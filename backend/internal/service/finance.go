@@ -357,6 +357,9 @@ func (s *Service) AdminTeamCreditOverview(actor *model.User) (*AdminTeamCreditOv
 		}
 		account := accountByUserID[lead.ID]
 		members := membersByDepartment[*lead.DeptID]
+		if members == nil {
+			members = []AdminTeamCreditMember{}
+		}
 		result = append(result, AdminTeamCreditLead{
 			ID: lead.ID, Username: lead.Username, DisplayName: lead.DisplayName, DeptID: *lead.DeptID,
 			DepartmentName: departmentName, DepartmentStatus: departmentStatus,

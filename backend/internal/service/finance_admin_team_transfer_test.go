@@ -59,6 +59,32 @@ func TestAdminTransferTeamCreditsUsesLeadBalanceAndWritesOneAudit(t *testing.T) 
 	}
 }
 
+func TestAdminTeamCreditOverviewUsesEmptyMemberArray(t *testing.T) {
+	db, svc, primary, _, _, _ := adminTeamCreditTransferFixture(t)
+	deptID := int64(502)
+	if err := db.Create(&model.AigcDepartment{DeptID: deptID, Name: "空团队", Status: "启用"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	lead := model.User{ID: "empty-team-lead", Username: "empty-team-lead", DisplayName: "Empty Team Lead", Role: model.UserRoleTeamLead, Status: model.UserStatusActive, DeptID: &deptID, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&lead).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	overview, err := svc.AdminTeamCreditOverview(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range overview.Leads {
+		if item.ID == lead.ID {
+			if item.Members == nil || len(item.Members) != 0 || item.CanTransfer {
+				t.Fatalf("empty-team lead = %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatal("empty-team lead missing from overview")
+}
+
 func adminTeamCreditTransferFixture(t *testing.T) (*gorm.DB, *Service, *model.User, *model.User, *model.User, *model.User) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
