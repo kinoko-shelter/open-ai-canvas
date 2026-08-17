@@ -43,13 +43,13 @@ export async function runBackendCanvasGenerationTask({
     metadata?: Record<string, unknown>;
     onTaskCreated?: (task: GenerationTask) => void;
 }) {
-    const normalizedReferenceImages = mode === "image" ? limitCanvasImageReferences(config, referenceImages) : referenceImages;
+    if (mode === "image") assertCanvasImageReferenceLimit(config, referenceImages);
     return runBackendGenerationTask({
         projectId,
         mode,
         prompt,
         config,
-        referenceImages: normalizedReferenceImages,
+        referenceImages,
         referenceVideos,
         referenceAudios,
         mask,
@@ -59,12 +59,15 @@ export async function runBackendCanvasGenerationTask({
     });
 }
 
-// Canvas references can include a scene frame plus multiple character turnarounds. Keep
-// the earliest connected scene image when a provider accepts fewer images than the graph.
-export function limitCanvasImageReferences(config: AiConfig, referenceImages: ReferenceImage[]) {
+export function canvasImageReferenceLimitError(config: AiConfig, referenceImages: ReferenceImage[]) {
     const maxImages = modelCapabilityConfigFor(config, config.model).image?.references.maxImages;
-    if (maxImages === undefined || maxImages < 1 || referenceImages.length <= maxImages) return referenceImages;
-    return referenceImages.slice(0, maxImages);
+    if (maxImages === undefined || referenceImages.length <= maxImages) return "";
+    return `当前图片模型最多支持 ${maxImages} 张参考图，当前已连接 ${referenceImages.length} 张。请移除多余连线后重试`;
+}
+
+export function assertCanvasImageReferenceLimit(config: AiConfig, referenceImages: ReferenceImage[]) {
+    const error = canvasImageReferenceLimitError(config, referenceImages);
+    if (error) throw new Error(error);
 }
 
 export { backendProviderConfig };

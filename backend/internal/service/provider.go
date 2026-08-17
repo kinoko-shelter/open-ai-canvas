@@ -893,6 +893,14 @@ func normalizeGrokImageAspectRatio(size string) string {
 		return "4:3"
 	case h*3 == w*4 || (ratio > 0.7 && ratio < 0.85):
 		return "3:4"
+	case w*3 == h*2 || (ratio >= 0.6 && ratio < 0.72):
+		return "2:3"
+	case w*2 == h*3 || (ratio > 1.35 && ratio < 1.6):
+		return "3:2"
+	case h == w*2 || (ratio > 0.45 && ratio < 0.55):
+		return "1:2"
+	case w == h*2 || (ratio > 1.85 && ratio < 2.2):
+		return "2:1"
 	case w > h:
 		return "16:9"
 	default:

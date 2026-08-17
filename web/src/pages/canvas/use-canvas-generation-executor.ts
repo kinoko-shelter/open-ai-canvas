@@ -3,7 +3,7 @@ import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildGenerationConfig, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { buildGenerationConfig, canvasImageReferenceLimitError, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
@@ -178,6 +178,18 @@ export function useCanvasGenerationExecutor({
                 }
             }
             const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
+            if (mode === "image") {
+                const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
+                if (referenceLimitError) {
+                    if (isPreparingEmptyImage) {
+                        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, taskStage: undefined, taskProgress: undefined, taskCreatedAt: undefined, errorDetails: undefined } } : node)));
+                    }
+                    finishGenerationRequest(nodeId, controller);
+                    setRunningNodeId(null);
+                    message.error(referenceLimitError);
+                    return;
+                }
+            }
             if (mode === "audio" && generationContext.characterReferences.length) {
                 if (generationContext.characterReferences.length !== 1) {
                     finishGenerationRequest(nodeId, controller);
@@ -201,7 +213,8 @@ export function useCanvasGenerationExecutor({
                 return;
             }
 
-            const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
+            // 已有内容节点只是本次生成的来源；任务状态归新目标所有，不能覆盖已成功结果。
+            const markSourceStatus = !sourceNode?.metadata?.content && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                 finishGenerationRequest(nodeId, controller);

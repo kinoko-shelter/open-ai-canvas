@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-policy";
-import { resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
+import { canvasImageReferenceLimitError, resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { groupModelsByDisplayName, modelCompatibilityError, modelGroupReferenceLimits, resolveCompatibleModel } from "../src/lib/model-selection";
 import { defaultConfig, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
@@ -50,6 +50,23 @@ function node(id: string, type: CanvasNodeType, generationMode?: "image" | "vide
         height: 100,
         metadata: generationMode ? { generationMode } : undefined,
     };
+}
+
+function imagePolicyConfig(maxImages: number): AiConfig {
+    const model = "reference-image";
+    const capabilityConfig = defaultModelCapabilityConfig(undefined, model);
+    capabilityConfig.image!.references.maxImages = maxImages;
+    const channel: ModelChannel = {
+        id: "image-relay",
+        name: "图片中转渠道",
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        apiFormat: "openai",
+        models: [model],
+        modelCosts: [{ model, capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig }],
+    };
+    const value = `image-relay::${model}`;
+    return { ...defaultConfig, channels: [channel], models: [value], imageModels: [value], model: value, imageModel: value };
 }
 
 describe("逻辑模型选择", () => {
@@ -137,5 +154,16 @@ describe("画布连线能力", () => {
         const character = { ...node("character", CanvasNodeType.Image), metadata: { workflowKind: "character" as const, characterAssetId: "character-asset" } };
         const nodes = [character, node("target", CanvasNodeType.Audio)];
         expect(canvasConnectionError(config, nodes, [], { fromNodeId: "character", toNodeId: "target" })).toBe("");
+    });
+});
+
+describe("画布图片参考上限", () => {
+    test("超过当前图片模型参考图上限时返回可操作错误", () => {
+        const config = imagePolicyConfig(1);
+        const references = [
+            { id: "image-a", name: "a.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" },
+            { id: "image-b", name: "b.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" },
+        ];
+        expect(canvasImageReferenceLimitError(config, references)).toContain("最多支持 1 张参考图");
     });
 });
