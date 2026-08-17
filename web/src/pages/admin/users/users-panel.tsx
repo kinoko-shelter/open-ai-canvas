@@ -6,6 +6,7 @@ import { ListToolbar, PaginationBar, TableSurface } from "@/components/layout/wo
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { applyUserSession } from "@/lib/user-session";
 import { bulkDisableAdminUsers, deleteAdminUser, getAuthSession, listAdminUsers, startAdminUserImpersonation, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
+import { aigcRoleLabel } from "@/services/api/aigc";
 import { useUserStore } from "@/stores/use-user-store";
 import { AdminBatchBar, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
 import { useTableUrlState } from "../lib/use-table-url-state";
@@ -198,7 +199,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                 <FilterMenu
                     label="角色"
                     value={state.role}
-                    options={[{ value: "all", label: "全部角色" }, { value: "admin", label: "管理员" }, { value: "user", label: "普通用户" }]}
+                    options={[{ value: "all", label: "全部角色" }, { value: "admin", label: "管理员" }, { value: "user", label: "普通用户" }, { value: "operations_manager", label: "运营管理" }, { value: "team_lead", label: "团队主管" }, { value: "team_member", label: "团队成员" }]}
                     onChange={(role) => update({ role, page: 1 })}
                 />
                 <FilterMenu
@@ -207,7 +208,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                     options={[{ value: "all", label: "全部状态" }, { value: "active", label: "已启用" }, { value: "disabled", label: "已停用" }]}
                     onChange={(status) => update({ status, page: 1 })}
                 />
-                {state.role !== "all" ? <Tag closable onClose={(event) => { event.preventDefault(); update({ role: "all", page: 1 }); }}>角色：{state.role === "admin" ? "管理员" : "普通用户"}</Tag> : null}
+                {state.role !== "all" ? <Tag closable onClose={(event) => { event.preventDefault(); update({ role: "all", page: 1 }); }}>角色：{aigcRoleLabel(state.role)}</Tag> : null}
                 {state.status !== "all" ? <Tag closable onClose={(event) => { event.preventDefault(); update({ status: "all", page: 1 }); }}>状态：{state.status === "active" ? "已启用" : "已停用"}</Tag> : null}
             </ListToolbar>
 

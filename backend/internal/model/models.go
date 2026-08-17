@@ -49,8 +49,11 @@ const (
 	SessionStatusCompleted SessionStatus = "completed"
 	SessionStatusFailed    SessionStatus = "failed"
 
-	UserRoleAdmin UserRole = "admin"
-	UserRoleUser  UserRole = "user"
+	UserRoleAdmin             UserRole = "admin"
+	UserRoleUser              UserRole = "user"
+	UserRoleOperationsManager UserRole = "operations_manager"
+	UserRoleTeamLead          UserRole = "team_lead"
+	UserRoleTeamMember        UserRole = "team_member"
 
 	UserStatusActive   UserStatus = "active"
 	UserStatusDisabled UserStatus = "disabled"

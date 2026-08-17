@@ -3547,6 +3547,110 @@
         font-weight: 560;
         font-variant-numeric: tabular-nums;
     }
+
+    .aigc-projects-split {
+        display: grid;
+        min-height: 520px;
+        grid-template-columns: 1fr;
+        border: 1px solid var(--border);
+        border-radius: var(--r-lg);
+        background: var(--surface);
+        overflow: hidden;
+    }
+
+    .aigc-projects-tree-panel {
+        min-width: 0;
+        border-bottom: 1px solid var(--border);
+        padding: var(--space-3);
+    }
+
+    .aigc-projects-tree-root {
+        display: flex;
+        min-height: 36px;
+        width: 100%;
+        align-items: center;
+        gap: var(--space-2);
+        border: 0;
+        border-radius: var(--r-md);
+        background: transparent;
+        padding: 0 var(--space-2);
+        color: var(--foreground);
+        font-size: var(--fs-label);
+        text-align: left;
+    }
+
+    .aigc-projects-tree-root:hover,
+    .aigc-projects-tree-root.is-active {
+        background: var(--surface-hover);
+    }
+
+    .aigc-projects-tree-root em,
+    .aigc-projects-tree-title em {
+        margin-left: auto;
+        border-radius: var(--r-full);
+        background: color-mix(in srgb, var(--foreground) 7%, transparent);
+        padding: 1px 7px;
+        color: color-mix(in srgb, var(--foreground) 48%, transparent);
+        font-size: var(--fs-micro);
+        font-style: normal;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .aigc-projects-tree-title {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: var(--space-2);
+    }
+
+    .aigc-projects-tree-title > span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .aigc-projects-table-panel {
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .aigc-projects-table-heading {
+        display: flex;
+        min-height: 44px;
+        align-items: center;
+        gap: var(--space-2);
+        border-bottom: 1px solid var(--border);
+        padding: 0 var(--space-4);
+    }
+
+    .aigc-projects-table-heading strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: var(--fs-heading);
+        font-weight: 620;
+    }
+
+    .aigc-projects-table-heading span {
+        flex: 0 0 auto;
+        color: color-mix(in srgb, var(--foreground) 48%, transparent);
+        font-size: var(--fs-label);
+    }
+
+    @media (min-width: 1024px) {
+        .aigc-projects-split {
+            grid-template-columns: 280px minmax(0, 1fr);
+        }
+
+        .aigc-projects-tree-panel {
+            border-right: 1px solid var(--border);
+            border-bottom: 0;
+        }
+    }
+
     /* 页头与页面共用同一画布，仅通过间距和排版建立层级。 */
     .studio-band {
         position: relative;

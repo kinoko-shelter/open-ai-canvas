@@ -16,7 +16,10 @@ export type LocalUser = {
     identityProvider?: string;
     identityId?: string;
     identityUsername?: string;
-    role: "admin" | "user";
+    role: "admin" | "user" | "operations_manager" | "team_lead" | "team_member";
+    deptId?: number;
+    deptName?: string;
+    departmentName?: string;
     status: "active" | "disabled";
     lastLoginAt?: string;
     createdAt: string;
@@ -26,6 +29,7 @@ export type LocalUser = {
 export type AdminUser = LocalUser & {
     availableMicrocredits: number;
     reservedMicrocredits: number;
+    departmentName?: string;
 };
 
 export type AuthSessionPayload = {
@@ -399,13 +403,13 @@ export function exitUserImpersonation() {
     return request<{ user: LocalUser }>(api.post("/auth/impersonation/exit"));
 }
 
-export type AdminListParams = { keyword?: string; status?: string; role?: string; page?: number; limit?: number };
+export type AdminListParams = { keyword?: string; status?: string; role?: string; deptId?: number; page?: number; limit?: number };
 
 export function listAdminUsers(params: AdminListParams = {}) {
     return request<{ users: AdminUser[]; total: number; page: number; limit: number }>(api.get("/admin/users", { params }));
 }
 
-export function createAdminUser(input: { username: string; displayName: string; email?: string; password: string; role: LocalUser["role"]; status: LocalUser["status"] }) {
+export function createAdminUser(input: { username: string; displayName: string; email?: string; password: string; role: LocalUser["role"]; status: LocalUser["status"]; deptId?: number | null }) {
     return request<{ user: AdminUser }>(api.post("/admin/users", input));
 }
 
@@ -429,7 +433,7 @@ export function listAdminUserAuditEvents(id: string, params: { page?: number; li
     return request<{ events: AdminAuditEvent[]; total: number; page: number; limit: number }>(api.get(`/admin/users/${encodeURIComponent(id)}/audit-events`, { params }));
 }
 
-export function updateAdminUser(id: string, input: Partial<Pick<LocalUser, "displayName" | "email" | "role" | "status">>) {
+export function updateAdminUser(id: string, input: Partial<Omit<Pick<LocalUser, "displayName" | "email" | "role" | "status" | "deptId">, "deptId">> & { deptId?: number | null }) {
     return request<{ user: LocalUser }>(api.patch(`/admin/users/${encodeURIComponent(id)}`, input));
 }
 

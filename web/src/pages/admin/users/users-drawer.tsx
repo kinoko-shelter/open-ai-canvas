@@ -2,8 +2,9 @@ import { App, Button, Drawer, Form, Input, Select } from "antd";
 import { useEffect, useState } from "react";
 
 import { createAdminUser, resetAdminUserPassword, updateAdminUser, type AdminUser, type LocalUser } from "@/services/api/auth";
+import { aigcDepartmentOptions, aigcRoleOptions, listAigcDepartments, type AigcDepartment } from "@/services/api/aigc";
 
-type UserFormValues = Pick<LocalUser, "displayName" | "email" | "role" | "status">;
+type UserFormValues = Pick<LocalUser, "displayName" | "email" | "role" | "status" | "deptId">;
 
 export function AdminUserEditDrawer({
     user,
@@ -18,6 +19,7 @@ export function AdminUserEditDrawer({
 }) {
     const { message, modal } = App.useApp();
     const [saving, setSaving] = useState(false);
+    const [departments, setDepartments] = useState<AigcDepartment[]>([]);
     const [form] = Form.useForm<UserFormValues>();
     const editingSelf = user?.id === actorId;
 
@@ -29,8 +31,10 @@ export function AdminUserEditDrawer({
             email: user.email || "",
             role: user.role,
             status: user.status,
+            deptId: user.deptId || undefined,
         });
     }, [form, user]);
+    useEffect(() => { void listAigcDepartments().then((result) => setDepartments(result.departments)).catch(() => undefined); }, []);
 
     const close = () => {
         if (saving) return;
@@ -58,6 +62,7 @@ export function AdminUserEditDrawer({
                 email: values.email?.trim() || "",
                 role: values.role,
                 status: values.status,
+                deptId: values.deptId ?? null,
             });
             onSaved(result.user);
             form.resetFields();
@@ -91,8 +96,9 @@ export function AdminUserEditDrawer({
                     <Input placeholder="name@example.com" />
                 </Form.Item>
                 <Form.Item name="role" label="角色" extra={editingSelf ? "不能在此修改当前管理员自己的角色。" : "角色变更会立即影响后台访问权限。"}>
-                    <Select disabled={editingSelf} options={[{ label: "管理员", value: "admin" }, { label: "普通用户", value: "user" }]} />
+                    <Select disabled={editingSelf} options={aigcRoleOptions} />
                 </Form.Item>
+                <Form.Item name="deptId" label="团队"><Select allowClear options={aigcDepartmentOptions(departments)} placeholder="请选择团队" /></Form.Item>
                 <Form.Item name="status" label="账号状态" extra={editingSelf ? "不能停用当前登录账号。" : "停用后会清除登录态，但保留身份、任务和积分流水。"}>
                     <Select disabled={editingSelf} options={[{ label: "已启用", value: "active" }, { label: "已停用", value: "disabled" }]} />
                 </Form.Item>
@@ -108,6 +114,7 @@ type CreateUserFormValues = {
     password: string;
     role: LocalUser["role"];
     status: LocalUser["status"];
+    deptId?: number;
 };
 
 export function AdminUserCreateDrawer({
@@ -121,6 +128,7 @@ export function AdminUserCreateDrawer({
 }) {
     const { message, modal } = App.useApp();
     const [saving, setSaving] = useState(false);
+    const [departments, setDepartments] = useState<AigcDepartment[]>([]);
     const [form] = Form.useForm<CreateUserFormValues>();
 
     useEffect(() => {
@@ -128,6 +136,7 @@ export function AdminUserCreateDrawer({
         form.resetFields();
         form.setFieldsValue({ role: "user", status: "active" });
     }, [form, open]);
+    useEffect(() => { if (open) void listAigcDepartments().then((result) => setDepartments(result.departments)).catch(() => undefined); }, [open]);
 
     const close = () => {
         if (saving) return;
@@ -156,6 +165,7 @@ export function AdminUserCreateDrawer({
                 password: values.password,
                 role: values.role,
                 status: values.status,
+                deptId: values.deptId ?? null,
             });
             onCreated(result.user);
             form.resetFields();
@@ -192,8 +202,9 @@ export function AdminUserCreateDrawer({
                     <Input.Password placeholder={"\u81f3\u5c11 8 \u4f4d"} />
                 </Form.Item>
                 <Form.Item name="role" label={"\u89d2\u8272"}>
-                    <Select options={[{ label: "\u7ba1\u7406\u5458", value: "admin" }, { label: "\u666e\u901a\u7528\u6237", value: "user" }]} />
+                    <Select options={aigcRoleOptions} />
                 </Form.Item>
+                <Form.Item name="deptId" label="团队"><Select allowClear options={aigcDepartmentOptions(departments)} placeholder="请选择团队" /></Form.Item>
                 <Form.Item name="status" label={"\u8d26\u53f7\u72b6\u6001"}>
                     <Select options={[{ label: "\u5df2\u542f\u7528", value: "active" }, { label: "\u5df2\u505c\u7528", value: "disabled" }]} />
                 </Form.Item>

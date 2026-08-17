@@ -23,6 +23,8 @@ const DrawingEngineSettingsPage = lazy(() => import("@/pages/admin/settings/draw
 const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-settings-page"));
 const StoryboardPromptsPage = lazy(() => import("@/pages/admin/storyboard-prompts/storyboard-prompts-page"));
 const UsersPage = lazy(() => import("@/pages/admin/users/users-page"));
+const AigcDepartmentsPage = lazy(() => import("@/pages/admin/aigc-departments-page"));
+const AigcProjectsPage = lazy(() => import("@/pages/aigc-projects-page"));
 const AssetsPage = lazy(() => import("@/pages/assets"));
 const KOLCallbackPage = lazy(() => import("@/pages/auth/kol-callback"));
 const LoginPage = lazy(() => import("@/pages/auth/login"));
@@ -84,6 +86,8 @@ export const router = createBrowserRouter([
                 element: <RequireAuth>{deferred(<AdminPage />)}</RequireAuth>,
                 children: [
                     { index: true, element: deferred(<AnalyticsPage />) },
+                    { path: "teams", element: deferred(<AigcDepartmentsPage />) },
+                    { path: "departments", element: <Navigate to="/admin/teams" replace /> },
                     { path: "users", element: deferred(<UsersPage />) },
                     { path: "channels", element: deferred(<ChannelsPage />) },
                     { path: "prompt-templates", element: deferred(<StoryboardPromptsPage />) },
@@ -102,6 +106,7 @@ export const router = createBrowserRouter([
                     { path: "settings/storage", element: deferred(<StorageSettingsPage />) },
                 ],
             },
+            { path: "/aigc-projects", element: <RequireAuth>{deferred(<AigcProjectsPage />)}</RequireAuth> },
         ],
     },
     { path: "*", element: deferred(<NotFound />) },

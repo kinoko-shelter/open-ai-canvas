@@ -11,7 +11,9 @@ export type LocalUser = {
     identityProvider?: string;
     identityId?: string;
     identityUsername?: string;
-    role: "admin" | "user";
+    role: "admin" | "user" | "operations_manager" | "team_lead" | "team_member";
+    deptId?: number;
+    deptName?: string;
     status: "active" | "disabled";
     lastLoginAt?: string;
     createdAt?: string;

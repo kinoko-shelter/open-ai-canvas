@@ -10,6 +10,8 @@ import (
 func Models() []any {
 	return []any{
 		&model.User{},
+		&model.AigcDepartment{},
+		&model.AigcProject{},
 		&model.AuthSession{},
 		&model.UserIdentity{},
 		&model.OAuthState{},

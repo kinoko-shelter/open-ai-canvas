@@ -19,16 +19,47 @@ type CreateAdminUserRequest struct {
 	Password    string           `json:"password"`
 	Role        model.UserRole   `json:"role"`
 	Status      model.UserStatus `json:"status"`
+	DeptID      *int64           `json:"deptId"`
 }
 type UpdateUserRequest struct {
 	DisplayName string           `json:"displayName"`
 	Email       string           `json:"email"`
 	Role        model.UserRole   `json:"role"`
 	Status      model.UserStatus `json:"status"`
+	DeptID      optionalInt64    `json:"deptId"`
 }
 
 type AdminResetUserPasswordRequest struct {
 	Password string `json:"password"`
+}
+
+type optionalInt64 struct {
+	Set   bool
+	Value *int64
+}
+
+func (value *optionalInt64) UnmarshalJSON(data []byte) error {
+	value.Set = true
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" || raw == `""` {
+		value.Value = nil
+		return nil
+	}
+	var id int64
+	if err := json.Unmarshal(data, &id); err == nil {
+		value.Value = &id
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	parsed, err := parseRequiredIntID(text, "团队 ID 无效")
+	if err != nil {
+		return err
+	}
+	value.Value = &parsed
+	return nil
 }
 
 type BulkDisableUsersRequest struct {
@@ -44,6 +75,7 @@ type AdminListQuery struct {
 	Keyword string
 	Status  string
 	Type    string
+	DeptID  string
 	Page    int
 	Limit   int
 }
@@ -57,8 +89,9 @@ type AdminUserPage struct {
 
 type AdminUser struct {
 	model.User
-	AvailableMicrocredits int64 `json:"availableMicrocredits"`
-	ReservedMicrocredits  int64 `json:"reservedMicrocredits"`
+	AvailableMicrocredits int64  `json:"availableMicrocredits"`
+	ReservedMicrocredits  int64  `json:"reservedMicrocredits"`
+	DepartmentName        string `json:"departmentName,omitempty"`
 }
 
 type AdminChannelPage struct {
@@ -173,7 +206,11 @@ func (s *Service) AdminUsers(actor *model.User, query AdminListQuery) (*AdminUse
 		return nil, err
 	}
 	page, limit := normalizeAdminPage(query.Page, query.Limit)
-	users, total, err := s.repo.AdminUsers(query.Keyword, model.UserRole(query.Type), model.UserStatus(query.Status), limit, (page-1)*limit)
+	deptID, err := parseOptionalIntID(query.DeptID, "团队 ID 无效")
+	if err != nil {
+		return nil, err
+	}
+	users, total, err := s.repo.AdminUsers(query.Keyword, model.UserRole(query.Type), model.UserStatus(query.Status), deptID, limit, (page-1)*limit)
 	if err != nil {
 		return nil, err
 	}
@@ -189,10 +226,24 @@ func (s *Service) AdminUsers(actor *model.User, query AdminListQuery) (*AdminUse
 	for _, account := range accounts {
 		accountByUserID[account.UserID] = account
 	}
+	deptIDs := make([]int64, 0, len(users))
+	for _, user := range users {
+		if user.DeptID != nil {
+			deptIDs = append(deptIDs, *user.DeptID)
+		}
+	}
+	departmentNames, err := s.repo.AigcDepartmentNames(deptIDs)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]AdminUser, 0, len(users))
 	for _, user := range users {
 		account := accountByUserID[user.ID]
-		result = append(result, AdminUser{User: user, AvailableMicrocredits: account.AvailableMicrocredits, ReservedMicrocredits: account.ReservedMicrocredits})
+		departmentName := ""
+		if user.DeptID != nil {
+			departmentName = departmentNames[*user.DeptID]
+		}
+		result = append(result, AdminUser{User: user, AvailableMicrocredits: account.AvailableMicrocredits, ReservedMicrocredits: account.ReservedMicrocredits, DepartmentName: departmentName})
 	}
 	return &AdminUserPage{Users: result, Total: total, Page: page, Limit: limit}, nil
 }
@@ -248,11 +299,14 @@ func (s *Service) CreateAdminUser(actor *model.User, req CreateAdminUserRequest)
 			return nil, err
 		}
 	}
-	if req.Role != model.UserRoleAdmin && req.Role != model.UserRoleUser {
+	if !validAdminUserRole(req.Role) {
 		return nil, BadAuthRequest("\u7528\u6237\u89d2\u8272\u65e0\u6548")
 	}
 	if req.Status != model.UserStatusActive && req.Status != model.UserStatusDisabled {
 		return nil, BadAuthRequest("\u7528\u6237\u72b6\u6001\u65e0\u6548")
+	}
+	if err := s.ValidateAigcAssignableDepartment(req.DeptID, req.Role == model.UserRoleTeamLead); err != nil {
+		return nil, err
 	}
 	if _, err := s.repo.UserByUsername(username); err == nil {
 		return nil, BadAuthRequest("\u7528\u6237\u540d\u5df2\u5b58\u5728")
@@ -278,6 +332,7 @@ func (s *Service) CreateAdminUser(actor *model.User, req CreateAdminUserRequest)
 		DisplayName:  displayName,
 		Role:         req.Role,
 		Status:       req.Status,
+		DeptID:       req.DeptID,
 		PasswordHash: passwordHash,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -314,12 +369,17 @@ func (s *Service) UpdateUser(actor *model.User, userID string, req UpdateUserReq
 		return nil, BadAuthRequest("不能禁用当前管理员账号")
 	}
 	nextRole := user.Role
-	if req.Role == model.UserRoleAdmin || req.Role == model.UserRoleUser {
+	if validAdminUserRole(req.Role) {
 		nextRole = req.Role
 	}
 	nextStatus := user.Status
 	if req.Status == model.UserStatusActive || req.Status == model.UserStatusDisabled {
 		nextStatus = req.Status
+	}
+	if req.DeptID.Set && (int64Value(req.DeptID.Value) != int64Value(user.DeptID) || nextRole != user.Role) {
+		if err := s.ValidateAigcAssignableDepartment(req.DeptID.Value, nextRole == model.UserRoleTeamLead); err != nil {
+			return nil, err
+		}
 	}
 	if user.Role == model.UserRoleAdmin && nextRole != model.UserRoleAdmin {
 		count, err := s.repo.ActiveAdminCountExcluding(user.ID)
@@ -358,6 +418,9 @@ func (s *Service) UpdateUser(actor *model.User, userID string, req UpdateUserReq
 	}
 	user.Role = nextRole
 	user.Status = nextStatus
+	if req.DeptID.Set {
+		user.DeptID = req.DeptID.Value
+	}
 	user.UpdatedAt = time.Now()
 	if err := s.repo.Save(user); err != nil {
 		return nil, err
@@ -547,6 +610,15 @@ func normalizeAdminPage(page int, limit int) (int, int) {
 		limit = 20
 	}
 	return page, limit
+}
+
+func validAdminUserRole(role model.UserRole) bool {
+	switch role {
+	case model.UserRoleAdmin, model.UserRoleUser, model.UserRoleOperationsManager, model.UserRoleTeamLead, model.UserRoleTeamMember:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*PublicModelChannel, error) {

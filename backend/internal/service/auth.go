@@ -73,6 +73,7 @@ type AuthSessionContext struct {
 type AuthUser struct {
 	model.User
 	AvatarURL        string `json:"avatarUrl,omitempty"`
+	DeptName         string `json:"deptName,omitempty"`
 	IdentityProvider string `json:"identityProvider,omitempty"`
 	IdentityID       string `json:"identityId,omitempty"`
 	IdentityUsername string `json:"identityUsername,omitempty"`
@@ -364,6 +365,15 @@ func (s *Service) ExitUserImpersonation(cookieValue string) (*AuthSessionResult,
 // 认证响应只补充当前用户自己的第三方公开身份，不把身份表或密钥字段暴露给其他列表接口。
 func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {
 	result := AuthUser{User: *user}
+	if user.DeptID != nil {
+		department, err := s.repo.AigcDepartment(*user.DeptID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AuthUser{}, err
+		}
+		if department != nil {
+			result.DeptName = department.Name
+		}
+	}
 	identity, err := s.repo.UserIdentityForUser(user.ID, "linuxdo")
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, nil

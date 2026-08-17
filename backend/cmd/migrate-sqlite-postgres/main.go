@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,21 @@ import (
 type tableMigration struct {
 	name string
 	run  func(source *gorm.DB, target *gorm.DB, copyRows bool) (int, error)
+}
+
+type sqliteUser struct {
+	ID           string
+	Username     string
+	Email        string
+	DisplayName  string
+	KOLUserID    string
+	DeptID       string
+	Role         model.UserRole
+	Status       model.UserStatus
+	PasswordHash string
+	LastLoginAt  *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 func main() {
@@ -130,6 +146,66 @@ func migrateTable[T any](name string) tableMigration {
 	}
 }
 
+func migrateEmptyTable(name string) tableMigration {
+	return tableMigration{
+		name: name,
+		run: func(source *gorm.DB, target *gorm.DB, copyRows bool) (int, error) {
+			var count int64
+			if err := target.Table(name).Count(&count).Error; err != nil {
+				return 0, err
+			}
+			return int(count), nil
+		},
+	}
+}
+
+func migrateUsersTable() tableMigration {
+	return tableMigration{
+		name: "users",
+		run: func(source *gorm.DB, target *gorm.DB, copyRows bool) (int, error) {
+			var sourceRows []sqliteUser
+			if err := source.Table("users").Order("id").Find(&sourceRows).Error; err != nil {
+				return 0, err
+			}
+			rows := make([]model.User, 0, len(sourceRows))
+			for _, sourceRow := range sourceRows {
+				var deptID *int64
+				if parsed, err := parseOptionalInt(sourceRow.DeptID); err == nil {
+					deptID = parsed
+				}
+				rows = append(rows, model.User{
+					ID: sourceRow.ID, Username: sourceRow.Username, Email: sourceRow.Email,
+					DisplayName: sourceRow.DisplayName, KOLUserID: sourceRow.KOLUserID, DeptID: deptID,
+					Role: sourceRow.Role, Status: sourceRow.Status, PasswordHash: sourceRow.PasswordHash,
+					LastLoginAt: sourceRow.LastLoginAt, CreatedAt: sourceRow.CreatedAt, UpdatedAt: sourceRow.UpdatedAt,
+				})
+			}
+			if copyRows && len(rows) > 0 {
+				if err := target.CreateInBatches(&rows, 100).Error; err != nil {
+					return 0, err
+				}
+			}
+			var count int64
+			if err := target.Table("users").Count(&count).Error; err != nil {
+				return 0, err
+			}
+			return int(count), nil
+		},
+	}
+}
+
+func parseOptionalInt(value string) (*int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	result, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || result <= 0 {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func primaryKeyColumn[T any](db *gorm.DB) (string, error) {
 	statement := &gorm.Statement{DB: db}
 	if err := statement.Parse(new(T)); err != nil {
@@ -214,7 +290,9 @@ func verifyMigrationCoverage(db *gorm.DB) error {
 
 func migrations() []tableMigration {
 	return []tableMigration{
-		migrateTable[model.User]("users"),
+		migrateUsersTable(),
+		migrateEmptyTable("aigc_dept"),
+		migrateEmptyTable("aigc_project"),
 		migrateTable[model.AuthSession]("auth_sessions"),
 		migrateTable[model.UserIdentity]("user_identities"),
 		migrateTable[model.OAuthState]("o_auth_states"),

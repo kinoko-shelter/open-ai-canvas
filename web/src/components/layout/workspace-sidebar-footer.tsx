@@ -10,6 +10,7 @@ import { SystemAnnouncementCenter } from "@/components/layout/system-announcemen
 import { useWalletBalance } from "@/hooks/use-wallet-balance";
 import { applyUserSession } from "@/lib/user-session";
 import { cn } from "@/lib/utils";
+import { aigcRoleLabel } from "@/services/api/aigc";
 import { logout } from "@/services/api/auth";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
@@ -73,6 +74,7 @@ export function WorkspaceSidebarFooter({ expandedClassName, collapsedClassName, 
                                 <UserAvatar user={user} className="size-8" />
                                 <div className="min-w-0 flex-1">
                                     <div className="flex min-w-0 items-center gap-1.5"><span className="truncate text-sm font-medium">{user.displayName || user.username}</span><IdentityProviderBadge user={user} /></div>
+                                    <div className="mt-0.5 truncate text-[var(--fs-label)] text-foreground/50">{aigcRoleLabel(user.role)}</div>
                                     {creditsEnabled ? <div className="mt-0.5 truncate text-[var(--fs-label)] tabular-nums text-foreground/45">可用 {balance} 积分</div> : null}
                                 </div>
                             </div>

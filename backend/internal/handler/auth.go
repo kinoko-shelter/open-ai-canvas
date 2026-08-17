@@ -257,7 +257,7 @@ func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-		users, err := svc.AdminUsers(user, service.AdminListQuery{Keyword: c.Query("keyword"), Type: c.Query("role"), Status: c.Query("status"), Page: page, Limit: limit})
+		users, err := svc.AdminUsers(user, service.AdminListQuery{Keyword: c.Query("keyword"), Type: c.Query("role"), Status: c.Query("status"), DeptID: c.Query("deptId"), Page: page, Limit: limit})
 		if err != nil {
 			failService(c, err)
 			return

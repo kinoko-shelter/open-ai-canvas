@@ -183,7 +183,7 @@ func (r *Repository) Users() ([]model.User, error) {
 	return users, err
 }
 
-func (r *Repository) AdminUsers(keyword string, role model.UserRole, status model.UserStatus, limit int, offset int) ([]model.User, int64, error) {
+func (r *Repository) AdminUsers(keyword string, role model.UserRole, status model.UserStatus, deptID *int64, limit int, offset int) ([]model.User, int64, error) {
 	var users []model.User
 	var total int64
 	query := r.db.Model(&model.User{})
@@ -191,11 +191,14 @@ func (r *Repository) AdminUsers(keyword string, role model.UserRole, status mode
 		pattern := "%" + strings.ToLower(value) + "%"
 		query = query.Where("lower(username) LIKE ? OR lower(display_name) LIKE ? OR lower(email) LIKE ?", pattern, pattern, pattern)
 	}
-	if role == model.UserRoleAdmin || role == model.UserRoleUser {
+	if role == model.UserRoleAdmin || role == model.UserRoleUser || role == model.UserRoleOperationsManager || role == model.UserRoleTeamLead || role == model.UserRoleTeamMember {
 		query = query.Where("role = ?", role)
 	}
 	if status == model.UserStatusActive || status == model.UserStatusDisabled {
 		query = query.Where("status = ?", status)
+	}
+	if deptID != nil {
+		query = query.Where("dept_id = ?", *deptID)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

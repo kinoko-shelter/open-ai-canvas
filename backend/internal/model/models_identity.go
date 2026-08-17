@@ -8,6 +8,7 @@ type User struct {
 	Email        string     `json:"email,omitempty" gorm:"size:160"`
 	DisplayName  string     `json:"displayName" gorm:"size:80"`
 	KOLUserID    string     `json:"kolUserId,omitempty" gorm:"column:kol_user_id;index;size:160"`
+	DeptID       *int64     `json:"deptId,omitempty" gorm:"column:dept_id;index"`
 	Role         UserRole   `json:"role" gorm:"index;size:24"`
 	Status       UserStatus `json:"status" gorm:"index;size:24"`
 	PasswordHash string     `json:"-"`

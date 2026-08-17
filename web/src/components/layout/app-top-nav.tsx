@@ -35,10 +35,11 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
             if (tool.slug === "projects") return features.shortDramaEnabled;
             if (tool.slug === "tasks") return features.taskCenterEnabled;
             if (tool.slug === "wallet") return features.creditsEnabled;
+            if (tool.slug === "aigc-projects") return (user?.role === "admin" || user?.role === "team_lead") && user.status === "active";
             return true;
         });
     const topRailNavTools = visibleNavigationTools.filter((tool) => tool.section === "创作空间" || tool.slug === "skills");
-    const bottomRailNavTools = visibleNavigationTools.filter((tool) => tool.slug === "wallet");
+    const bottomRailNavTools = visibleNavigationTools.filter((tool) => tool.slug === "wallet" || tool.slug === "aigc-projects");
 
     const toggleSidebar = () => {
         if (window.innerWidth < 1024) {

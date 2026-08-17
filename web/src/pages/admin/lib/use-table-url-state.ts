@@ -22,7 +22,7 @@ export function useTableUrlState(defaultPageSize = 20) {
     const [searchParams, setSearchParams] = useSearchParams();
     const state = useMemo<TableUrlState>(() => ({
         filter: searchParams.get("filter") || "",
-        role: allowedValue(searchParams.get("role"), ["all", "admin", "user"], "all"),
+        role: allowedValue(searchParams.get("role"), ["all", "admin", "user", "operations_manager", "team_lead", "team_member"], "all"),
         status: allowedValue(searchParams.get("status"), ["all", "active", "disabled"], "all"),
         page: positiveInteger(searchParams.get("page"), 1),
         pageSize: [20, 50, 100].includes(positiveInteger(searchParams.get("pageSize"), defaultPageSize)) ? positiveInteger(searchParams.get("pageSize"), defaultPageSize) : defaultPageSize,

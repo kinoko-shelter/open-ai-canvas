@@ -6,12 +6,14 @@ import { formatCredits } from "@/constant/credits";
 import { IdentityProviderBadge } from "@/components/layout/identity-provider-badge";
 import { AdminRowActions } from "../components/admin-ui";
 import type { AdminUser } from "@/services/api/auth";
+import { aigcRoleLabel } from "@/services/api/aigc";
 
-export type UserColumnKey = "user" | "email" | "credits" | "role" | "status" | "createdAt" | "actions";
+export type UserColumnKey = "user" | "email" | "department" | "credits" | "role" | "status" | "createdAt" | "actions";
 
 export const userColumnOptions: Array<{ key: UserColumnKey; label: string; locked?: boolean }> = [
     { key: "user", label: "用户", locked: true },
     { key: "email", label: "邮箱" },
+    { key: "department", label: "团队" },
     { key: "credits", label: "当前积分" },
     { key: "role", label: "角色" },
     { key: "status", label: "状态" },
@@ -51,6 +53,7 @@ export function createUserColumns({
             ),
         },
         { key: "email", title: "邮箱", dataIndex: "email", render: (email) => email || <span className="text-foreground/40">未填写</span> },
+        { key: "department", title: "团队", dataIndex: "departmentName", width: 140, render: (value) => value || <span className="text-foreground/40">未分配</span> },
         {
             key: "credits",
             title: "当前积分",
@@ -59,7 +62,7 @@ export function createUserColumns({
             align: "right",
             render: (value, user) => <span className="tabular-nums" title={`冻结积分：${formatCredits(user.reservedMicrocredits)}`}>{formatCredits(value)}</span>,
         },
-        { key: "role", title: "角色", dataIndex: "role", width: 110, render: (role) => <Tag variant="filled" color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag> },
+        { key: "role", title: "角色", dataIndex: "role", width: 110, render: (role) => <Tag variant="filled" color={role === "admin" ? "blue" : "default"}>{aigcRoleLabel(role)}</Tag> },
         { key: "status", title: "状态", dataIndex: "status", width: 110, render: (status) => <Tag variant="filled" color={status === "active" ? "success" : "default"}>{status === "active" ? "已启用" : "已停用"}</Tag> },
         { key: "createdAt", title: "注册时间", dataIndex: "createdAt", width: 180, render: formatTime },
         {
