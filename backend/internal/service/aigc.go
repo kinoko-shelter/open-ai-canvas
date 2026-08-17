@@ -45,8 +45,8 @@ func (s *Service) RequireAigcProjectManager(user *model.User) error {
 	if user.Status != model.UserStatusActive {
 		return Forbidden("当前账号已停用")
 	}
-	if user.Role != model.UserRoleAdmin && user.Role != model.UserRoleTeamLead {
-		return Forbidden("需要团队主管权限")
+	if user.Role != model.UserRoleAdmin {
+		return Forbidden("需要管理员权限")
 	}
 	return nil
 }
@@ -136,14 +136,7 @@ func (s *Service) AigcProjects(actor *model.User, query AdminListQuery, level st
 	if err != nil {
 		return nil, err
 	}
-	var visibleDeptID *int64
-	if actor.Role == model.UserRoleTeamLead {
-		if actor.DeptID == nil {
-			return nil, Forbidden("团队主管未设置团队")
-		}
-		visibleDeptID = actor.DeptID
-	}
-	projects, total, err := s.repo.AigcProjects(query.Keyword, query.Status, level, parsedParentID, visibleDeptID, limit, (page-1)*limit)
+	projects, total, err := s.repo.AigcProjects(query.Keyword, query.Status, level, parsedParentID, nil, limit, (page-1)*limit)
 	if err != nil {
 		return nil, err
 	}
@@ -339,12 +332,6 @@ func (s *Service) applyAigcProjectDepartment(actor *model.User, project *model.A
 		project.ParentID = 0
 		project.DeptID = 0
 		return nil
-	}
-	if actor.Role == model.UserRoleTeamLead {
-		if actor.DeptID == nil {
-			return BadAuthRequest("团队主管未设置团队")
-		}
-		project.DeptID = *actor.DeptID
 	}
 	if project.DeptID <= 0 {
 		return BadAuthRequest("二级项目必须选择团队")
