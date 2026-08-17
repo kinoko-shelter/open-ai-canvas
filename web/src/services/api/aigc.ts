@@ -78,4 +78,4 @@ export const aigcRoleOptions = [
     { label: "运营管理", value: "operations_manager" },
     { label: "团队主管", value: "team_lead" },
     { label: "团队成员", value: "team_member" },
-] as const;
+];
