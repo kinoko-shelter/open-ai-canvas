@@ -1,5 +1,5 @@
 import { Tooltip } from "antd";
-import { ArrowLeft, BarChart3, BellRing, Coins, FileClock, FolderKanban, FolderTree, HardDrive, Home, Infinity as InfinityIcon, Mail, MessageSquareText, Paintbrush, PanelLeftClose, PanelLeftOpen, RadioTower, Settings2, ShieldCheck, TicketCheck, ToggleLeft, UsersRound } from "lucide-react";
+import { ArrowLeft, BarChart3, BellRing, Coins, FileClock, FolderTree, HardDrive, Home, Infinity as InfinityIcon, Mail, MessageSquareText, Paintbrush, PanelLeftClose, PanelLeftOpen, RadioTower, Settings2, ShieldCheck, TicketCheck, ToggleLeft, UsersRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet } from "react-router";
 
@@ -24,7 +24,6 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
         label: "平台资源",
         items: [
             { path: "/admin/teams", label: "团队管理", description: "团队与项目归属", icon: <FolderTree className="size-4" /> },
-            { path: "/admin/aigc-projects", label: "项目管理", description: "运营项目层级与团队归属", icon: <FolderKanban className="size-4" /> },
             { path: "/admin/users", label: "用户管理", description: "账号、角色与状态", icon: <UsersRound className="size-4" /> },
             { path: "/admin/channels", label: "系统渠道", description: "渠道、模型与售价", icon: <RadioTower className="size-4" /> },
             { path: "/admin/prompt-templates", label: "提示词模板", description: "平台创作策略版本", icon: <MessageSquareText className="size-4" /> },

@@ -3,15 +3,16 @@ import type { DataNode } from "antd/es/tree";
 import { FolderTree, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { ListToolbar, PaginationBar, TableSurface } from "@/components/layout/workspace-page";
+import { ListToolbar, PaginationBar, TableSurface, WorkspacePage } from "@/components/layout/workspace-page";
 import { AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "@/pages/admin/components/admin-ui";
-import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { aigcProjectLevelLabel, createAigcProject, listAigcDepartments, listAigcProjects, updateAigcProject, type AigcDepartment, type AigcProject, type AigcProjectInput } from "@/services/api/aigc";
+import { useUserStore } from "@/stores/use-user-store";
 
 const ALL_PROJECTS_KEY = "__all_projects";
 type ProjectTreeKey = typeof ALL_PROJECTS_KEY | number;
 
 export default function AigcProjectsPage() {
+    const user = useUserStore((state) => state.user);
     const { message } = App.useApp();
     const [projects, setProjects] = useState<AigcProject[]>([]);
     const [treeProjects, setTreeProjects] = useState<AigcProject[]>([]);
@@ -33,10 +34,11 @@ export default function AigcProjectsPage() {
     const reload = async (nextPage = page) => {
         setLoading(true);
         try {
+            const departmentPromise = user?.role === "admin" ? listAigcDepartments() : Promise.resolve({ departments: [] as AigcDepartment[] });
             const [result, allProjects, departmentResult] = await Promise.all([
                 listAigcProjects({ keyword: keyword || undefined, status: status === "all" ? undefined : status, level: "2", page: nextPage, limit: 20 }),
                 listAllAigcProjects(),
-                listAigcDepartments(),
+                departmentPromise,
             ]);
             if (selectedProjectId === ALL_PROJECTS_KEY) {
                 setProjects(result.projects);
@@ -61,6 +63,8 @@ export default function AigcProjectsPage() {
     const departmentNames = useMemo(() => new Map(departments.map((item) => [item.deptId, item.name])), [departments]);
     const selectedProject = useMemo(() => treeProjects.find((item) => item.projectId === selectedProjectId), [selectedProjectId, treeProjects]);
     const selectedTitle = selectedProjectId === ALL_PROJECTS_KEY ? "全部项目" : selectedProject?.projectName || "当前项目";
+    const isAdmin = user?.role === "admin";
+    const canAddSecondProject = isAdmin || user?.role === "team_lead";
 
     useEffect(() => {
         setExpandedKeys(parents.map((item) => item.projectId));
@@ -75,7 +79,7 @@ export default function AigcProjectsPage() {
         setDrawerOpen(true);
     };
 
-    const treeData = buildProjectTree(treeProjects, openDrawer);
+    const treeData = buildProjectTree(treeProjects, isAdmin ? openDrawer : undefined);
 
     const save = async () => {
         const values = await form.validateFields();
@@ -94,9 +98,11 @@ export default function AigcProjectsPage() {
         }
     };
 
-    const renderAddActions = () => <div className="flex flex-wrap items-center gap-2"><Button icon={<Plus className="size-4" />} onClick={() => openDrawer(undefined, 1)}>添加一级项目</Button><Button type="primary" icon={<Plus className="size-4" />} disabled={!parents.length} onClick={() => openDrawer(undefined, 2)}>添加二级项目</Button></div>;
+    if ((user?.role !== "admin" && user?.role !== "team_lead") || user.status !== "active") return <WorkspacePage><div className="py-10 text-center text-sm text-foreground/55">当前账号无项目管理权限。</div></WorkspacePage>;
 
-    return <AdminPageFrame title="项目管理" description="维护运营项目及一级、二级项目层级" actions={renderAddActions()}>
+    const renderAddActions = () => <div className="flex flex-wrap items-center gap-2">{isAdmin ? <Button icon={<Plus className="size-4" />} onClick={() => openDrawer(undefined, 1)}>添加一级项目</Button> : null}{canAddSecondProject ? <Button type="primary" icon={<Plus className="size-4" />} disabled={!parents.length} onClick={() => openDrawer(undefined, 2)}>添加二级项目</Button> : null}</div>;
+
+    return <WorkspacePage><div className="w-full pb-5"><header className="flex min-h-14 flex-col gap-3 border-b border-border/75 pb-3 sm:flex-row sm:items-center sm:justify-between"><div><h1 className="text-xl font-semibold leading-7">项目管理</h1><p className="mt-0.5 text-xs leading-5 text-foreground/52">维护运营项目及一级、二级项目层级</p></div>{renderAddActions()}</header>
         <ListToolbar active={Boolean(keyword || status !== "all" || selectedProjectId !== ALL_PROJECTS_KEY)} onReset={() => { setKeyword(""); setStatus("all"); setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
             <Input className="app-list-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索项目名称" onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => { setPage(1); void reload(1); }} />
             <Select className="w-28" value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={[{ label: "全部状态", value: "all" }, { label: "启用", value: "启用" }, { label: "禁用", value: "禁用" }]} />
@@ -121,7 +127,7 @@ export default function AigcProjectsPage() {
                     { title: "上级项目", dataIndex: "parentId", width: 150, render: (value) => value ? parentNames.get(value) || "--" : "--" },
                     { title: "团队", dataIndex: "deptId", width: 150, render: (value) => value ? <div><div>{departmentNames.get(value) || "未知团队"}</div><div className="text-xs text-foreground/45">ID: {value}</div></div> : "全局" },
                     { title: "状态", dataIndex: "status", width: 90 },
-                    { title: "操作", width: 120, fixed: "right", align: "right", render: (_, item) => <AdminRowActions actions={[{ key: "edit", label: "编辑项目", icon: <Pencil className="size-3.5" />, onClick: () => openDrawer(item) }]} /> },
+                    { title: "操作", width: 120, fixed: "right", align: "right", render: (_, item) => <AdminRowActions actions={[{ key: "edit", label: "编辑项目", icon: <Pencil className="size-3.5" />, disabled: item.level === 1 && !isAdmin, onClick: () => openDrawer(item) }]} /> },
                 ]} dataSource={projects} locale={{ emptyText: <AdminTableEmpty title="当前范围没有项目" description="选择左侧项目查看当前项目及其子项目。" action={renderAddActions()} /> }} /><PaginationBar current={page} pageSize={20} total={total} onChange={(next) => setPage(next)} /></>}
             </TableSurface>
         </div>
@@ -129,13 +135,13 @@ export default function AigcProjectsPage() {
             <Form form={form} layout="vertical" requiredMark={false}>
                 <Form.Item name="projectName" label="项目名称" rules={[{ required: true, whitespace: true, message: "请填写项目名称" }]}><Input /></Form.Item>
                 {drawerLevel === 2 ? <Form.Item name="parentId" label="上级项目" rules={[{ required: true, message: "请选择一级项目" }]}><Select options={parents.filter((item) => item.projectId !== editing?.projectId).map((item) => ({ label: item.projectName, value: item.projectId }))} /></Form.Item> : null}
-                {drawerLevel === 2 && formParentId ? <Form.Item name="deptId" label="团队" rules={[{ required: true, message: "请选择团队" }]}><Select options={departments.map((item) => ({ label: `${item.name} · ID: ${item.deptId}`, value: item.deptId, disabled: item.status === "禁用" }))} /></Form.Item> : null}
+                {drawerLevel === 2 && formParentId && user?.role === "admin" ? <Form.Item name="deptId" label="团队" rules={[{ required: true, message: "请选择团队" }]}><Select options={departments.map((item) => ({ label: `${item.name} · ID: ${item.deptId}`, value: item.deptId, disabled: item.status === "禁用" }))} /></Form.Item> : null}
                 <Form.Item name="status" label="状态" rules={[{ required: true }]}><Select options={[{ label: "启用", value: "启用" }, { label: "禁用", value: "禁用" }]} /></Form.Item>
                 <Form.Item name="projectDesc" label="项目说明"><Input.TextArea rows={4} /></Form.Item>
                 <Form.Item name="remark" label="备注"><Input.TextArea rows={3} /></Form.Item>
             </Form>
         </Drawer>
-    </AdminPageFrame>;
+    </div></WorkspacePage>;
 }
 
 async function listAllAigcProjects() {

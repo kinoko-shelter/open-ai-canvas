@@ -87,7 +87,6 @@ export const router = createBrowserRouter([
                 children: [
                     { index: true, element: deferred(<AnalyticsPage />) },
                     { path: "teams", element: deferred(<AigcDepartmentsPage />) },
-                    { path: "aigc-projects", element: deferred(<AigcProjectsPage />) },
                     { path: "departments", element: <Navigate to="/admin/teams" replace /> },
                     { path: "users", element: deferred(<UsersPage />) },
                     { path: "channels", element: deferred(<ChannelsPage />) },
@@ -107,7 +106,7 @@ export const router = createBrowserRouter([
                     { path: "settings/storage", element: deferred(<StorageSettingsPage />) },
                 ],
             },
-            { path: "/aigc-projects", element: <Navigate to="/admin/aigc-projects" replace /> },
+            { path: "/aigc-projects", element: <RequireAuth>{deferred(<AigcProjectsPage />)}</RequireAuth> },
         ],
     },
     { path: "*", element: deferred(<NotFound />) },
