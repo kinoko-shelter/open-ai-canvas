@@ -130,6 +130,7 @@ export default function CreatePage() {
     const pendingTaskSyncInFlightRef = useRef(false);
     const historyTaskSyncWarningRef = useRef(false);
     const historyTaskSyncInFlightRef = useRef(false);
+    const recoveredErrorTaskIDsRef = useRef(new Set<string>());
     // 身份切换会在离开页面前切换全局 scope；当前会话必须始终写回挂载时所属用户。
     const creationStorageKeyRef = useRef(scopedStorageKey(STORAGE_KEY));
 
@@ -159,6 +160,7 @@ export default function CreatePage() {
     const pendingMediaKey = useMemo(() => pendingCreationMediaKey(conversations), [conversations]);
     const pendingTaskIds = useMemo(() => pendingCreationTaskIds(conversations), [conversations]);
     const pendingMessageKeys = useMemo(() => pendingCreationMessageKeys(conversations), [conversations]);
+    const recoverableErrorTaskIds = useMemo(() => recoverableCreationErrorTaskIds(conversations), [conversations]);
     const shots = useMemo(() => shotsFromMessages(activeConversation?.messages || []), [activeConversation]);
     const visibleShotIndex = shots.length ? selectedShotIndex >= 0 && selectedShotIndex < shots.length ? selectedShotIndex : shots.length - 1 : -1;
 
@@ -229,6 +231,24 @@ export default function CreatePage() {
             window.clearInterval(timer);
         };
     }, [hydrated, pendingMediaKey, pendingTaskIds, toast]);
+
+    useEffect(() => {
+        if (!hydrated || !recoverableErrorTaskIds.length) return;
+        const taskIds = recoverableErrorTaskIds.filter((id) => !recoveredErrorTaskIDsRef.current.has(id));
+        if (!taskIds.length) return;
+        taskIds.forEach((id) => recoveredErrorTaskIDsRef.current.add(id));
+        let cancelled = false;
+        // 资源化瞬时失败不应永久覆盖已经成功的任务结果；每个错误任务仅在当前页面恢复一次。
+        void queryPendingCreationTasks(taskIds)
+            .then(persistCreationTaskResults)
+            .then((tasks) => {
+                if (!cancelled) setConversations((current) => reconcileCreationTaskMessages(current, tasks));
+            })
+            .catch((error) => console.warn("创作错误任务结果恢复失败", error));
+        return () => {
+            cancelled = true;
+        };
+    }, [hydrated, recoverableErrorTaskIds]);
 
     useEffect(() => {
         if (!hydrated || !pendingMediaKey || !pendingMessageKeys.length) return;
@@ -926,7 +946,7 @@ function CreationEmptyBanner() {
             <img src={frame.src} alt="" />
             <span>{frame.caption}</span>
         </figure>)}
-        <span className="creation-empty-art-caption"><span>影策</span>把每一帧，交给镜头导演</span>
+        <span className="creation-empty-art-caption"><span>故事创作</span>把每一帧，交给镜头导演</span>
     </div>;
 }
 
@@ -957,9 +977,9 @@ function CreationIntro({ mode }: { mode: CreationMode }) {
 type CreationThinking = { title: string; hint: string; steps: string[] };
 
 function thinkingFor(mode: CreationMode): CreationThinking {
-    if (mode === "image") return { title: "正在为你画这一镜", hint: "影策正在理解你的构图意图，并把画面交给模型出图。", steps: ["理解构图", "定调画风", "生成画面"] };
-    if (mode === "text") return { title: "正在为你写这段", hint: "影策正在梳理你的创作脉络，组织语言与结构。", steps: ["梳理脉络", "组织语言", "输出段落"] };
-    return { title: "正在为你拍这一镜", hint: "影策正在拆解你的镜头脚本，设计运镜与光线，并交给模型渲染成片。", steps: ["拆解镜头", "设计运镜", "定调布光", "渲染成片"] };
+    if (mode === "image") return { title: "正在为你画这一镜", hint: "故事创作正在理解你的构图意图，并把画面交给模型出图。", steps: ["理解构图", "定调画风", "生成画面"] };
+    if (mode === "text") return { title: "正在为你写这段", hint: "故事创作正在梳理你的创作脉络，组织语言与结构。", steps: ["梳理脉络", "组织语言", "输出段落"] };
+    return { title: "正在为你拍这一镜", hint: "故事创作正在拆解你的镜头脚本，设计运镜与光线，并交给模型渲染成片。", steps: ["拆解镜头", "设计运镜", "定调布光", "渲染成片"] };
 }
 
 function directorNoteFor(mode: CreationMode, settings: CreationSettings): string {
@@ -1041,11 +1061,11 @@ function StoryboardShotCard({ shot, shotNumber, modelName, busy, onRetryFailure,
                         </div>
                     </div>
                 </div> : null}
-                {briefVisible && user ? <div className="storyboard-workbench-handoff" aria-hidden="true"><span className="storyboard-workbench-handoff-rail" /><span className="storyboard-workbench-handoff-badge"><ArrowDown />交给影策 AI</span><span className="storyboard-workbench-handoff-rail" /></div> : null}
+                {briefVisible && user ? <div className="storyboard-workbench-handoff" aria-hidden="true"><span className="storyboard-workbench-handoff-rail" /><span className="storyboard-workbench-handoff-badge"><ArrowDown />交给故事创作 AI</span><span className="storyboard-workbench-handoff-rail" /></div> : null}
                 <div className="storyboard-workbench-turn is-ai">
                     <span className="storyboard-workbench-ai-avatar"><Clapperboard /></span>
                     <div className="storyboard-workbench-turn-copy">
-                        <div className="storyboard-workbench-turn-meta"><span className="storyboard-workbench-turn-role is-ai"><Sparkles />影策 AI</span>{modelName ? <span className="storyboard-workbench-turn-model">{modelName}</span> : null}{result?.createdAt ? <time className="storyboard-workbench-turn-time" dateTime={result.createdAt}>{formatMessageTime(result.createdAt)}</time> : null}</div>
+                        <div className="storyboard-workbench-turn-meta"><span className="storyboard-workbench-turn-role is-ai"><Sparkles />故事创作 AI</span>{modelName ? <span className="storyboard-workbench-turn-model">{modelName}</span> : null}{result?.createdAt ? <time className="storyboard-workbench-turn-time" dateTime={result.createdAt}>{formatMessageTime(result.createdAt)}</time> : null}</div>
                         <div className="storyboard-workbench-turn-bubble">
                             <StoryboardShotResult result={result} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} onCollect={onCollect} collected={collected} collecting={collecting} />
                         </div>
@@ -1072,7 +1092,7 @@ function StoryboardNextShotCard({ shotNumber, onCancel }: { shotNumber: number; 
                 <span className="storyboard-workbench-next-panel-icon"><Clapperboard /></span>
                 <div className="storyboard-workbench-next-panel-copy">
                     <strong>SC.{String(shotNumber).padStart(2, "0")} 等待你的脚本</strong>
-                    <span>在下方写下这一镜的镜头、画面或故事。影策会拆解脚本、设计运镜并渲染成片，这一镜会作为 SC.{String(shotNumber).padStart(2, "0")} 自动加入镜头轨道。</span>
+                    <span>在下方写下这一镜的镜头、画面或故事。故事创作会拆解脚本、设计运镜并渲染成片，这一镜会作为 SC.{String(shotNumber).padStart(2, "0")} 自动加入镜头轨道。</span>
                 </div>
             </div>
         </div>
@@ -1173,6 +1193,14 @@ function pendingCreationMessageKeys(conversations: CreationConversation[]) {
     }));
 }
 
+function recoverableCreationErrorTaskIds(conversations: CreationConversation[]) {
+    const taskIds = conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
+        if (message.role !== "assistant" || message.status !== "error" || message.mode === "text" || message.resultUrls?.length) return [];
+        return message.taskIds || [];
+    }));
+    return Array.from(new Set(taskIds));
+}
+
 function creationMessageKey(context?: GenerationTask["clientContext"]) {
     if (!context?.conversationId || !context.messageId) return "";
     return `${context.conversationId}:${context.messageId}`;
@@ -1250,7 +1278,7 @@ function reconcileCreationTaskMessages(conversations: CreationConversation[], ta
         let conversationChanged = false;
         let completedAt = conversation.updatedAt;
         const messages = conversation.messages.map((message) => {
-            if (message.role !== "assistant" || message.status !== "pending" || message.mode === "text") return message;
+            if (message.role !== "assistant" || (message.status !== "pending" && message.status !== "error") || message.mode === "text") return message;
             const taskIds = new Set(message.taskIds || []);
             const matches = tasks
                 .filter((task) => taskIds.has(task.id) || (task.clientContext?.conversationId === conversation.id && task.clientContext.messageId === message.id))

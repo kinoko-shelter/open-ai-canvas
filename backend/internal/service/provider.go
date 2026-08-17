@@ -823,7 +823,8 @@ func grokImageRequestBody(input canvasGenerationInput) (grokImageRequest, string
 		Model:          input.Config.Model,
 		Prompt:         withSystemPrompt(input.Config, input.Prompt),
 		N:              1,
-		ResponseFormat: "url",
+		// 供应商返回的 imgen.x.ai 临时 URL 在生产网络中无法稳定拉取；直接接收 Base64 后由资源存储持久化。
+		ResponseFormat: "b64_json",
 		// Grok 图片协议用 aspect_ratio 表达画布比例；同时发送 size 会被上游按 OpenAI 枚举校验并拒绝。
 		AspectRatio: normalizeGrokImageAspectRatio(input.Config.Size),
 		Resolution:  normalizeGrokImageResolution(input.Config.Quality),

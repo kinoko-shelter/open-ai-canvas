@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-policy";
+import { resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { groupModelsByDisplayName, modelCompatibilityError, modelGroupReferenceLimits, resolveCompatibleModel } from "../src/lib/model-selection";
 import { defaultConfig, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
@@ -52,6 +53,30 @@ function node(id: string, type: CanvasNodeType, generationMode?: "image" | "vide
 }
 
 describe("逻辑模型选择", () => {
+    test("画布保留后台标记为视频的非视频命名模型", () => {
+        const model = "Artdance 2.0-480p";
+        const channel: ModelChannel = {
+            id: "seedance",
+            name: "Seedance",
+            baseUrl: "https://api.example.com",
+            apiKey: "test-key",
+            apiFormat: "openai",
+            models: [model],
+            modelCosts: [{
+                model,
+                displayName: "Seedance 2.0 480p",
+                capability: "video",
+                protocol: "newapi-channel-2",
+                billingMode: "per_second",
+                unitPriceMicrocredits: 1,
+            }],
+        };
+        const value = `seedance::${model}`;
+        const config = { ...defaultConfig, channels: [channel], models: [value], videoModels: [value], videoModel: value };
+
+        expect(resolveCanvasGenerationModel(config, value, "video")).toBe(value);
+    });
+
     test("同渠道同显示名称合并为一个逻辑模型", () => {
         const config = policyConfig();
         const groups = groupModelsByDisplayName(config, config.videoModels);

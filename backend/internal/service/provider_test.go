@@ -192,14 +192,14 @@ func TestRunGrokImageTaskUsesJSONEditContract(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body.Model != "grok-imagine-image-quality" || body.N != 1 || body.ResponseFormat != "url" {
+		if body.Model != "grok-imagine-image-quality" || body.N != 1 || body.ResponseFormat != "b64_json" {
 			t.Fatalf("request body = %#v", body)
 		}
 		if body.Image == nil || body.Image.URL != testReferenceImageDataURL {
 			t.Fatalf("image = %#v", body.Image)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"url":"https://example.com/result.png"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"aGVsbG8="}]}`))
 	}))
 	defer server.Close()
 
@@ -213,7 +213,7 @@ func TestRunGrokImageTaskUsesJSONEditContract(t *testing.T) {
 		t.Fatalf("runImageTask() error = %v", err)
 	}
 	images, _ := result["images"].([]map[string]string)
-	if len(images) != 1 || images[0]["dataUrl"] != "https://example.com/result.png" {
+	if len(images) != 1 || images[0]["dataUrl"] != "data:image/png;base64,aGVsbG8=" {
 		t.Fatalf("images = %#v", result["images"])
 	}
 }
