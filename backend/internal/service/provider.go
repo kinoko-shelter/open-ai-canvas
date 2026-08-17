@@ -820,9 +820,9 @@ func grokImageRequestBody(input canvasGenerationInput) (grokImageRequest, string
 		return grokImageRequest{}, "", errors.New("Grok 图片协议不支持蒙版编辑，请移除蒙版后重试")
 	}
 	body := grokImageRequest{
-		Model:          input.Config.Model,
-		Prompt:         withSystemPrompt(input.Config, input.Prompt),
-		N:              1,
+		Model:  input.Config.Model,
+		Prompt: withSystemPrompt(input.Config, input.Prompt),
+		N:      1,
 		// 供应商返回的 imgen.x.ai 临时 URL 在生产网络中无法稳定拉取；直接接收 Base64 后由资源存储持久化。
 		ResponseFormat: "b64_json",
 		// Grok 图片协议用 aspect_ratio 表达画布比例；同时发送 size 会被上游按 OpenAI 枚举校验并拒绝。
@@ -1465,7 +1465,9 @@ func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		if size := normalizeVideoSize(input.Config.Size); size != "" {
 			writeField(writer, "size", size)
 		}
-		writeField(writer, "resolution_name", normalizeVideoResolution(input.Config.VQuality))
+		if resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality); resolution != "" {
+			writeField(writer, "resolution_name", resolution)
+		}
 		writeField(writer, "preset", "normal")
 		if shouldSendNewAPIVideoImages(input) {
 			for _, image := range input.ReferenceImages {
@@ -1978,7 +1980,7 @@ func newAPIChannel2VideoRequestBody(input canvasGenerationInput) (newAPIVideoReq
 	ratio := normalizeNewAPIChannel2Ratio(input.Config.Size, modelName)
 	resolution := fixedResolution
 	if resolution == "" {
-		resolution = normalizeNewAPIChannel2Resolution(input.Config.VQuality, modelName)
+		resolution = videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
 	}
 	body := newAPIVideoRequest{
 		Model:       upstreamModel,

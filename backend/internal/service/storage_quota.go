@@ -8,6 +8,27 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+type AccountFileStorageUsage struct {
+	UsedBytes  int64 `json:"usedBytes"`
+	TotalBytes int64 `json:"totalBytes"`
+}
+
+// AccountFileStorageUsage 与上传配额使用同一份资源统计，避免 UI 与写入边界出现不同口径。
+func (s *Service) AccountFileStorageUsage(userID string) (*AccountFileStorageUsage, error) {
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	usedBytes, err := s.repo.UserStoredFileBytes(userID)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountFileStorageUsage{
+		UsedBytes:  usedBytes,
+		TotalBytes: gigabytes(policy.Resource.StoredFileGB),
+	}, nil
+}
+
 func structuredBytes(usage repository.UserStorageUsage) int64 {
 	return usage.AssetBytes + usage.CanvasBytes + usage.SessionBytes
 }

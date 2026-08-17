@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowUp, AtSign, Boxes, ChevronDown, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, SlidersHorizontal, Square, UserRound, Video } from "lucide-react";
 import { Button, Image as AntImage, Modal, Tooltip } from "antd";
 
@@ -37,6 +37,9 @@ type CanvasNodePromptPanelProps = {
 
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
+const PROMPT_EDITOR_MAX_HEIGHT = 224;
+const PROMPT_RESIZE_STEP = 8;
+
 export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useThemeStore((state) => state.theme);
@@ -52,6 +55,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
     const [promptContentHeight, setPromptContentHeight] = useState(0);
+    const [manualPromptHeight, setManualPromptHeight] = useState<number | null>(null);
     const [paramsExpanded, setParamsExpanded] = useState(false); // #98 决策2：B区参数区折叠状态（手风琴）
     const activeReferences = mentionReferences.filter((item) => item.active && item.kind !== "skill");
     const requirements: ModelRequirements = {
@@ -91,7 +95,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const modalShadow = darkSurface ? `0 30px 90px ${theme.spatial.shadow}` : "0 24px 72px rgba(15,23,42,.16)";
     const referenceShelfHeight = activeReferenceCount ? 42 : 0;
     const composerMinHeight = activeReferenceCount ? 82 : 58;
-    const composerHeight = Math.min(224, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
+    const autoComposerHeight = Math.ceil(promptContentHeight + referenceShelfHeight);
+    const composerHeight = clampPromptHeight(manualPromptHeight ?? autoComposerHeight, composerMinHeight, PROMPT_EDITOR_MAX_HEIGHT);
     const isSubmitDisabled = !isRunning && !prompt.trim();
     const canExpandPrompt = mode === "image" || mode === "video";
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -103,7 +108,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     }, [node.id, node.metadata?.composerContent, node.metadata?.prompt]);
 
-    useEffect(() => setPromptContentHeight(0), [node.id]);
+    useEffect(() => {
+        setPromptContentHeight(0);
+        setManualPromptHeight(null);
+    }, [node.id]);
 
     useEffect(() => {
         setExpandedPromptOpen(false);
@@ -292,6 +300,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     onContentSizeChange={updatePromptContentHeight}
                 />
             </div>
+            <PromptResizeHandle height={composerHeight} min={composerMinHeight} max={PROMPT_EDITOR_MAX_HEIGHT} onResize={setManualPromptHeight} />
 
             {/* B区 参数区（对应 #98 决策2：默认折叠，手风琴展开）*/}
             {mode === "video" && !simpleMode ? (
@@ -466,6 +475,66 @@ function ReferenceThumbnail({ reference }: { reference: CanvasResourceReference 
             <Icon className="size-3.5 opacity-75" />
         </span>
     );
+}
+
+function PromptResizeHandle({ height, min, max, onResize }: { height: number; min: number; max: number; onResize: (height: number) => void }) {
+    const dragRef = useRef<{ pointerID: number; startY: number; startHeight: number } | null>(null);
+
+    const finishResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+        if (dragRef.current?.pointerID !== event.pointerId) return;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        dragRef.current = null;
+    };
+
+    const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            onResize(Math.max(min, height - PROMPT_RESIZE_STEP));
+        } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            onResize(Math.min(max, height + PROMPT_RESIZE_STEP));
+        } else if (event.key === "Home") {
+            event.preventDefault();
+            onResize(min);
+        } else if (event.key === "End") {
+            event.preventDefault();
+            onResize(max);
+        }
+    };
+
+    return (
+        <button
+            type="button"
+            className="grid h-2 w-full shrink-0 cursor-row-resize place-items-center border-0 bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-foreground"
+            role="separator"
+            aria-label="调整提示词输入高度"
+            aria-orientation="horizontal"
+            aria-valuemin={min}
+            aria-valuemax={max}
+            aria-valuenow={Math.round(height)}
+            onKeyDown={handleKeyDown}
+            onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                dragRef.current = { pointerID: event.pointerId, startY: event.clientY, startHeight: height };
+                event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+                const drag = dragRef.current;
+                if (!drag || drag.pointerID !== event.pointerId) return;
+                onResize(clampPromptHeight(drag.startHeight + event.clientY - drag.startY, min, max));
+            }}
+            onPointerUp={finishResize}
+            onPointerCancel={finishResize}
+        >
+            <span aria-hidden className="h-px w-8 rounded-full bg-foreground/20 transition-colors hover:bg-foreground/40" />
+        </button>
+    );
+}
+
+function clampPromptHeight(height: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, height));
 }
 
 function GenerationCostBadge({ credits, theme }: { credits: number | null; theme: CanvasTheme }) {

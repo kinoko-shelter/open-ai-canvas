@@ -19,6 +19,8 @@ type UseCanvasSelectionControllerOptions = {
     onCanvasSelectionStart: () => void;
     onNodeInteractionStart: (selectionModifier: boolean) => void;
     onNodeClick: (node: CanvasNodeData) => void;
+    onBatchConnectionCanvasClick?: (event: ReactPointerEvent<HTMLDivElement>) => boolean;
+    onBatchConnectionTarget?: (event: ReactMouseEvent, nodeId: string) => boolean;
     onDeselect: () => void;
     onSelectionBoxEnd?: () => void;
 };
@@ -57,6 +59,8 @@ export function useCanvasSelectionController({
     onCanvasSelectionStart,
     onNodeInteractionStart,
     onNodeClick,
+    onBatchConnectionCanvasClick,
+    onBatchConnectionTarget,
     onDeselect,
     onSelectionBoxEnd,
 }: UseCanvasSelectionControllerOptions) {
@@ -100,6 +104,7 @@ export function useCanvasSelectionController({
     }, [cancelPendingConnectionCreate, cancelSelectionBox, onDeselect, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
 
     const handleCanvasMouseDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+        if (onBatchConnectionCanvasClick?.(event)) return;
         cancelPendingConnectionCreate();
         onCanvasSelectionStart();
         if (event.button !== 0) return;
@@ -121,11 +126,12 @@ export function useCanvasSelectionController({
             .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current))
             .map((node) => ({ id: node.id, left: node.position.x, top: node.position.y, right: node.position.x + node.width, bottom: node.position.y + node.height }));
         setSelectedConnectionId(null);
-    }, [cancelPendingConnectionCreate, nodesRef, onCanvasSelectionStart, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId]);
+    }, [cancelPendingConnectionCreate, nodesRef, onBatchConnectionCanvasClick, onCanvasSelectionStart, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId]);
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.stopPropagation();
         if (event.button !== 0) return;
+        if (onBatchConnectionTarget?.(event, nodeId)) return;
         setSelectedConnectionId(null);
         const currentNodes = nodesRef.current;
         const nextSelected = new Set(selectedNodeIdsRef.current);
@@ -178,7 +184,7 @@ export function useCanvasSelectionController({
         setIsNodeDragging(true);
         setAlignmentGuides({});
         setDragPreview({ x: 0, y: 0, nodeIds: new Set(initialSelectedNodes.map((item) => item.id)) });
-    }, [historyPausedRef, nodesRef, onNodeClick, onNodeInteractionStart, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [historyPausedRef, nodesRef, onBatchConnectionTarget, onNodeClick, onNodeInteractionStart, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (dragFrameRef.current) {

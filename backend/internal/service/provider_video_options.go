@@ -263,6 +263,45 @@ func normalizeVideoResolution(value string) string {
 	return value + "p"
 }
 
+// videoResolutionNameRequest 只接受模型能力明确声明的档位，避免把全局默认 720P
+// 伪装成该渠道支持的 resolution_name。
+func videoResolutionNameRequest(profile *VideoCapabilityConfig, value string) string {
+	requested := strings.ToLower(strings.TrimSpace(value))
+	if isAutomaticVideoResolution(requested) || profile == nil || len(profile.Resolutions) == 0 {
+		return ""
+	}
+	candidates := []string{requested, strings.ToLower(normalizeVideoResolution(requested))}
+	if requested == "2k" {
+		candidates = append(candidates, "1440p")
+	}
+	if requested == "1440" || requested == "1440p" {
+		candidates = append(candidates, "2k")
+	}
+	if requested == "4k" {
+		candidates = append(candidates, "2160p")
+	}
+	if requested == "2160" || requested == "2160p" {
+		candidates = append(candidates, "4k")
+	}
+	for _, supported := range profile.Resolutions {
+		for _, candidate := range candidates {
+			if strings.EqualFold(strings.TrimSpace(supported), candidate) {
+				return strings.TrimSpace(supported)
+			}
+		}
+	}
+	return ""
+}
+
+func isAutomaticVideoResolution(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto", "default", "medium", "high":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeXAIVideoDuration(value string) int {
 	duration, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || duration <= 0 {

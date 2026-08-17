@@ -9,6 +9,7 @@ import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
 import { refreshFeatureAvailability } from "@/lib/user-session";
+import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -62,6 +63,9 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                 to={`/${tool.slug}`}
                 title={tool.label}
                 onClick={handleNavClick}
+                onFocus={() => preloadWorkspaceRoute(tool.slug)}
+                onPointerDown={() => preloadWorkspaceRoute(tool.slug)}
+                onPointerEnter={() => preloadWorkspaceRoute(tool.slug)}
                 className={cn(
                     "app-workspace-nav-link app-workspace-rail-tile grid size-10 place-items-center rounded-md text-[var(--fs-tiny)] transition-colors",
                     active ? "is-active font-medium" : "",
@@ -119,7 +123,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         {/* 桌面：64px 电影胶片条式轨道 */}
                         <div className="app-workspace-rail hidden min-h-0 flex-col overflow-y-auto lg:flex">
                             <div className="app-workspace-rail-header flex h-16 shrink-0 items-center justify-center">
-                                <Link to="/home" className="grid size-10 shrink-0 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-surface-hover hover:text-foreground" title="工作台首页">
+                                <Link to="/home" className="grid size-10 shrink-0 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-surface-hover hover:text-foreground" title="工作台首页" onFocus={() => preloadWorkspaceRoute("home")} onPointerDown={() => preloadWorkspaceRoute("home")} onPointerEnter={() => preloadWorkspaceRoute("home")}>
                                     <Home className="app-workspace-nav-icon" strokeWidth={1.8} />
                                 </Link>
                             </div>
@@ -144,7 +148,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         {/* 移动端：抽屉完整导航 */}
                         <div className="app-workspace-mobile-nav flex min-h-0 flex-1 flex-col overflow-hidden lg:hidden">
                             <div className="flex h-14 shrink-0 items-center gap-2 px-3">
-                                <Link to="/" className="flex min-w-0 items-center gap-2" title="故事创作">
+                                <Link to="/" className="flex min-w-0 items-center gap-2" title="故事创作" onFocus={() => preloadWorkspaceRoute("create")} onPointerDown={() => preloadWorkspaceRoute("create")} onPointerEnter={() => preloadWorkspaceRoute("create")}>
                                     <span className="app-workspace-brand-mark grid size-7 shrink-0 place-items-center rounded-md bg-foreground text-background"><InfinityIcon className="size-4" /></span>
                                     <span className="truncate text-[var(--fs-body)] font-semibold">故事创作</span>
                                 </Link>
@@ -169,6 +173,9 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                                                 to={`/${tool.slug}`}
                                                 title={tool.label}
                                                 onClick={handleNavClick}
+                                                onFocus={() => preloadWorkspaceRoute(tool.slug)}
+                                                onPointerDown={() => preloadWorkspaceRoute(tool.slug)}
+                                                onPointerEnter={() => preloadWorkspaceRoute(tool.slug)}
                                                 className={cn("app-workspace-nav-link relative mb-1 flex h-11 shrink-0 items-center gap-3 rounded-md px-2.5 text-[var(--fs-body)] transition-colors", active ? "is-active font-medium" : "text-foreground/55 hover:bg-surface-hover hover:text-foreground/85")}
                                             >
                                                 <Icon className="app-workspace-nav-icon shrink-0" strokeWidth={1.8} />

@@ -7,9 +7,8 @@ import { UserOSSSettingsForm } from "@/components/layout/user-oss-settings-form"
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { refreshSystemChannels } from "@/lib/user-session";
-import { fetchChannelModels, type ChannelModelCatalogItem } from "@/services/api/image";
-import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { modelProtocolCapability, protocolForModelCatalog } from "@/lib/model-protocols";
+import { fetchChannelModels } from "@/services/api/image";
+import { mergeFetchedChannelModelCosts } from "@/lib/channel-model-catalog";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import {
     createModelChannel,
@@ -180,7 +179,7 @@ export default function SettingsPage() {
                 return;
             }
             updateChannels(
-                latestConfig.channels.map((item) => (item.id === channel.id ? { ...item, models: result.models, modelCosts: mergeFetchedModelCosts(item, result.catalog) } : item)),
+                latestConfig.channels.map((item) => (item.id === channel.id ? { ...item, models: result.models, modelCosts: mergeFetchedChannelModelCosts(item, result.catalog) } : item)),
                 latestConfig,
             );
             message.success(`${latestChannel.name || "当前渠道"}模型列表已更新`);
@@ -226,7 +225,7 @@ export default function SettingsPage() {
                 updateChannels(
                     latestConfig.channels.map((channel) => {
                         const fetched = resultMap.get(channel.id);
-                        return fetched ? { ...channel, models: fetched.models, modelCosts: mergeFetchedModelCosts(channel, fetched.catalog) } : channel;
+                        return fetched ? { ...channel, models: fetched.models, modelCosts: mergeFetchedChannelModelCosts(channel, fetched.catalog) } : channel;
                     }),
                     latestConfig,
                 );
@@ -603,45 +602,6 @@ function normalizeDefaultModel(value: string, options: string[]) {
 
 function normalizeImageCount(value: string) {
     return String(Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || Number(defaultConfig.canvasImageCount)))));
-}
-
-type ChannelModelCost = NonNullable<ModelChannel["modelCosts"]>[number];
-
-// 拉取模型目录时按上游 supported_endpoint_types 推导协议和能力；
-// 保留已有定价，但目录端点类型与旧配置冲突时自动纠正协议，避免模型名猜测和 multipart 错配。
-function mergeFetchedModelCosts(channel: ModelChannel, catalog: ChannelModelCatalogItem[]): ChannelModelCost[] {
-    const existingByModel = new Map((channel.modelCosts || []).map((cost) => [cost.model, cost]));
-    const next: ChannelModelCost[] = [];
-    for (const item of catalog) {
-        const existing = existingByModel.get(item.id);
-        const inferredProtocol = protocolForModelCatalog(item.supportedEndpointTypes);
-        if (existing) {
-            if (inferredProtocol && existing.protocol !== inferredProtocol) {
-                const inferredCapability = modelProtocolCapability(inferredProtocol);
-                next.push({
-                    ...existing,
-                    protocol: inferredProtocol,
-                    capability: inferredCapability || existing.capability,
-                    capabilityConfig: inferredCapability === "image" || inferredCapability === "video" ? defaultModelCapabilityConfig(inferredProtocol, item.id) : undefined,
-                });
-                continue;
-            }
-            next.push(existing);
-            continue;
-        }
-        const catalogProtocol = inferredProtocol || channel.interfaceType;
-        const catalogCapability = catalogProtocol ? modelProtocolCapability(catalogProtocol) : undefined;
-        if (!catalogProtocol || !catalogCapability) continue;
-        next.push({
-            model: item.id,
-            capability: catalogCapability,
-            protocol: catalogProtocol,
-            billingMode: "fixed_request",
-            unitPriceMicrocredits: 0,
-            capabilityConfig: catalogCapability === "image" || catalogCapability === "video" ? defaultModelCapabilityConfig(catalogProtocol, item.id) : undefined,
-        });
-    }
-    return next;
 }
 
 function uniqueModels(models: string[]) {

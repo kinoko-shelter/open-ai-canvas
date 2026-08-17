@@ -75,3 +75,21 @@ export function FullScreenLoader({ label = "正在恢复创作空间", detail = 
         </motion.div>
     );
 }
+
+/** 工作台内页面切换只占用内容区，避免已有导航和上下文被整屏加载状态替换。 */
+export function WorkspaceRouteLoader() {
+    const reducedMotion = useReducedMotion();
+
+    return (
+        <div role="status" aria-live="polite" aria-label="正在切换工作台页面" className="grid h-full min-h-0 place-items-center bg-background">
+            <motion.span
+                aria-hidden
+                className="grid size-10 place-items-center rounded-[var(--r-md)] border border-border bg-surface-card shadow-sm"
+                animate={reducedMotion ? undefined : { rotate: 360 }}
+                transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
+            >
+                <span className="size-4 bg-foreground" style={{ mask: "url(/logo.svg) center / contain no-repeat", WebkitMask: "url(/logo.svg) center / contain no-repeat" }} />
+            </motion.span>
+        </div>
+    );
+}

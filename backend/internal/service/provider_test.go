@@ -1098,8 +1098,11 @@ func TestRunNewAPIChannel2VideoTaskDownloadsTemporaryResult(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
-			if body["model"] != "grok-image-video" || body["seconds"] != "15" || body["aspect_ratio"] != "9:16" || body["resolution"] != "720p" {
+			if body["model"] != "grok-image-video" || body["seconds"] != "15" || body["aspect_ratio"] != "9:16" {
 				t.Errorf("body = %#v", body)
+			}
+			if _, exists := body["resolution"]; exists {
+				t.Errorf("undeclared resolution should be omitted: %#v", body)
 			}
 			images, ok := body["image_urls"].([]interface{})
 			if !ok || len(images) != 2 || images[0] != testReferenceImageDataURL {
@@ -1200,6 +1203,31 @@ func TestNewAPIChannel2SingleImageModelsRequireOneReference(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "当前 0 张") {
 		t.Fatalf("newAPIChannel2VideoBody() error = %q", err)
+	}
+}
+
+func TestVideoResolutionNameRequestUsesOnlyDeclaredValues(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi", "public-video").Video
+	profile.Resolutions = []string{"1440p"}
+	profile.DefaultResolution = "1440p"
+	if got := videoResolutionNameRequest(profile, "2k"); got != "1440p" {
+		t.Fatalf("2k resolution = %q, want 1440p", got)
+	}
+	if got := videoResolutionNameRequest(profile, "auto"); got != "" {
+		t.Fatalf("auto resolution = %q, want empty", got)
+	}
+	profile.Resolutions = nil
+	if got := videoResolutionNameRequest(profile, "720"); got != "" {
+		t.Fatalf("undeclared resolution = %q, want empty", got)
+	}
+}
+
+func TestValidateVideoTaskRequiresMinimumImages(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi", "image-required-video").Video
+	profile.References.MinImages = 1
+	profile.References.MaxImages = 1
+	if err := validateVideoTask(profile, canvasGenerationInput{}); err == nil || !strings.Contains(err.Error(), "至少需要 1 张参考图") {
+		t.Fatalf("validateVideoTask() error = %v", err)
 	}
 }
 

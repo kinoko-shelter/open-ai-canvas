@@ -97,27 +97,14 @@ export function buildTimelineRenderPlan(timeline: TimelineProject, sources: Time
     const concatEntries: string[] = [];
     const videoClips = getOrderedVideoClips(timeline);
 
-    // 1) 逐片段裁切：按源素材内部时间定位，输出统一编码便于 concat。
+    // 1)+2) 逐片段裁切，并按时间线顺序在片段前补黑场（含静音音轨），输出统一编码便于 concat。
+    // 黑场必须插入对应片段之前的 concat 位置：concat 按列表顺序拼接，若先收完所有 trim 再把 gap 追加到
+    // 结尾，任何存在空隙的时间线都会把黑场拼到片尾、字幕整体错位。无源片段不产生独立黑场或推进游标，
+    // 其跨度由下一个有源片段前的单个 gap 覆盖，避免连续缺源时重复计长。
+    let cursorMs = 0;
     videoClips.forEach((clip, index) => {
         const source = sourceByNode.get(clip.nodeId);
         if (!source) return;
-        const output = `trim-${index}.mp4`;
-        // 裁切时长取时间线片段时长（clip.durationMs），而不是源素材剩余时长：
-        // 左缘裁剪后 sourceStartMs 前移但 sourceDurationMs 仍为源全长，若按源时长 -t 会把旧片段尾部多裁出来，
-        // 表现为「裁剪后播放仍从最原始视频开始/出现旧片段」；-ss 已定位源内起点，-t 必须等于片段展示时长。
-        const durationSec = Math.max(0.1, clip.durationMs / 1000);
-        steps.push({
-            kind: "trim",
-            output,
-            args: ["-ss", String((clip.sourceStartMs || 0) / 1000), "-i", source.fileName, "-t", String(durationSec), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k", output],
-            description: `裁切片段 ${index + 1}（${clip.title || clip.nodeId}）`,
-        });
-        concatEntries.push(output);
-    });
-
-    // 2) 空隙补黑场（时间线与成片对齐），含静音音轨。
-    let cursorMs = 0;
-    videoClips.forEach((clip, index) => {
         const gapMs = clip.startMs - cursorMs;
         if (gapMs > 100) {
             const output = `gap-${index}.mp4`;
@@ -151,6 +138,19 @@ export function buildTimelineRenderPlan(timeline: TimelineProject, sources: Time
             });
             concatEntries.push(output);
         }
+        const output = `trim-${index}.mp4`;
+        // 裁切时长取时间线片段时长（clip.durationMs），而不是源素材剩余时长：
+        // 左缘裁剪后 sourceStartMs 前移但 sourceDurationMs 仍为源全长，若按源时长 -t 会把旧片段尾部多裁出来，
+        // 表现为「裁剪后播放仍从最原始视频开始/出现旧片段」；-ss 已定位源内起点，-t 必须等于片段展示时长。
+        // -ss 必须放在 -i 之后（输出 seek）：输入 seek 会按关键帧对齐，导致切点偏移、片尾截短或音视频错位。
+        const durationSec = Math.max(0.1, clip.durationMs / 1000);
+        steps.push({
+            kind: "trim",
+            output,
+            args: ["-i", source.fileName, "-ss", String((clip.sourceStartMs || 0) / 1000), "-t", String(durationSec), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k", output],
+            description: `裁切片段 ${index + 1}（${clip.title || clip.nodeId}）`,
+        });
+        concatEntries.push(output);
         cursorMs = clip.startMs + clip.durationMs;
     });
 

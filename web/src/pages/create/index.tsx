@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
 import localforage from "localforage";
 import { App, Drawer, Modal, Popover, Spin, Tooltip } from "antd";
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link } from "react-router";
 
+import { GenerationToolCard, type GenerationToolStatus } from "@/components/ai/generation-tool-card";
+import { MessageReasoning } from "@/components/ai/message-reasoning";
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { VoiceRecordingButton } from "@/components/conversation/voice-recording-button";
 import { ModelPicker } from "@/components/model-picker";
-import { canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
 import { createClientId } from "@/lib/client-id";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { scopedStorageKey } from "@/lib/user-scope";
@@ -25,7 +26,7 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { modelDisplayName, modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
-import { buildCreationMentionReferences, creationReferenceMetadata, displayCreationPrompt, expandCreationPrompt, selectedCreationReferences, type CreationReference } from "./creation-references";
+import { buildCreationMentionReferences, creationReferenceMetadata, displayCreationPrompt, expandCreationPrompt, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationImageAsset, creationVideoAsset, type CreationAttachment } from "./creation-assets";
 
 type CreationMode = "text" | "image" | "video";
@@ -36,6 +37,7 @@ type CreationMessage = {
     role: "user" | "assistant";
     mode?: CreationMode;
     content: string;
+    reasoning?: string;
     createdAt: string;
     status?: CreationStatus;
     model?: string;
@@ -97,7 +99,7 @@ function shotsFromMessages(messages: CreationMessage[]): CreationShot[] {
     return shots;
 }
 export default function CreatePage() {
-    const { message: toast } = App.useApp();
+    const { message: toast, modal } = App.useApp();
     const config = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const assets = useAssetStore((state) => state.assets);
@@ -131,6 +133,8 @@ export default function CreatePage() {
     const historyTaskSyncWarningRef = useRef(false);
     const historyTaskSyncInFlightRef = useRef(false);
     const recoveredErrorTaskIDsRef = useRef(new Set<string>());
+    const conversationsRef = useRef<CreationConversation[]>([]);
+    const activeIdRef = useRef("");
     // 身份切换会在离开页面前切换全局 scope；当前会话必须始终写回挂载时所属用户。
     const creationStorageKeyRef = useRef(scopedStorageKey(STORAGE_KEY));
 
@@ -155,6 +159,7 @@ export default function CreatePage() {
     const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
+    const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
     const mentionReferences = useMemo(() => buildCreationMentionReferences(addedSkills, attachments, draftReferences), [addedSkills, attachments, draftReferences]);
     const isEmpty = !activeConversation?.messages.length;
     const pendingMediaKey = useMemo(() => pendingCreationMediaKey(conversations), [conversations]);
@@ -170,7 +175,6 @@ export default function CreatePage() {
         setRatio(normalized.size);
         setQuality(normalized.quality);
         setCount(normalized.count);
-        if (attachments.length > imageProfile.references.maxImages) setAttachments((current) => current.slice(0, imageProfile.references.maxImages));
     }, [mode, selectedModel, imageProfile]);
 
     useEffect(() => {
@@ -182,10 +186,19 @@ export default function CreatePage() {
     }, [mode, selectedModel, videoProfile]);
 
     useEffect(() => {
+        const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, maxReferences);
+        if (reconciled.attachments === attachments) return;
+        setAttachments(reconciled.attachments);
+        if (reconciled.removedReferences.length) setPrompt((current) => removeCreationReferenceTokens(current, reconciled.removedReferences));
+    }, [attachments, maxReferences, mentionReferences]);
+
+    useEffect(() => {
         let cancelled = false;
         void localforage.getItem<CreationConversation[]>(creationStorageKeyRef.current).then((stored) => {
             if (cancelled) return;
             const next = stored?.length ? stored : [newConversation()];
+            conversationsRef.current = next;
+            activeIdRef.current = next[0]!.id;
             setConversations(next);
             setActiveId(next[0].id);
             setHydrated(true);
@@ -197,8 +210,13 @@ export default function CreatePage() {
     }, []);
 
     useEffect(() => {
+        conversationsRef.current = conversations;
         if (hydrated) void localforage.setItem(creationStorageKeyRef.current, conversations);
     }, [conversations, hydrated]);
+
+    useEffect(() => {
+        activeIdRef.current = activeId;
+    }, [activeId]);
 
     useEffect(() => {
         if (!hydrated || !pendingMediaKey || !pendingTaskIds.length) return;
@@ -353,7 +371,6 @@ export default function CreatePage() {
         }
     };
 
-    const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
     const libraryItems = useMemo<AssetLibraryPickerItem[]>(() => assets
         .filter((asset): asset is Extract<Asset, { kind: "image" | "video" }> => asset.kind === "image" || asset.kind === "video")
         .map((asset) => ({
@@ -433,7 +450,7 @@ export default function CreatePage() {
     const removeAttachment = (id: string) => {
         const reference = mentionReferences.find((item) => item.attachmentId === id);
         setAttachments((current) => current.filter((item) => item.id !== id));
-        if (reference) setPrompt((current) => removeReferenceTokens(current, [reference]));
+        if (reference) setPrompt((current) => removeCreationReferenceTokens(current, [reference]));
     };
 
     const submit = async () => {
@@ -441,6 +458,10 @@ export default function CreatePage() {
         if (!text || busy || !activeConversation) return;
         if (!selectedModel) {
             toast.warning(`请先在设置中配置${modeLabels[mode]}模型`);
+            return;
+        }
+        if (attachments.length > maxReferences) {
+            toast.error(`当前模型最多支持 ${maxReferences} 个参考素材，请移除后重试`);
             return;
         }
         if (mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
@@ -488,7 +509,10 @@ export default function CreatePage() {
                         ? buildTextMessageContent(item)
                         : item.content,
                 }));
-                await requestImageQuestion(requestConfig, history, (text) => updateAssistant(assistantMessage.id, (item) => ({ ...item, content: text })), { signal: controller.signal });
+                await requestImageQuestion(requestConfig, history, (text) => updateAssistant(assistantMessage.id, (item) => ({ ...item, content: text })), {
+                    signal: controller.signal,
+                    onReasoning: (reasoning) => updateAssistant(assistantMessage.id, (item) => ({ ...item, reasoning })),
+                });
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runBackendGenerationTaskBatch({
@@ -558,6 +582,7 @@ export default function CreatePage() {
     const startNewConversation = () => {
         const next = newConversation();
         followLatestMessageRef.current = true;
+        activeIdRef.current = next.id;
         setConversations((current) => [next, ...current]);
         setActiveId(next.id);
         setPrompt("");
@@ -570,6 +595,7 @@ export default function CreatePage() {
 
     const selectConversation = (conversation: CreationConversation) => {
         followLatestMessageRef.current = true;
+        activeIdRef.current = conversation.id;
         setActiveId(conversation.id);
         setPrompt("");
         setAttachments([]);
@@ -577,6 +603,42 @@ export default function CreatePage() {
         setSelectedShotIndex(-1);
         setComposingNextShot(false);
         setHistoryOpen(false);
+    };
+
+    const confirmDeleteConversation = (conversation: CreationConversation) => {
+        const title = conversation.title.trim() || "新创作";
+        const label = title.length > 32 ? `${title.slice(0, 32)}...` : title;
+        modal.confirm({
+            className: "workspace-modal workspace-modal-compact",
+            title: "删除历史对话？",
+            content: `确定删除「${label}」吗？这只会删除历史对话记录，不会删除已上传或生成的任何素材。此操作不可撤销。`,
+            okText: "删除对话",
+            okButtonProps: { danger: true },
+            cancelText: "保留",
+            onOk: async () => {
+                const current = conversationsRef.current;
+                const remaining = current.filter((item) => item.id !== conversation.id);
+                if (remaining.length === current.length) throw new Error("要删除的创作对话不存在");
+                const sortedRemaining = [...remaining].sort((left, right) => conversationTimestamp(right.updatedAt) - conversationTimestamp(left.updatedAt));
+                const fallback = sortedRemaining.find((item) => item.messages.length > 0) || sortedRemaining[0] || newConversation();
+                const next = remaining.length ? remaining : [fallback];
+
+                await localforage.setItem(creationStorageKeyRef.current, next);
+                conversationsRef.current = next;
+                setConversations(next);
+                if (activeIdRef.current === conversation.id) {
+                    followLatestMessageRef.current = true;
+                    activeIdRef.current = fallback.id;
+                    setActiveId(fallback.id);
+                    setPrompt("");
+                    setAttachments([]);
+                    setDraftReferences([]);
+                    setSelectedShotIndex(-1);
+                    setComposingNextShot(false);
+                }
+                toast.success("历史对话已删除，素材仍保留");
+            },
+        });
     };
 
     const restoreMessageDraft = (item: CreationMessage) => {
@@ -724,7 +786,7 @@ export default function CreatePage() {
                 </section>
             </div>}
         </div>
-        <CreationHistoryDrawer open={historyOpen} conversations={historyConversations} activeId={activeConversation.id} onClose={() => setHistoryOpen(false)} onSelect={selectConversation} />
+        <CreationHistoryDrawer open={historyOpen} conversations={historyConversations} activeId={activeConversation.id} onClose={() => setHistoryOpen(false)} onSelect={selectConversation} onDelete={confirmDeleteConversation} />
         <AssetLibraryPickerModal
             open={libraryOpen}
             items={libraryItems}
@@ -739,7 +801,7 @@ export default function CreatePage() {
 
 const creationAssetCategoryLabels: Record<string, string> = { all: "全部素材", character: "角色", environment: "场景", wardrobe: "服饰", prop: "道具", weapon: "武器", style: "画风", other: "其他" };
 
-function CreationHistoryDrawer({ open, conversations, activeId, onClose, onSelect }: { open: boolean; conversations: CreationConversation[]; activeId: string; onClose: () => void; onSelect: (conversation: CreationConversation) => void }) {
+function CreationHistoryDrawer({ open, conversations, activeId, onClose, onSelect, onDelete }: { open: boolean; conversations: CreationConversation[]; activeId: string; onClose: () => void; onSelect: (conversation: CreationConversation) => void; onDelete: (conversation: CreationConversation) => void }) {
     const [keyword, setKeyword] = useState("");
 
     useEffect(() => {
@@ -772,11 +834,12 @@ function CreationHistoryDrawer({ open, conversations, activeId, onClose, onSelec
                     const latest = conversationPreviewMessage(conversation);
                     const active = conversation.id === activeId;
                     return <li key={conversation.id} className={active ? "is-active" : undefined}>
-                        <button type="button" aria-current={active ? "page" : undefined} onClick={() => onSelect(conversation)}>
+                        <button type="button" className="creation-history-item-main" aria-current={active ? "page" : undefined} onClick={() => onSelect(conversation)}>
                             <span className="creation-history-time"><time dateTime={conversation.updatedAt}>{formatConversationTime(conversation.updatedAt)}</time><em>{latest?.mode ? modeLabels[latest.mode] : "创作"}</em></span>
                             <strong className="creation-history-item-heading">{conversation.title.trim() || "新创作"}</strong>
                             <span className="creation-history-snippet">{latest ? displayCreationPrompt(latest.content, latest.references || []).trim() || "还没有开始创作" : "还没有开始创作"}</span>
                         </button>
+                        <Tooltip title="删除对话"><button type="button" className="creation-history-delete" aria-label={`删除对话：${conversation.title.trim() || "新创作"}`} onClick={() => onDelete(conversation)}><Trash2 /></button></Tooltip>
                     </li>;
                 })}
             </ul> : <div className="creation-history-empty">{keyword.trim() ? "没有找到匹配的对话" : "暂无历史对话"}</div>}
@@ -899,10 +962,11 @@ function GenerationSettingsMenu(props: ComposerProps) {
         ...(props.imageProfile.quality.supported ? [qualityLabel] : []),
         ...(props.imageProfile.maxOutputs > 1 ? [props.count] : []),
     ].join(" · ");
-    const summary = props.mode === "video" ? `${props.ratio} · ${videoResolutionLabel(props.videoQuality)}` : imageSummary;
+    const videoResolutionSupported = props.mode === "video" && resolutions.length > 0;
+    const summary = props.mode === "video" ? [props.ratio, ...(videoResolutionSupported ? [videoResolutionLabel(props.videoQuality)] : [])].join(" · ") : imageSummary;
     const panel = <div className="creation-parameter-menu">
         {props.mode === "video" || props.imageProfile.size.parameter !== "none" ? <SettingSection title="画幅" value={props.ratio}><div className="creation-parameter-content"><div className="creation-choice-grid is-ratio">{ratios.map((value) => <button key={value} type="button" aria-pressed={value === props.ratio} className={value === props.ratio ? "is-selected" : ""} onClick={() => { props.setRatio(value); setCustomRatioOpen(false); }}><span className="creation-ratio-preview"><span style={ratioPreviewStyle(value)} /></span><span>{value}</span></button>)}</div>{props.mode !== "video" && props.imageProfile.size.allowCustom && (customRatioOpen ? <label className="creation-custom-value"><span>宽 : 高</span><input value={props.ratio} onFocus={(event) => event.currentTarget.select()} onChange={(event) => props.setRatio(event.target.value)} placeholder="1920x1080 或 2:1" aria-label="自定义画幅，支持宽x高或比例" /></label> : <button type="button" className="creation-custom-trigger" onClick={() => setCustomRatioOpen(true)}><Plus />输入自定义比例</button>)}</div></SettingSection> : null}
-        {props.mode === "video" ? <SettingSection title="清晰度" value={videoResolutionLabel(props.videoQuality)}><div className="creation-choice-grid is-resolution">{resolutions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.videoQuality} className={option.value === props.videoQuality ? "is-selected" : ""} onClick={() => props.setVideoQuality(option.value)}>{option.label}</button>)}</div></SettingSection> : <>
+        {props.mode === "video" ? (videoResolutionSupported ? <SettingSection title="清晰度" value={videoResolutionLabel(props.videoQuality)}><div className="creation-choice-grid is-resolution">{resolutions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.videoQuality} className={option.value === props.videoQuality ? "is-selected" : ""} onClick={() => props.setVideoQuality(option.value)}>{option.label}</button>)}</div></SettingSection> : null) : <>
             {props.imageProfile.quality.supported ? <SettingSection title={activeQualityOptions.some((item) => item.value === "1k" || item.value === "2k") ? "分辨率" : "图片质量"} value={qualityLabel}><div className="creation-choice-grid is-quality">{activeQualityOptions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.quality} className={option.value === props.quality ? "is-selected" : ""} onClick={() => props.setQuality(option.value)}><span>{option.label}</span><small>{option.description}</small></button>)}</div></SettingSection> : null}
             {props.imageProfile.maxOutputs > 1 ? <SettingSection title="生成数量" value={`${props.count} 张`}><div className="creation-parameter-content"><div className="creation-choice-grid is-count">{countOptions.filter((option) => Number(option) <= props.imageProfile.maxOutputs).map((option) => <button key={option} type="button" aria-pressed={option === props.count} className={option === props.count ? "is-selected" : ""} onClick={() => props.setCount(option)}>{option}</button>)}</div><label className="creation-custom-value"><span>自定义</span><input inputMode="numeric" pattern="[0-9]*" value={props.count} onChange={(event) => props.setCount(String(Math.max(1, Math.min(props.imageProfile.maxOutputs, Number(event.target.value) || 1))))} aria-label={`生成数量，范围 1 到 ${props.imageProfile.maxOutputs}`} /><em>张</em></label></div></SettingSection> : null}
         </>}
@@ -1124,15 +1188,20 @@ function StoryboardShotResult({ result, onRetryFailure, onCreateVariant, onColle
         </div></div>;
     }
     if (status === "error") return <div className="storyboard-workbench-error"><span>{generationErrorMessage(result.error || "")}</span><button type="button" onClick={onRetryFailure}><RefreshCw />重新生成</button></div>;
-    if (mode === "text") return <div className="creation-message-content storyboard-workbench-text">{result.content ? <ReactMarkdown>{result.content}</ReactMarkdown> : <span>正在生成…</span>}</div>;
+    if (mode === "text") return <>
+        {result.reasoning ? <MessageReasoning reasoning={result.reasoning} isStreaming={status === "streaming"} /> : null}
+        <div className="creation-message-content storyboard-workbench-text">{result.content ? <ReactMarkdown>{result.content}</ReactMarkdown> : <span>正在生成…</span>}</div>
+    </>;
     if (!resultUrls.length) return <div className="storyboard-workbench-empty"><Film />没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;
     const note = result.settings ? directorNoteFor(mode, result.settings) : "";
-    return <>
+    const toolStatus: GenerationToolStatus = status === "pending" || status === "queued" ? "running" : status === "error" ? "error" : status === "cancelled" ? "cancelled" : "completed";
+    const detailHeading = <span className="storyboard-workbench-generation-detail-heading">生成详情</span>;
+    return <GenerationToolCard status={toolStatus} isBulk={(resultUrls.length || Number(result.settings?.count) || 1) > 1} heading={detailHeading}>
         {mode === "video" ? <button type="button" className="creation-video-result" onClick={() => openPreview(resultUrls[0], "video")} aria-label="预览生成视频"><video muted preload="metadata" className="size-full object-cover" src={resultUrls[0]} /><span><Maximize2 />预览视频</span></button> : <div className="creation-image-result-grid">{resultUrls.map((url) => <button key={url} type="button" className="creation-image-result" onClick={() => openPreview(url, "image")} aria-label="预览生成图片"><img src={url} alt="生成结果" /><span><Maximize2 /></span></button>)}</div>}
         {note ? <p className="storyboard-workbench-director-note"><span>导演手记</span>{note}</p> : null}
         <div className="storyboard-workbench-media-meta"><span>{mode === "video" ? "视频结果" : `${resultUrls.length} 张图片`}</span>{result.taskIds?.length ? <button type="button" onClick={onCollect} disabled={collecting || collected}>{collected ? <><Check />已收藏</> : <><FolderPlus />{collecting ? "收藏中…" : "收藏素材"}</>}</button> : null}<button type="button" onClick={onCreateVariant}><RefreshCw />生成变体</button><Link to="/canvas">添加到画布</Link>{resultUrls.map((url, index) => <a key={`${url}-download`} href={url} download>{resultUrls.length > 1 ? `下载 ${index + 1}` : <><Download />下载</>}</a>)}</div>
         <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
-    </>;
+    </GenerationToolCard>;
 }
 
 function videoResolutionLabel(value: string | number) {
@@ -1168,10 +1237,6 @@ function isVideoAttachment(attachment: CreationAttachment): attachment is Creati
 
 function isImageAttachment(attachment: CreationAttachment): attachment is CreationAttachment & { dataUrl: string } {
     return !isVideoAttachment(attachment);
-}
-
-function removeReferenceTokens(value: string, references: CreationReference[]) {
-    return references.reduce((current, reference) => current.split(canvasResourceMentionToken(reference)).join(""), value);
 }
 
 function pendingCreationMediaKey(conversations: CreationConversation[]) {

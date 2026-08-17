@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { defaultImageCapabilityConfig, normalizeModelCapabilityConfig } from "../src/lib/model-capabilities";
+import { defaultImageCapabilityConfig, defaultModelCapabilityConfig, normalizeModelCapabilityConfig, videoResolutionRequest } from "../src/lib/model-capabilities";
+import { mergeFetchedChannelModelCosts } from "../src/lib/channel-model-catalog";
+import type { ModelChannel } from "../src/stores/use-config-store";
 
 describe("defaultImageCapabilityConfig", () => {
     test("gpt-image-2 exposes its supported ratios and resolution tiers", () => {
@@ -27,5 +29,33 @@ describe("defaultImageCapabilityConfig", () => {
         expect(standard.size.values).toEqual(["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "3:2", "2:3", "5:4", "4:5"]);
         expect(nano2.size.values).toEqual([...standard.size.values, "1:4", "1:8", "4:1", "8:1"]);
         expect(nano2.size.parameter).toBe("aspect_ratio");
+    });
+
+    test("preserves a manual video profile and only resolves declared resolution tiers", () => {
+        const capabilityConfig = defaultModelCapabilityConfig("newapi", "manual-video");
+        capabilityConfig.video!.resolutions = ["1440p"];
+        capabilityConfig.video!.defaultResolution = "1440p";
+        const channel: ModelChannel = {
+            id: "manual",
+            name: "Manual",
+            baseUrl: "https://manual.example",
+            apiKey: "synthetic-test-key",
+            apiFormat: "openai",
+            models: ["manual-video"],
+            modelCosts: [{ model: "manual-video", displayName: "Manual Video", capability: "video", protocol: "newapi", billingMode: "per_second", unitPriceMicrocredits: 4321, capabilityConfig }],
+        };
+
+        expect(mergeFetchedChannelModelCosts(channel, [{ id: "manual-video" }])[0]?.capabilityConfig).toEqual(capabilityConfig);
+        expect(videoResolutionRequest(capabilityConfig.video!, "2k")).toBe("1440p");
+        expect(videoResolutionRequest({ ...capabilityConfig.video!, resolutions: [] }, "720")).toBeUndefined();
+    });
+
+    test("normalizes persisted video profiles that predate minImages", () => {
+        const capabilityConfig = defaultModelCapabilityConfig("newapi", "legacy-video");
+        delete (capabilityConfig.video!.references as { minImages?: number }).minImages;
+
+        const normalized = normalizeModelCapabilityConfig(capabilityConfig, "newapi", "legacy-video");
+
+        expect(normalized.video?.references.minImages).toBe(0);
     });
 });

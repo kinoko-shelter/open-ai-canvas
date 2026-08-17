@@ -46,7 +46,9 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [form] = Form.useForm<FormValues>();
     const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     const modelCapability = Form.useWatch("capability", form);
+    const modelProtocol = Form.useWatch("protocol", form);
     const modelKey = Form.useWatch("modelKey", form) || "";
+    const tokenBillingSupported = modelCapability === "text" || (modelCapability === "video" && modelProtocol === "volcengine-ark-video");
 
     const reload = async () => {
         if (!channel) return;
@@ -175,11 +177,12 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         if (changed.modelKey !== undefined && nextCapability === "image" && (hasModelSpecificImageCapability(nextProtocol, changed.modelKey, channel.apiFormat) || hasModelSpecificImageCapability(nextProtocol, modelKey, channel.apiFormat))) {
             form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(nextProtocol, changed.modelKey, channel.apiFormat));
         }
-        if (!changed.capability) return;
         const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
-        if ((currentBillingMode === "per_second" && changed.capability !== "video") || (currentBillingMode === "token" && changed.capability !== "text")) {
+        const tokenBillingAllowed = nextCapability === "text" || (nextCapability === "video" && nextProtocol === "volcengine-ark-video");
+        if ((currentBillingMode === "per_second" && nextCapability !== "video") || (currentBillingMode === "token" && !tokenBillingAllowed)) {
             form.setFieldValue("billingMode", "fixed_request");
         }
+        if (!changed.capability) return;
         const current = nextProtocol;
         if (modelProtocolCapability(current) !== changed.capability) {
             const nextProtocol = MODEL_PROTOCOLS.find((item) => item.capability === changed.capability)?.value;
@@ -269,10 +272,14 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     </Form.Item>
                     {modelCapability === "image" || modelCapability === "video" ? <Form.Item name="capabilityConfig" rules={[{ required: true, message: `请配置${modelCapability === "image" ? "图片" : "视频"}能力参数` }]}><ModelCapabilityEditor capability={modelCapability} model={modelKey} protocol={form.getFieldValue("protocol")} /></Form.Item> : null}
                     <Form.Item name="billingMode" label="计费方式" rules={[{ required: true }]}>
-                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: modelCapability !== "text" }]} />
+                        <Segmented block options={[{ label: "按次计费", value: "fixed_request" }, { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" }, { label: "Token 计费", value: "token", disabled: !tokenBillingSupported }]} />
                     </Form.Item>
                     {billingMode === "token" ? (
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        modelCapability === "video" ? (
+                            <Form.Item name="outputTokenPrice" label="视频输出 / 百万 Token" rules={[{ required: true, message: "请输入视频输出价格" }, { type: "number", min: Number.EPSILON, message: "视频输出价格必须大于 0" }]}>
+                                <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
+                            </Form.Item>
+                        ) : <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                             <Form.Item name="inputTokenPrice" label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}>
                                 <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
                             </Form.Item>
@@ -312,6 +319,7 @@ function billingSummary(item: ChannelModel) {
     if (item.billingMode !== "token") {
         return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
     }
+    if (item.capability === "video") return `视频输出 ${formatCredits(item.outputTokenPriceMicrocredits)} / 百万 Token`;
     return (
         <div className="text-xs leading-5">
             <div>输入 {formatCredits(item.inputTokenPriceMicrocredits)} / 百万</div>

@@ -4004,8 +4004,9 @@
     .task-record-dot.is-queued { background: var(--palette-status-loading); }
     .task-record-dot.is-failed { background: var(--palette-status-error); }
     .task-record-dot.is-idle { background: color-mix(in srgb, var(--foreground) 30%, transparent); }
-    .task-record-thumb { position: relative; display: grid; width: 84px; height: 60px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent); border-radius: var(--r-md); background: color-mix(in srgb, var(--foreground) 4%, transparent); color: color-mix(in srgb, var(--foreground) 28%, transparent); }
-    .task-record-thumb img, .task-record-thumb video { width: 100%; height: 100%; object-fit: cover; }
+    .task-record-thumb { position: relative; display: grid; width: 84px; height: 60px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent); border-radius: var(--r-md); background: color-mix(in srgb, var(--foreground) 4%, transparent); padding: 0; color: color-mix(in srgb, var(--foreground) 28%, transparent); }
+    /* 媒体脱离 Grid 固有尺寸计算，避免竖图按原始宽高比撑出固定缩略图。 */
+    .task-record-thumb img, .task-record-thumb video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
     .task-record-meta { display: flex; min-width: 0; align-items: center; gap: 8px; margin-top: 7px; overflow: hidden; color: color-mix(in srgb, var(--foreground) 40%, transparent); font-size: var(--fs-label); white-space: nowrap; }
     .task-record-meta-canvas { display: inline-flex; min-width: 0; align-items: center; gap: 4px; overflow: hidden; border-left: 1px solid color-mix(in srgb, var(--foreground) 11%, transparent); padding-left: 8px; text-overflow: ellipsis; }
     .task-record-meta-canvas svg { flex: 0 0 auto; opacity: .7; }
@@ -7727,12 +7728,16 @@ html:not(.dark) .creation-history-drawer-root {
 .creation-history-search input::placeholder { color: var(--creation-history-muted); }
 
 .creation-history-list { margin: 0; padding: 0; list-style: none; }
-.creation-history-list > li { min-width: 0; border-bottom: 1px solid var(--creation-history-line); }
+.creation-history-list > li { display: flex; min-width: 0; align-items: stretch; border-bottom: 1px solid var(--creation-history-line); }
 .creation-history-list > li:last-child { border-bottom: 0; }
-.creation-history-list button { display: flex; width: 100%; min-height: 78px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; padding: 12px 10px 13px; color: var(--creation-history-text); text-align: left; transition: background-color 150ms ease, border-color 150ms ease; }
-.creation-history-list button:hover { background: var(--creation-history-hover); }
-.creation-history-list button:focus-visible { outline: 2px solid color-mix(in srgb, var(--creation-history-accent) 68%, transparent); outline-offset: -2px; }
-.creation-history-list > li.is-active button { border-color: color-mix(in srgb, var(--creation-history-accent) 28%, transparent); background: color-mix(in srgb, var(--creation-history-accent) 7%, var(--creation-history-surface)); }
+.creation-history-item-main { display: flex; width: 100%; min-width: 0; min-height: 78px; flex: 1; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; padding: 12px 10px 13px; color: var(--creation-history-text); text-align: left; transition: background-color 150ms ease, border-color 150ms ease; }
+.creation-history-item-main:hover { background: var(--creation-history-hover); }
+.creation-history-item-main:focus-visible,
+.creation-history-delete:focus-visible { outline: 2px solid color-mix(in srgb, var(--creation-history-accent) 68%, transparent); outline-offset: -2px; }
+.creation-history-list > li.is-active .creation-history-item-main { border-color: color-mix(in srgb, var(--creation-history-accent) 28%, transparent); background: color-mix(in srgb, var(--creation-history-accent) 7%, var(--creation-history-surface)); }
+.creation-history-delete { display: grid; width: 36px; min-width: 36px; margin: 8px 2px 8px 0; place-items: center; align-self: center; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--creation-history-muted); transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
+.creation-history-delete:hover { border-color: color-mix(in srgb, var(--palette-status-error) 28%, transparent); background: color-mix(in srgb, var(--palette-status-error) 12%, transparent); color: var(--palette-status-error); }
+.creation-history-delete svg { width: 15px; height: 15px; }
 .creation-history-time { display: flex; width: 100%; align-items: center; justify-content: space-between; color: var(--creation-history-muted); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; line-height: 1.3; }
 .creation-history-time em { border: 1px solid var(--creation-history-line); border-radius: var(--r-xs); padding: 2px 5px; color: var(--creation-history-muted); font-size: var(--fs-micro); font-style: normal; }
 .creation-history-item-heading { width: 100%; min-width: 0; overflow: hidden; font-size: var(--fs-label); font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
@@ -9673,6 +9678,29 @@ html:not(.dark) .creation-home .storyboard-workbench-bar-action:hover { backgrou
     background: var(--workspace-accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--workspace-accent) 16%, transparent);
     content: "";
+}
+.assets-header-actions { display: flex; max-width: 100%; flex-direction: column; align-items: flex-end; gap: var(--space-2); }
+.assets-header-action-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.assets-header-actions .assets-storage-usage { justify-content: flex-end; }
+.assets-storage-usage { display: flex; width: min(100%, var(--panel-width-compact)); min-height: var(--space-6); align-items: center; gap: var(--space-2); color: color-mix(in srgb, var(--foreground) 48%, transparent); }
+.assets-storage-usage-icon { display: inline-flex; flex: none; align-items: center; color: color-mix(in srgb, var(--foreground) 44%, transparent); }
+.assets-storage-usage-icon svg { width: var(--fs-body); height: var(--fs-body); }
+.assets-storage-usage-title { flex: none; color: color-mix(in srgb, var(--foreground) 62%, transparent); font-size: var(--fs-label); font-weight: 560; }
+.assets-storage-usage-value { flex: none; color: color-mix(in srgb, var(--foreground) 76%, transparent); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+.assets-storage-usage-track { display: block; min-width: var(--space-12); max-width: var(--space-24); height: var(--space-1); flex: 1 1 var(--space-24); overflow: hidden; border-radius: var(--progress-bar-radius); background: color-mix(in srgb, var(--foreground) 9%, transparent); }
+.assets-storage-usage-track > span { display: block; height: 100%; border-radius: inherit; background: var(--workspace-accent); transition: width var(--motion-state) var(--motion-ease-out); }
+.assets-storage-usage.has-usage .assets-storage-usage-track > span { min-width: var(--space-half); }
+.assets-storage-usage.is-full .assets-storage-usage-track > span { background: var(--progress-bar-fill-error); }
+.assets-storage-usage-percent { min-width: var(--space-10); flex: none; font-size: var(--fs-tiny); font-variant-numeric: tabular-nums; text-align: right; }
+.assets-storage-usage-status { min-width: 0; font-size: var(--fs-label); }
+.assets-storage-usage-status button { margin-left: var(--space-1-half); color: var(--foreground); text-decoration: underline; text-underline-offset: var(--space-half); }
+.assets-storage-usage-status button:focus-visible { outline: 2px solid var(--control-focus-ring); outline-offset: var(--space-half); }
+@media (max-width: 639px) {
+    .assets-header-actions { width: 100%; align-items: stretch; }
+    .assets-header-action-buttons,
+    .assets-header-actions .assets-storage-usage { justify-content: flex-start; }
+    .assets-storage-usage { width: 100%; }
+    .assets-storage-usage-track { min-width: var(--space-8); }
 }
 /* 页头主按钮：压过 light 主题下 app-page-header 按钮的白色背景覆盖。 */
 .assets-library-page.canvas-library-page .app-page-header .library-primary-action {
