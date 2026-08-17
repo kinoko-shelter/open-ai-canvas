@@ -394,6 +394,43 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"account": account})
 	})
+	r.GET("/admin/team-credit-management", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.AdminTeamCreditOverview(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		ok(c, result)
+	})
+	r.POST("/admin/team-credit-transfers", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "admin-team-credit-transfer:"+user.ID, 60, time.Hour) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req service.AdminTeamCreditTransferRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.AdminTransferTeamCredits(user, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		ok(c, result)
+	})
 	r.GET("/admin/billing-orders", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

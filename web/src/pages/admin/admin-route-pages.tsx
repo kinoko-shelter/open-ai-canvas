@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 
 import { useAdminContext } from "./admin-context";
 import { AdminPageFrame } from "./components/admin-shell";
+import { useUserStore } from "@/stores/use-user-store";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
 const AdminAnnouncementsPanel = lazy(() => import("./components/admin-announcements-panel"));
@@ -9,6 +10,7 @@ const CreditOperationsPanel = lazy(() => import("./components/credit-operations-
 const AccessSettingsPanel = lazy(() => import("./components/access-settings-panel"));
 const EmailSettingsPanel = lazy(() => import("./components/email-settings-panel"));
 const FeatureAvailabilityPanel = lazy(() => import("./components/feature-availability-panel"));
+const TeamCreditManagementPanel = lazy(() => import("./components/team-credit-management-panel"));
 
 function PageFallback({ label }: { label: string }) {
     return <div className="py-16 text-center text-sm text-foreground/50">正在读取{label}...</div>;
@@ -26,6 +28,14 @@ export function AnnouncementsPage() {
 export function CreditOperationsPage() {
     const { references } = useAdminContext();
     return <AdminPageFrame title="积分运营" description="人工调账与异常计费"><Suspense fallback={<PageFallback label="积分运营数据" />}><CreditOperationsPanel users={references.users} /></Suspense></AdminPageFrame>;
+}
+
+export function TeamCreditManagementPage() {
+    const canManageTeamCredits = useUserStore((state) => state.canImpersonateUsers);
+    if (!canManageTeamCredits) {
+        return <AdminPageFrame title="团队积分管理" description="主管余额、成员与代主管划拨"><div className="py-16 text-center text-sm text-foreground/50">仅系统超级管理员可以管理团队积分。</div></AdminPageFrame>;
+    }
+    return <AdminPageFrame title="团队积分管理" description="主管余额、成员与代主管划拨"><Suspense fallback={<PageFallback label="团队积分数据" />}><TeamCreditManagementPanel /></Suspense></AdminPageFrame>;
 }
 
 export function AccessSettingsPage() {

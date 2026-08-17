@@ -1,5 +1,5 @@
 import { Tooltip } from "antd";
-import { ArrowLeft, BarChart3, BellRing, Coins, FileClock, FolderTree, HardDrive, Home, Infinity as InfinityIcon, Mail, MessageSquareText, Paintbrush, PanelLeftClose, PanelLeftOpen, RadioTower, Settings2, ShieldCheck, TicketCheck, ToggleLeft, UsersRound } from "lucide-react";
+import { ArrowLeft, BarChart3, BellRing, Coins, FileClock, FolderTree, HandCoins, HardDrive, Home, Infinity as InfinityIcon, Mail, MessageSquareText, Paintbrush, PanelLeftClose, PanelLeftOpen, RadioTower, Settings2, ShieldCheck, TicketCheck, ToggleLeft, UsersRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet } from "react-router";
 
@@ -7,12 +7,14 @@ import { AppChangelogButton } from "@/components/layout/app-changelog-modal";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WORKSPACE_SIDEBAR_STORAGE_KEY } from "@/components/layout/workspace-sidebar-state";
 import { cn } from "@/lib/utils";
+import { useUserStore } from "@/stores/use-user-store";
 
 type AdminNavigationItem = {
     path: string;
     label: string;
     description: string;
     icon: ReactNode;
+    primaryAdminOnly?: boolean;
 };
 
 const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = [
@@ -34,6 +36,7 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
         items: [
             { path: "/admin/announcements", label: "系统公告", description: "发布、关闭与历史公告", icon: <BellRing className="size-4" /> },
             { path: "/admin/credit-operations", label: "积分运营", description: "人工调账与异常计费", icon: <Coins className="size-4" /> },
+            { path: "/admin/team-credit-management", label: "团队积分管理", description: "主管余额与成员划拨", icon: <HandCoins className="size-4" />, primaryAdminOnly: true },
             { path: "/admin/redemption-codes", label: "兑换码", description: "生成与查看兑换码批次", icon: <TicketCheck className="size-4" /> },
             { path: "/admin/logs", label: "请求明细", description: "上游调用与费用", icon: <FileClock className="size-4" /> },
         ],
@@ -53,6 +56,7 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
 
 export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
+    const canManageTeamCredits = useUserStore((state) => state.canImpersonateUsers);
     const toggleCollapsed = () => {
         setCollapsed((current) => {
             const next = !current;
@@ -77,7 +81,7 @@ export function AdminShell() {
                         </button>
                     </Tooltip>
                 </div>
-                <AdminNavigation collapsed={collapsed} />
+                <AdminNavigation collapsed={collapsed} canManageTeamCredits={canManageTeamCredits} />
                 <div className="shrink-0 border-t border-border/70 p-2">
                     <Tooltip title={collapsed ? "更新日志" : undefined} placement="right">
                         <AppChangelogButton className={cn("flex h-8 w-full items-center rounded text-[var(--fs-label)] text-foreground/52 transition-colors hover:bg-surface-hover hover:text-foreground", collapsed ? "justify-center px-0" : "gap-2 px-2")} showVersion={!collapsed} />
@@ -91,7 +95,7 @@ export function AdminShell() {
                 </div>
             </aside>
             <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                <MobileAdminNavigation />
+                <MobileAdminNavigation canManageTeamCredits={canManageTeamCredits} />
                 <Outlet />
             </section>
         </main>
@@ -124,10 +128,14 @@ export function AdminPageFrame({ title, description, actions, back, children }: 
     );
 }
 
-function MobileAdminNavigation() {
+function visibleAdminNavigation(canManageTeamCredits: boolean) {
+    return adminNavigation.map((group) => ({ ...group, items: group.items.filter((item) => !item.primaryAdminOnly || canManageTeamCredits) }));
+}
+
+function MobileAdminNavigation({ canManageTeamCredits }: { canManageTeamCredits: boolean }) {
     return (
         <nav className="app-workspace-navigation hide-scrollbar flex shrink-0 gap-1 overflow-x-auto border-b border-border/70 px-3 py-2 lg:hidden" aria-label="管理后台分区">
-            {adminNavigation.flatMap((group) => group.items).map((item) => (
+            {visibleAdminNavigation(canManageTeamCredits).flatMap((group) => group.items).map((item) => (
                 <NavLink key={item.path} to={item.path} end={item.path === "/admin"} className={({ isActive }) => cn("app-workspace-nav-link flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors", isActive ? "is-active font-medium" : "text-foreground/60 hover:bg-surface-hover hover:text-foreground")}>
                     {item.icon}<span>{item.label}</span>
                 </NavLink>
@@ -137,10 +145,10 @@ function MobileAdminNavigation() {
     );
 }
 
-function AdminNavigation({ collapsed }: { collapsed: boolean }) {
+function AdminNavigation({ collapsed, canManageTeamCredits }: { collapsed: boolean; canManageTeamCredits: boolean }) {
     return (
         <nav className="thin-scrollbar flex-1 overflow-y-auto px-2 py-2" aria-label="管理后台菜单">
-            {adminNavigation.map((group) => (
+            {visibleAdminNavigation(canManageTeamCredits).map((group) => (
                 <div key={group.label} className="mb-3">
                     {!collapsed ? <div className="mb-1 px-2.5 text-[var(--fs-tiny)] font-medium text-foreground/38">{group.label}</div> : <div className="mx-auto mb-1.5 h-px w-7 bg-border/80" />}
                     <div className="space-y-0.5">

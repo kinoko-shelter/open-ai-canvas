@@ -51,6 +51,27 @@ export type TeamCreditTransferResult = {
     replayed: boolean;
 };
 
+export type AdminTeamCreditMember = {
+    id: string;
+    username: string;
+    displayName: string;
+    availableMicrocredits: number;
+    reservedMicrocredits: number;
+};
+
+export type AdminTeamCreditLead = {
+    id: string;
+    username: string;
+    displayName: string;
+    deptId: number;
+    departmentName: string;
+    departmentStatus: string;
+    availableMicrocredits: number;
+    reservedMicrocredits: number;
+    canTransfer: boolean;
+    members: AdminTeamCreditMember[];
+};
+
 export type CreditPolicy = {
     signupBonusMicrocredits: number;
     checkinBonusMicrocredits: number;
@@ -207,6 +228,14 @@ export function listTeamCreditRecipients() {
 
 export function transferTeamCredits(input: { userId: string; amountMicrocredits: number; note: string; idempotencyKey: string }) {
     return request<TeamCreditTransferResult>(api.post("/wallet/team-credit-transfers", input));
+}
+
+export function getAdminTeamCreditManagement() {
+    return request<{ leads: AdminTeamCreditLead[] }>(api.get("/admin/team-credit-management"));
+}
+
+export function transferAdminTeamCredits(input: { senderUserId: string; recipientUserId: string; amountMicrocredits: number; note: string; idempotencyKey: string }) {
+    return request<TeamCreditTransferResult>(api.post("/admin/team-credit-transfers", input));
 }
 
 export function getAdminCreditPolicy() {

@@ -102,6 +102,39 @@ type TeamCreditTransferResult struct {
 	Replayed         bool                `json:"replayed"`
 }
 
+type AdminTeamCreditMember struct {
+	ID                    string `json:"id"`
+	Username              string `json:"username"`
+	DisplayName           string `json:"displayName"`
+	AvailableMicrocredits int64  `json:"availableMicrocredits"`
+	ReservedMicrocredits  int64  `json:"reservedMicrocredits"`
+}
+
+type AdminTeamCreditLead struct {
+	ID                    string                  `json:"id"`
+	Username              string                  `json:"username"`
+	DisplayName           string                  `json:"displayName"`
+	DeptID                int64                   `json:"deptId"`
+	DepartmentName        string                  `json:"departmentName"`
+	DepartmentStatus      string                  `json:"departmentStatus"`
+	AvailableMicrocredits int64                   `json:"availableMicrocredits"`
+	ReservedMicrocredits  int64                   `json:"reservedMicrocredits"`
+	CanTransfer           bool                    `json:"canTransfer"`
+	Members               []AdminTeamCreditMember `json:"members"`
+}
+
+type AdminTeamCreditOverview struct {
+	Leads []AdminTeamCreditLead `json:"leads"`
+}
+
+type AdminTeamCreditTransferRequest struct {
+	SenderUserID       string `json:"senderUserId"`
+	RecipientUserID    string `json:"recipientUserId"`
+	AmountMicrocredits int64  `json:"amountMicrocredits"`
+	Note               string `json:"note"`
+	IdempotencyKey     string `json:"idempotencyKey"`
+}
+
 type ResolveBillingRequest struct {
 	Action string `json:"action"`
 	Note   string `json:"note"`
@@ -236,9 +269,180 @@ func (s *Service) TransferTeamCredits(actor *model.User, req TeamCreditTransferR
 		"team-credit-transfer:"+actor.ID+":"+idempotencyKey,
 		truncateRunes("给 @"+recipient.Username+" 充值："+note, 500),
 		truncateRunes("团队主管 @"+actor.Username+" 充值："+note, 500),
+		nil,
 	)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("可用积分不足，无法完成本次团队充值")
+	}
+	if errors.Is(err, repository.ErrCreditBalanceOverflow) {
+		return nil, BadAuthRequest("成员积分余额异常，无法完成本次充值")
+	}
+	if errors.Is(err, repository.ErrCreditTransferReplay) {
+		return nil, BadAuthRequest("该请求标识已用于另一笔团队充值")
+	}
+	if errors.Is(err, repository.ErrCreditTransferForbidden) {
+		return nil, Forbidden("团队或成员归属已变更，请刷新后重试")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &TeamCreditTransferResult{SenderAccount: result.SenderAccount, RecipientAccount: result.RecipientAccount, Replayed: result.Replayed}, nil
+}
+
+func (s *Service) AdminTeamCreditOverview(actor *model.User) (*AdminTeamCreditOverview, error) {
+	if err := s.RequirePrimaryAdmin(actor); err != nil {
+		return nil, err
+	}
+	if err := s.RequireFeature(FeatureCredits); err != nil {
+		return nil, err
+	}
+	users, err := s.repo.TeamCreditManagementUsers()
+	if err != nil {
+		return nil, err
+	}
+	userIDs := make([]string, 0, len(users))
+	departmentIDs := make(map[int64]struct{})
+	for _, user := range users {
+		userIDs = append(userIDs, user.ID)
+		if user.DeptID != nil {
+			departmentIDs[*user.DeptID] = struct{}{}
+		}
+	}
+	accounts, err := s.repo.CreditAccounts(userIDs)
+	if err != nil {
+		return nil, err
+	}
+	accountByUserID := make(map[string]model.CreditAccount, len(accounts))
+	for _, account := range accounts {
+		accountByUserID[account.UserID] = account
+	}
+	departmentByID := make(map[int64]*model.AigcDepartment, len(departmentIDs))
+	for departmentID := range departmentIDs {
+		department, departmentErr := s.repo.AigcDepartment(departmentID)
+		if errors.Is(departmentErr, gorm.ErrRecordNotFound) {
+			departmentByID[departmentID] = nil
+			continue
+		}
+		if departmentErr != nil {
+			return nil, departmentErr
+		}
+		departmentByID[departmentID] = department
+	}
+	membersByDepartment := make(map[int64][]AdminTeamCreditMember)
+	leads := make([]model.User, 0)
+	for _, user := range users {
+		if user.DeptID == nil {
+			continue
+		}
+		account := accountByUserID[user.ID]
+		if user.Role == model.UserRoleTeamMember {
+			membersByDepartment[*user.DeptID] = append(membersByDepartment[*user.DeptID], AdminTeamCreditMember{
+				ID: user.ID, Username: user.Username, DisplayName: user.DisplayName,
+				AvailableMicrocredits: account.AvailableMicrocredits, ReservedMicrocredits: account.ReservedMicrocredits,
+			})
+			continue
+		}
+		if user.Role == model.UserRoleTeamLead {
+			leads = append(leads, user)
+		}
+	}
+	result := make([]AdminTeamCreditLead, 0, len(leads))
+	for _, lead := range leads {
+		department := departmentByID[*lead.DeptID]
+		departmentName := "团队已删除"
+		departmentStatus := "已删除"
+		if department != nil {
+			departmentName = department.Name
+			departmentStatus = department.Status
+		}
+		account := accountByUserID[lead.ID]
+		members := membersByDepartment[*lead.DeptID]
+		result = append(result, AdminTeamCreditLead{
+			ID: lead.ID, Username: lead.Username, DisplayName: lead.DisplayName, DeptID: *lead.DeptID,
+			DepartmentName: departmentName, DepartmentStatus: departmentStatus,
+			AvailableMicrocredits: account.AvailableMicrocredits, ReservedMicrocredits: account.ReservedMicrocredits,
+			CanTransfer: departmentStatus == "启用" && len(members) > 0,
+			Members:     members,
+		})
+	}
+	return &AdminTeamCreditOverview{Leads: result}, nil
+}
+
+func (s *Service) AdminTransferTeamCredits(actor *model.User, req AdminTeamCreditTransferRequest) (*TeamCreditTransferResult, error) {
+	if err := s.RequirePrimaryAdmin(actor); err != nil {
+		return nil, err
+	}
+	if err := s.RequireFeature(FeatureCredits); err != nil {
+		return nil, err
+	}
+	senderID := strings.TrimSpace(req.SenderUserID)
+	recipientID := strings.TrimSpace(req.RecipientUserID)
+	if senderID == "" || recipientID == "" {
+		return nil, BadAuthRequest("请选择团队主管和团队成员")
+	}
+	if senderID == recipientID {
+		return nil, BadAuthRequest("团队主管和成员不能是同一账号")
+	}
+	if req.AmountMicrocredits <= 0 {
+		return nil, BadAuthRequest("充值积分必须大于 0")
+	}
+	note := strings.TrimSpace(req.Note)
+	if note == "" {
+		return nil, BadAuthRequest("请填写充值说明")
+	}
+	if utf8.RuneCountInString(note) > 240 {
+		return nil, BadAuthRequest("充值说明最多 240 个字符")
+	}
+	idempotencyKey, err := normalizeTeamCreditIdempotencyKey(req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	sender, err := s.repo.User(senderID)
+	if err != nil {
+		return nil, err
+	}
+	recipient, err := s.repo.User(recipientID)
+	if err != nil {
+		return nil, err
+	}
+	if sender.Status != model.UserStatusActive || sender.Role != model.UserRoleTeamLead || sender.DeptID == nil || recipient.Status != model.UserStatusActive || recipient.Role != model.UserRoleTeamMember || recipient.DeptID == nil || *sender.DeptID != *recipient.DeptID {
+		return nil, Forbidden("只能从启用团队主管账户划拨至其团队成员")
+	}
+	department, err := s.repo.AigcDepartment(*sender.DeptID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, Forbidden("团队不存在或已删除")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if department.Status != "启用" {
+		return nil, Forbidden("当前团队已停用")
+	}
+	referencePrefix := "admin-team-credit-transfer:" + actor.ID + ":" + idempotencyKey
+	metadata, err := json.Marshal(map[string]any{
+		"senderUserId": sender.ID, "recipientUserId": recipient.ID, "deptId": *sender.DeptID,
+		"amountMicrocredits": req.AmountMicrocredits, "note": note, "idempotencyKey": idempotencyKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	auditEvent := &model.AdminAuditEvent{
+		ID: newID(), ActorUserID: actor.ID, Action: "credits.team_transfer", TargetType: "team_credit_transfer", TargetID: referencePrefix,
+		Summary: "管理员代团队主管划拨积分", MetadataJSON: string(metadata), CreatedAt: time.Now(),
+	}
+	result, err := s.repo.TransferTeamCredits(
+		sender.ID,
+		recipient.ID,
+		*sender.DeptID,
+		req.AmountMicrocredits,
+		actor.ID,
+		referencePrefix,
+		truncateRunes("管理员 @"+actor.Username+" 代主管操作，向 @"+recipient.Username+" 充值："+note, 500),
+		truncateRunes("管理员 @"+actor.Username+" 代团队主管 @"+sender.Username+" 充值："+note, 500),
+		auditEvent,
+	)
+	if errors.Is(err, repository.ErrInsufficientCredits) {
+		return nil, BadAuthRequest("该团队主管可用积分不足，无法完成本次充值")
 	}
 	if errors.Is(err, repository.ErrCreditBalanceOverflow) {
 		return nil, BadAuthRequest("成员积分余额异常，无法完成本次充值")

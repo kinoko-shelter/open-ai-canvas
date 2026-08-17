@@ -202,9 +202,9 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	return count > 0, err
 }
 
-// TransferTeamCredits keeps both account changes and their matching ledgers in one transaction.
+// TransferTeamCredits keeps both account changes, matching ledgers, and an optional admin audit in one transaction.
 // The debit reference is inserted first, so a retry with the same request key cannot deduct twice.
-func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID string, deptID int64, amount int64, actorUserID string, referencePrefix string, senderNote string, recipientNote string) (*TeamCreditTransferResult, error) {
+func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID string, deptID int64, amount int64, actorUserID string, referencePrefix string, senderNote string, recipientNote string, auditEvent *model.AdminAuditEvent) (*TeamCreditTransferResult, error) {
 	result := &TeamCreditTransferResult{}
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		debitReference := referencePrefix + ":out"
@@ -240,12 +240,16 @@ func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID st
 			return nil
 		}
 
-		lockingTx := tx
-		if r.Dialect() == "postgres" {
-			lockingTx = lockingTx.Clauses(clause.Locking{Strength: "UPDATE"})
+		// GORM 会在同一查询对象上保留上一次的 Model；每个锁定查询从事务的新 session 开始，避免用户查询继承部门表。
+		lockingTx := func() *gorm.DB {
+			query := tx.Session(&gorm.Session{NewDB: true})
+			if r.Dialect() == "postgres" {
+				query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+			}
+			return query
 		}
 		var department model.AigcDepartment
-		if err := lockingTx.First(&department, "dept_id = ?", deptID).Error; err != nil {
+		if err := lockingTx().First(&department, "dept_id = ?", deptID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrCreditTransferForbidden
 			}
@@ -255,7 +259,7 @@ func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID st
 			return ErrCreditTransferForbidden
 		}
 		var participants []model.User
-		if err := lockingTx.
+		if err := lockingTx().
 			Select("id", "dept_id", "role", "status").
 			Where("id IN ?", []string{senderUserID, recipientUserID}).
 			Order("id asc").Find(&participants).Error; err != nil {
@@ -333,7 +337,13 @@ func (r *Repository) TransferTeamCredits(senderUserID string, recipientUserID st
 			ReservedAfterMicrocredits:  result.RecipientAccount.ReservedMicrocredits,
 			ActorUserID:                actorUserID, Note: recipientNote, ReferenceKey: &creditReference,
 		}
-		return tx.Create(&credit).Error
+		if err := tx.Create(&credit).Error; err != nil {
+			return err
+		}
+		if auditEvent != nil {
+			return tx.Create(auditEvent).Error
+		}
+		return nil
 	})
 	return result, err
 }
