@@ -3550,7 +3550,6 @@
 
     .aigc-projects-split {
         display: grid;
-        min-height: 520px;
         grid-template-columns: 1fr;
         border: 1px solid var(--border);
         border-radius: var(--r-lg);
@@ -3558,10 +3557,48 @@
         overflow: hidden;
     }
 
+    .aigc-projects-toolbar {
+        margin-top: var(--space-4);
+    }
+
     .aigc-projects-tree-panel {
+        display: flex;
         min-width: 0;
-        border-bottom: 1px solid var(--border);
-        padding: var(--space-3);
+        max-block-size: 30rem;
+        flex-direction: column;
+        background: color-mix(in srgb, var(--foreground) 2%, var(--surface));
+        overflow: hidden;
+        padding: var(--space-3) var(--space-2);
+    }
+
+    .aigc-projects-tree-heading {
+        display: flex;
+        min-height: var(--space-8);
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+        padding: 0 var(--space-2) var(--space-2);
+        color: color-mix(in srgb, var(--foreground) 58%, transparent);
+        font-size: var(--fs-label);
+        font-weight: 600;
+    }
+
+    .aigc-projects-tree-heading em {
+        border-radius: var(--r-full);
+        background: color-mix(in srgb, var(--foreground) 7%, transparent);
+        padding: 1px 7px;
+        color: color-mix(in srgb, var(--foreground) 48%, transparent);
+        font-size: var(--fs-micro);
+        font-style: normal;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .aigc-projects-tree-scroll {
+        min-height: 0;
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding-top: var(--space-2);
     }
 
     .aigc-projects-tree-root {
@@ -3577,6 +3614,28 @@
         color: var(--foreground);
         font-size: var(--fs-label);
         text-align: left;
+    }
+
+    .aigc-projects-tree-panel .ant-tree {
+        background: transparent;
+        color: var(--foreground);
+    }
+
+    .aigc-projects-tree-panel .ant-tree .ant-tree-treenode {
+        min-height: var(--space-8);
+        align-items: center;
+    }
+
+    .aigc-projects-tree-panel .ant-tree .ant-tree-node-content-wrapper {
+        min-height: var(--space-8);
+        min-width: 0;
+        border-radius: var(--r-md);
+        padding-inline: var(--space-2);
+    }
+
+    .aigc-projects-tree-panel .ant-tree .ant-tree-node-content-wrapper:hover,
+    .aigc-projects-tree-panel .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+        background: var(--surface-hover);
     }
 
     .aigc-projects-tree-root:hover,
@@ -3611,6 +3670,9 @@
     }
 
     .aigc-projects-table-panel {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
         margin: 0;
         border: 0;
         border-radius: 0;
@@ -3618,11 +3680,24 @@
 
     .aigc-projects-table-heading {
         display: flex;
-        min-height: 44px;
+        min-height: var(--space-12);
         align-items: center;
-        gap: var(--space-2);
+        justify-content: space-between;
         border-bottom: 1px solid var(--border);
-        padding: 0 var(--space-4);
+        padding: var(--space-2) var(--space-4);
+    }
+
+    .aigc-projects-table-heading-copy {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: var(--space-half);
+    }
+
+    .aigc-projects-table-heading-copy > span {
+        color: color-mix(in srgb, var(--foreground) 46%, transparent);
+        font-size: var(--fs-micro);
+        font-weight: 560;
     }
 
     .aigc-projects-table-heading strong {
@@ -3634,10 +3709,47 @@
         font-weight: 620;
     }
 
-    .aigc-projects-table-heading span {
+    .aigc-projects-table-count {
         flex: 0 0 auto;
         color: color-mix(in srgb, var(--foreground) 48%, transparent);
         font-size: var(--fs-label);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .aigc-projects-table-panel .ant-table {
+        background: transparent;
+    }
+
+    .aigc-projects-table-panel .ant-table-tbody > tr > td {
+        vertical-align: middle;
+    }
+
+    .aigc-projects-team-cell {
+        display: inline-flex;
+        min-width: 0;
+        align-items: baseline;
+        gap: var(--space-1-half);
+        white-space: nowrap;
+    }
+
+    .aigc-projects-team-cell > span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .aigc-projects-team-cell small {
+        flex: 0 0 auto;
+        color: color-mix(in srgb, var(--foreground) 44%, transparent);
+        font-size: var(--fs-micro);
+    }
+
+    .aigc-projects-edit-button {
+        color: color-mix(in srgb, var(--foreground) 62%, transparent);
+    }
+
+    .aigc-projects-edit-button:not(:disabled):hover {
+        background: var(--surface-hover);
+        color: var(--foreground);
     }
 
     @media (min-width: 1024px) {
@@ -3647,7 +3759,13 @@
 
         .aigc-projects-tree-panel {
             border-right: 1px solid var(--border);
-            border-bottom: 0;
+        }
+    }
+
+    @media (max-width: 1023px) {
+        .aigc-projects-tree-panel {
+            max-block-size: 20rem;
+            border-bottom: 1px solid var(--border);
         }
     }
 

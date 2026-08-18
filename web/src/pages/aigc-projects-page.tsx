@@ -1,10 +1,10 @@
-import { App, Button, Drawer, Form, Input, Select, Table, Tree } from "antd";
+import { App, Button, Drawer, Form, Grid, Input, Select, Table, Tooltip, Tree } from "antd";
 import type { DataNode } from "antd/es/tree";
 import { FolderTree, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { ListToolbar, PaginationBar, TableSurface, WorkspacePage } from "@/components/layout/workspace-page";
-import { AdminRowActions, AdminTableEmpty, AdminTableSkeleton } from "@/pages/admin/components/admin-ui";
+import { ListToolbar, PageHeader, PaginationBar, TableSurface, WorkspacePage } from "@/components/layout/workspace-page";
+import { AdminTableEmpty, AdminTableSkeleton } from "@/pages/admin/components/admin-ui";
 import { aigcProjectLevelLabel, createAigcProject, listAigcDepartments, listAigcProjects, updateAigcProject, type AigcDepartment, type AigcProject, type AigcProjectInput } from "@/services/api/aigc";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -14,6 +14,7 @@ type ProjectTreeKey = typeof ALL_PROJECTS_KEY | number;
 export default function AigcProjectsPage() {
     const user = useUserStore((state) => state.user);
     const { message } = App.useApp();
+    const screens = Grid.useBreakpoint();
     const [projects, setProjects] = useState<AigcProject[]>([]);
     const [treeProjects, setTreeProjects] = useState<AigcProject[]>([]);
     const [departments, setDepartments] = useState<AigcDepartment[]>([]);
@@ -64,6 +65,7 @@ export default function AigcProjectsPage() {
     const selectedTitle = selectedProjectId === ALL_PROJECTS_KEY ? "全部项目" : selectedProject?.projectName || "当前项目";
     const isAdmin = user?.role === "admin";
     const canAddSecondProject = isAdmin || user?.role === "team_lead";
+    const needsCompactTable = !screens.xl;
 
     useEffect(() => {
         setExpandedKeys(parents.map((item) => item.projectId));
@@ -101,32 +103,36 @@ export default function AigcProjectsPage() {
 
     const renderAddActions = () => <div className="flex flex-wrap items-center gap-2">{isAdmin ? <Button icon={<Plus className="size-4" />} onClick={() => openDrawer(undefined, 1)}>添加一级项目</Button> : null}{canAddSecondProject ? <Button type="primary" icon={<Plus className="size-4" />} disabled={!parents.length} onClick={() => openDrawer(undefined, 2)}>添加二级项目</Button> : null}</div>;
 
-    return <WorkspacePage><div className="w-full pb-5"><header className="flex min-h-14 flex-col gap-3 border-b border-border/75 pb-3 sm:flex-row sm:items-center sm:justify-between"><div><h1 className="text-xl font-semibold leading-7">项目管理</h1><p className="mt-0.5 text-xs leading-5 text-foreground/52">维护运营项目及一级、二级项目层级</p></div>{renderAddActions()}</header>
-        <ListToolbar active={Boolean(keyword || status !== "all" || selectedProjectId !== ALL_PROJECTS_KEY)} onReset={() => { setKeyword(""); setStatus("all"); setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
+    return <WorkspacePage><div className="aigc-projects-page w-full pb-5">
+        <PageHeader title="项目管理" description="维护运营项目及一级、二级项目层级" actions={renderAddActions()} />
+        <ListToolbar className="aigc-projects-toolbar" active={Boolean(keyword || status !== "all" || selectedProjectId !== ALL_PROJECTS_KEY)} onReset={() => { setKeyword(""); setStatus("all"); setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
             <Input className="app-list-search" allowClear prefix={<Search className="size-4 text-foreground/40" />} value={keyword} placeholder="搜索项目名称" onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => { setPage(1); void reload(1); }} />
             <Select className="w-28" value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={[{ label: "全部状态", value: "all" }, { label: "启用", value: "启用" }, { label: "禁用", value: "禁用" }]} />
             <Button onClick={() => { setPage(1); void reload(1); }}>筛选</Button>
         </ListToolbar>
         <div className="aigc-projects-split">
             <aside className="aigc-projects-tree-panel">
-                <button type="button" className={selectedProjectId === ALL_PROJECTS_KEY ? "aigc-projects-tree-root is-active" : "aigc-projects-tree-root"} onClick={() => { setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
-                    <FolderTree className="size-4" />
-                    <span>全部项目</span>
-                    <em>{treeProjects.filter((item) => item.level === 2).length}</em>
-                </button>
-                <Tree blockNode autoExpandParent expandedKeys={expandedKeys} selectedKeys={[selectedProjectId]} treeData={treeData} onExpand={(keys) => setExpandedKeys(keys as number[])} onSelect={(keys) => { setSelectedProjectId((keys[0] || ALL_PROJECTS_KEY) as ProjectTreeKey); setPage(1); }} />
+                <div className="aigc-projects-tree-heading"><span>项目目录</span><em>{treeProjects.length}</em></div>
+                <div className="aigc-projects-tree-scroll">
+                    <button type="button" className={selectedProjectId === ALL_PROJECTS_KEY ? "aigc-projects-tree-root is-active" : "aigc-projects-tree-root"} onClick={() => { setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
+                        <FolderTree className="size-4" />
+                        <span>全部项目</span>
+                        <em>{treeProjects.filter((item) => item.level === 2).length}</em>
+                    </button>
+                    <Tree blockNode autoExpandParent expandedKeys={expandedKeys} selectedKeys={[selectedProjectId]} treeData={treeData} onExpand={(keys) => setExpandedKeys(keys as number[])} onSelect={(keys) => { setSelectedProjectId((keys[0] || ALL_PROJECTS_KEY) as ProjectTreeKey); setPage(1); }} />
+                </div>
             </aside>
             <TableSurface className="aigc-projects-table-panel">
-                <div className="aigc-projects-table-heading"><strong>{selectedTitle}</strong><span>{selectedProjectId === ALL_PROJECTS_KEY ? "全部二级项目" : "当前项目及子项目"}</span></div>
-                {loading && projects.length === 0 ? <AdminTableSkeleton rows={8} columns={8} /> : <><Table className="app-data-table" rowKey="projectId" loading={loading} pagination={false} scroll={{ x: 1040 }} columns={[
-                    { title: "ID", dataIndex: "projectId", width: 90 },
-                    { title: "项目名称", dataIndex: "projectName", render: (_, item) => <ProjectNameCell project={item} /> },
-                    { title: "类型", dataIndex: "projectType", width: 130 },
-                    { title: "级别", dataIndex: "level", width: 90, render: aigcProjectLevelLabel },
+                <div className="aigc-projects-table-heading"><div className="aigc-projects-table-heading-copy"><span>项目范围</span><strong>{selectedTitle}</strong></div><span className="aigc-projects-table-count">{total} 个项目</span></div>
+                {loading && projects.length === 0 ? <AdminTableSkeleton rows={8} columns={8} /> : <><Table className="app-data-table" size="middle" rowKey="projectId" loading={loading} pagination={false} scroll={needsCompactTable ? { x: 980 } : undefined} columns={[
+                    { title: "ID", dataIndex: "projectId", width: 68 },
+                    { title: "项目名称", dataIndex: "projectName", width: 260, render: (_, item) => <ProjectNameCell project={item} /> },
+                    { title: "类型", dataIndex: "projectType", width: 100 },
+                    { title: "级别", dataIndex: "level", width: 80, render: aigcProjectLevelLabel },
                     { title: "上级项目", dataIndex: "parentId", width: 150, render: (value) => value ? parentNames.get(value) || "--" : "--" },
-                    { title: "团队", dataIndex: "deptId", width: 150, render: (value) => value ? <div><div>{departmentNames.get(value) || "未知团队"}</div><div className="text-xs text-foreground/45">ID: {value}</div></div> : "全局" },
-                    { title: "状态", dataIndex: "status", width: 90 },
-                    { title: "操作", width: 120, fixed: "right", align: "right", render: (_, item) => <AdminRowActions primary={{ label: "编辑项目", icon: <Pencil className="size-3.5" />, disabled: item.level === 1 && !isAdmin, onClick: () => openDrawer(item) }} actions={[]} /> },
+                    { title: "团队", dataIndex: "deptId", width: 160, render: (value) => <ProjectTeamCell deptId={value} name={value ? departmentNames.get(value) : undefined} /> },
+                    { title: "状态", dataIndex: "status", width: 80 },
+                    { title: "操作", width: 72, fixed: needsCompactTable ? "right" : undefined, align: "center", render: (_, item) => <ProjectEditButton project={item} isAdmin={isAdmin} onEdit={openDrawer} /> },
                 ]} dataSource={projects} locale={{ emptyText: <AdminTableEmpty title="当前范围没有项目" description="选择左侧项目查看当前项目及其子项目。" action={renderAddActions()} /> }} /><PaginationBar current={page} pageSize={20} total={total} onChange={(next) => setPage(next)} /></>}
             </TableSurface>
         </div>
@@ -208,4 +214,20 @@ function ProjectTreeTitle({ project, childCount, onEdit }: { project: AigcProjec
 
 function ProjectNameCell({ project }: { project: AigcProject }) {
     return <div className="font-medium">{project.projectName}</div>;
+}
+
+function ProjectTeamCell({ deptId, name }: { deptId?: number; name?: string }) {
+    if (!deptId) return <span className="text-foreground/60">全局</span>;
+    return <span className="aigc-projects-team-cell"><span>{name || "未知团队"}</span><small>ID {deptId}</small></span>;
+}
+
+function ProjectEditButton({ project, isAdmin, onEdit }: { project: AigcProject; isAdmin: boolean; onEdit: (project: AigcProject) => void }) {
+    const disabled = project.level === 1 && !isAdmin;
+    return (
+        <Tooltip title={disabled ? "一级项目仅管理员可编辑" : "编辑项目"}>
+            <span className="inline-flex">
+                <Button className="aigc-projects-edit-button" type="text" size="small" icon={<Pencil className="size-4" />} disabled={disabled} aria-label={`编辑项目 ${project.projectName}`} onClick={() => onEdit(project)} />
+            </span>
+        </Tooltip>
+    );
 }
