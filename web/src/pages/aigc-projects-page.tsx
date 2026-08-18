@@ -34,11 +34,10 @@ export default function AigcProjectsPage() {
     const reload = async (nextPage = page) => {
         setLoading(true);
         try {
-            const departmentPromise = user?.role === "admin" ? listAigcDepartments() : Promise.resolve({ departments: [] as AigcDepartment[] });
             const [result, allProjects, departmentResult] = await Promise.all([
                 listAigcProjects({ keyword: keyword || undefined, status: status === "all" ? undefined : status, level: "2", page: nextPage, limit: 20 }),
                 listAllAigcProjects(),
-                departmentPromise,
+                listAigcDepartments(),
             ]);
             if (selectedProjectId === ALL_PROJECTS_KEY) {
                 setProjects(result.projects);
@@ -127,7 +126,7 @@ export default function AigcProjectsPage() {
                     { title: "上级项目", dataIndex: "parentId", width: 150, render: (value) => value ? parentNames.get(value) || "--" : "--" },
                     { title: "团队", dataIndex: "deptId", width: 150, render: (value) => value ? <div><div>{departmentNames.get(value) || "未知团队"}</div><div className="text-xs text-foreground/45">ID: {value}</div></div> : "全局" },
                     { title: "状态", dataIndex: "status", width: 90 },
-                    { title: "操作", width: 120, fixed: "right", align: "right", render: (_, item) => <AdminRowActions actions={[{ key: "edit", label: "编辑项目", icon: <Pencil className="size-3.5" />, disabled: item.level === 1 && !isAdmin, onClick: () => openDrawer(item) }]} /> },
+                    { title: "操作", width: 120, fixed: "right", align: "right", render: (_, item) => <AdminRowActions primary={{ label: "编辑项目", icon: <Pencil className="size-3.5" />, disabled: item.level === 1 && !isAdmin, onClick: () => openDrawer(item) }} actions={[]} /> },
                 ]} dataSource={projects} locale={{ emptyText: <AdminTableEmpty title="当前范围没有项目" description="选择左侧项目查看当前项目及其子项目。" action={renderAddActions()} /> }} /><PaginationBar current={page} pageSize={20} total={total} onChange={(next) => setPage(next)} /></>}
             </TableSurface>
         </div>

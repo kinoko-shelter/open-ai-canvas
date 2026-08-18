@@ -52,8 +52,21 @@ func (s *Service) RequireAigcProjectManager(user *model.User) error {
 }
 
 func (s *Service) AigcDepartments(actor *model.User, keyword string) ([]model.AigcDepartment, error) {
-	if err := s.RequireAdmin(actor); err != nil {
+	if err := s.RequireAigcProjectManager(actor); err != nil {
 		return nil, err
+	}
+	if actor.Role == model.UserRoleTeamLead {
+		if actor.DeptID == nil {
+			return nil, Forbidden("团队主管未设置团队")
+		}
+		department, err := s.repo.AigcDepartment(*actor.DeptID)
+		if err != nil {
+			return nil, err
+		}
+		if value := strings.ToLower(strings.TrimSpace(keyword)); value != "" && !strings.Contains(strings.ToLower(department.Name), value) {
+			return []model.AigcDepartment{}, nil
+		}
+		return []model.AigcDepartment{*department}, nil
 	}
 	return s.repo.AigcDepartments(keyword)
 }
