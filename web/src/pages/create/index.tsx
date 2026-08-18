@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
 import localforage from "localforage";
 import { App, Drawer, Modal, Popover, Spin, Tooltip } from "antd";
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, FolderTree, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
 import { Link } from "react-router";
 
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
@@ -20,18 +20,20 @@ import { resolveCompatibleModel, type ModelRequirements } from "@/lib/model-sele
 import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch } from "@/services/api/generation-task";
 import { collectGenerationTaskMedia, persistGenerationImageResult, persistGenerationVideoResult } from "@/services/generation-media-collection";
 import { requestImageQuestion } from "@/services/api/image";
+import { listAvailableAigcProjects, type AigcProject } from "@/services/api/aigc";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { modelDisplayName, modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { buildCreationMentionReferences, creationReferenceMetadata, displayCreationPrompt, expandCreationPrompt, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationImageAsset, creationVideoAsset, type CreationAttachment } from "./creation-assets";
 
 type CreationMode = "text" | "image" | "video";
 type CreationStatus = "streaming" | "pending" | "done" | "error" | "cancelled";
-type CreationSettings = { ratio: string; seconds: string; quality: string; videoQuality: string; count: string };
+type CreationSettings = { ratio: string; seconds: string; quality: string; videoQuality: string; count: string; aigcProjectId?: number; aigcProjectName?: string };
 type CreationMessage = {
     id: string;
     role: "user" | "assistant";
@@ -51,6 +53,7 @@ type CreationMessage = {
 type CreationConversation = { id: string; title: string; updatedAt: string; messages: CreationMessage[] };
 
 const STORAGE_KEY = "creation-conversations-v1";
+const LAST_AIGC_PROJECT_STORAGE_KEY = "creation-last-aigc-project-id-v1";
 const modeLabels: Record<CreationMode, string> = { text: "文本", image: "图片", video: "视频" };
 const shotScriptLabels: Record<CreationMode, string> = { text: "创作思路", image: "画面指令", video: "镜头脚本" };
 const ratioOptions = [
@@ -83,6 +86,26 @@ function newMessage(role: CreationMessage["role"], content: string, extra: Parti
     return { id: createClientId(), role, content, createdAt: new Date().toISOString(), ...extra };
 }
 
+function readLastAigcProjectId(storageKey: string) {
+    if (typeof window === "undefined") return undefined;
+    try {
+        const value = Number(window.localStorage.getItem(storageKey));
+        return Number.isFinite(value) && value > 0 ? value : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function writeLastAigcProjectId(storageKey: string, value?: number) {
+    if (typeof window === "undefined") return;
+    try {
+        if (value) window.localStorage.setItem(storageKey, String(value));
+        else window.localStorage.removeItem(storageKey);
+    } catch {
+        // 本地偏好保存失败不影响生成主流程。
+    }
+}
+
 type CreationShot = { user?: CreationMessage; result?: CreationMessage };
 
 function shotsFromMessages(messages: CreationMessage[]): CreationShot[] {
@@ -104,6 +127,8 @@ export default function CreatePage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
+    const userDeptId = useUserStore((state) => state.user?.deptId);
+    const userRole = useUserStore((state) => state.user?.role);
     const [conversations, setConversations] = useState<CreationConversation[]>([]);
     const [activeId, setActiveId] = useState("");
     const [hydrated, setHydrated] = useState(false);
@@ -112,6 +137,10 @@ export default function CreatePage() {
     const [attachments, setAttachments] = useState<CreationAttachment[]>([]);
     const [draftReferences, setDraftReferences] = useState<CreationReference[]>([]);
     const [addedSkills, setAddedSkills] = useState<Skill[]>([]);
+    const [availableAigcProjects, setAvailableAigcProjects] = useState<AigcProject[]>([]);
+    const [aigcProjectsLoading, setAigcProjectsLoading] = useState(false);
+    const [aigcProjectLoadError, setAigcProjectLoadError] = useState("");
+    const [selectedAigcProjectId, setSelectedAigcProjectId] = useState<number | undefined>();
     const [ratio, setRatio] = useState("16:9");
     const [seconds, setSeconds] = useState("6");
     const [quality, setQuality] = useState("auto");
@@ -137,6 +166,7 @@ export default function CreatePage() {
     const activeIdRef = useRef("");
     // 身份切换会在离开页面前切换全局 scope；当前会话必须始终写回挂载时所属用户。
     const creationStorageKeyRef = useRef(scopedStorageKey(STORAGE_KEY));
+    const lastAigcProjectStorageKeyRef = useRef(scopedStorageKey(LAST_AIGC_PROJECT_STORAGE_KEY));
 
     const activeConversation = useMemo(() => conversations.find((item) => item.id === activeId) || conversations[0], [activeId, conversations]);
     const historyConversations = useMemo(
@@ -168,6 +198,7 @@ export default function CreatePage() {
     const recoverableErrorTaskIds = useMemo(() => recoverableCreationErrorTaskIds(conversations), [conversations]);
     const shots = useMemo(() => shotsFromMessages(activeConversation?.messages || []), [activeConversation]);
     const visibleShotIndex = shots.length ? selectedShotIndex >= 0 && selectedShotIndex < shots.length ? selectedShotIndex : shots.length - 1 : -1;
+    const selectedAigcProject = useMemo(() => availableAigcProjects.find((item) => item.projectId === selectedAigcProjectId), [availableAigcProjects, selectedAigcProjectId]);
 
     useEffect(() => {
         if (mode !== "image") return;
@@ -316,6 +347,37 @@ export default function CreatePage() {
     }, []);
 
     useEffect(() => {
+        let cancelled = false;
+        setAigcProjectsLoading(true);
+        setAigcProjectLoadError("");
+        listAvailableAigcProjects().then(({ projects }) => {
+            if (cancelled) return;
+            const isAdmin = userRole === "admin";
+            const availableProjects = projects.filter((project) => project.level === 2 && (isAdmin || (project.status === "启用" && (!userDeptId || project.deptId === userDeptId))));
+            const selectableProjects = availableProjects.filter((project) => project.status === "启用");
+            setAvailableAigcProjects(availableProjects);
+            const lastProjectId = readLastAigcProjectId(lastAigcProjectStorageKeyRef.current);
+            setSelectedAigcProjectId((current) => {
+                if (current && selectableProjects.some((project) => project.projectId === current)) return current;
+                if (lastProjectId && selectableProjects.some((project) => project.projectId === lastProjectId)) return lastProjectId;
+                if (lastProjectId) writeLastAigcProjectId(lastAigcProjectStorageKeyRef.current, undefined);
+                return undefined;
+            });
+        }).catch((error) => {
+            if (cancelled) return;
+            console.warn("可用项目读取失败", error);
+            setAvailableAigcProjects([]);
+            setSelectedAigcProjectId(undefined);
+            setAigcProjectLoadError(error instanceof Error ? error.message : "项目列表读取失败");
+        }).finally(() => {
+            if (!cancelled) setAigcProjectsLoading(false);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [userDeptId, userRole]);
+
+    useEffect(() => {
         if (!followLatestMessageRef.current) return;
         const frame = window.requestAnimationFrame(() => {
             const container = threadScrollRef.current;
@@ -453,6 +515,11 @@ export default function CreatePage() {
         if (reference) setPrompt((current) => removeCreationReferenceTokens(current, [reference]));
     };
 
+    const changeAigcProject = (value?: number) => {
+        setSelectedAigcProjectId(value);
+        writeLastAigcProjectId(lastAigcProjectStorageKeyRef.current, value);
+    };
+
     const submit = async () => {
         const text = prompt.trim();
         if (!text || busy || !activeConversation) return;
@@ -468,7 +535,16 @@ export default function CreatePage() {
             toast.error("当前模型不支持所选视频时长，请重新选择");
             return;
         }
-        const settings = { ratio, seconds, quality, videoQuality, count };
+        const taskAigcProject = selectedAigcProject;
+        const aigcProjectMetadata = taskAigcProject ? {
+            aigcProjectId: taskAigcProject.projectId,
+            aigcProjectName: taskAigcProject.projectName,
+            aigcProjectDeptId: taskAigcProject.deptId,
+            aigcProjectParentId: taskAigcProject.parentId,
+            aigcProjectFirstCategoryId: taskAigcProject.firstCategoryId,
+            aigcProjectFirstCategoryName: taskAigcProject.firstCategoryName,
+        } : {};
+        const settings = { ratio, seconds, quality, videoQuality, count, ...(taskAigcProject ? { aigcProjectId: taskAigcProject.projectId, aigcProjectName: taskAigcProject.projectName } : {}) };
         const references = selectedCreationReferences(text, mentionReferences);
         // 后端对图片和视频使用不同的参考字段；这里先拆分，避免媒体类型在写入任务时被误判。
         const referenceImages = attachments.filter(isImageAttachment);
@@ -512,16 +588,19 @@ export default function CreatePage() {
                 await requestImageQuestion(requestConfig, history, (text) => updateAssistant(assistantMessage.id, (item) => ({ ...item, content: text })), {
                     signal: controller.signal,
                     onReasoning: (reasoning) => updateAssistant(assistantMessage.id, (item) => ({ ...item, reasoning })),
+                    scene: "text",
+                    aigcProjectId: taskAigcProject?.projectId,
                 });
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runBackendGenerationTaskBatch({
                     mode: "image",
+                    aigcProjectId: taskAigcProject?.projectId,
                     prompt: expandedPrompt,
                     config: { ...requestConfig, count: "1" },
                     referenceImages,
                     signal: controller.signal,
-                    metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, ...referenceMetadata },
+                    metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, ...aigcProjectMetadata, ...referenceMetadata },
                     onTaskUpdate: bindTask,
                     count: taskCount,
                 });
@@ -552,12 +631,13 @@ export default function CreatePage() {
             } else {
                 const result = await runBackendGenerationTask({
                     mode: "video",
+                    aigcProjectId: taskAigcProject?.projectId,
                     prompt: expandedPrompt,
                     config: requestConfig,
                     referenceImages,
                     referenceVideos,
                     signal: controller.signal,
-                    metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, videoEditOperation: attachments.length ? "image_to_video" : "text_to_video", ...referenceMetadata },
+                    metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, videoEditOperation: attachments.length ? "image_to_video" : "text_to_video", ...aigcProjectMetadata, ...referenceMetadata },
                     onTaskUpdate: bindTask,
                 });
                 if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
@@ -655,6 +735,7 @@ export default function CreatePage() {
         setQuality(nextSettings.quality);
         setVideoQuality(nextSettings.videoQuality);
         setCount(nextSettings.count);
+        if (nextSettings.aigcProjectId && availableAigcProjects.some((project) => project.projectId === nextSettings.aigcProjectId && project.status === "启用")) changeAigcProject(nextSettings.aigcProjectId);
     };
 
     const retryFailedMessage = (item: CreationMessage, index: number) => {
@@ -723,6 +804,11 @@ export default function CreatePage() {
         setRatio,
         seconds,
         setSeconds,
+        aigcProjects: availableAigcProjects,
+        aigcProjectsLoading,
+        aigcProjectLoadError,
+        selectedAigcProjectId,
+        onAigcProjectChange: changeAigcProject,
         quality,
         setQuality,
         videoQuality,
@@ -881,6 +967,11 @@ type ComposerProps = {
     setRatio: (value: string) => void;
     seconds: string;
     setSeconds: (value: string) => void;
+    aigcProjects: AigcProject[];
+    aigcProjectsLoading: boolean;
+    aigcProjectLoadError: string;
+    selectedAigcProjectId?: number;
+    onAigcProjectChange: (value?: number) => void;
     quality: string;
     setQuality: (value: string) => void;
     videoQuality: string;
@@ -930,6 +1021,7 @@ function CreationComposer(props: ComposerProps) {
                 <ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} showSelectedPrice={false} variant="creation" />
                 {props.mode === "video" || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
                 {props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
+                <AigcProjectMenu projects={props.aigcProjects} loading={props.aigcProjectsLoading} error={props.aigcProjectLoadError} selectedProjectId={props.selectedAigcProjectId} disabled={props.busy} onChange={props.onAigcProjectChange} />
             </div>
             {props.busy ? <button type="button" className="creation-chat-submit is-stopping" onClick={props.onStop} aria-label="停止生成"><Square className="size-3.5 fill-current" /></button> : <button type="button" className="creation-chat-submit" disabled={!canSubmit} onClick={props.onSubmit} aria-label="发送"><ArrowUp className="size-4" /></button>}
         </footer>
@@ -995,6 +1087,40 @@ function DurationMenu({ profile, seconds, onChange }: { profile: VideoCapability
     </> : <div className="creation-duration-choices">{presets.map((item) => <button key={item} type="button" className={item === value ? "is-selected" : ""} onClick={() => onChange(String(item))}>{item}s</button>)}</div>;
     return <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottom" arrow={false} classNames={{ root: "creation-control-popover", container: "creation-control-popover-surface", content: "creation-control-popover-content" }} content={<div className="creation-duration-menu"><div className="creation-duration-heading"><span>时长</span><strong>{value} 秒</strong></div>{durationControl}</div>}>
         <button type="button" className="creation-chat-control is-duration" aria-label={`视频时长：${value}秒`}><Clock3 /><span>{value}s</span><ChevronDown className={open ? "is-open" : ""} /></button>
+    </Popover>;
+}
+
+function AigcProjectMenu({ projects, selectedProjectId, loading, error, disabled, onChange }: { projects: AigcProject[]; selectedProjectId?: number; loading: boolean; error: string; disabled: boolean; onChange: (value?: number) => void }) {
+    const [open, setOpen] = useState(false);
+    const selected = projects.find((project) => project.projectId === selectedProjectId);
+    const hasSelectableProject = projects.some((project) => project.status === "启用");
+    const label = loading ? "项目..." : selected?.projectName || "不选择项目";
+    const menu = <div className="creation-project-menu">
+        <div className="creation-project-heading"><span>二级项目</span>{projects.length ? <strong>{projects.length} 个</strong> : null}</div>
+        {loading ? <div className="creation-project-empty">正在读取项目</div> : error ? <div className="creation-project-empty">{error}</div> : projects.length ? <div className="creation-project-options" role="listbox" aria-label="选择二级项目">
+            <button type="button" role="option" aria-selected={!selectedProjectId} className={!selectedProjectId ? "is-selected" : ""} onClick={() => { onChange(undefined); setOpen(false); }}>
+                <span>不选择项目</span>
+                <small>生成记录不绑定运营项目</small>
+                {!selectedProjectId ? <Check /> : null}
+            </button>
+            {projects.map((project) => {
+                const projectDisabled = project.status !== "启用";
+                return <button key={project.projectId} type="button" role="option" aria-selected={project.projectId === selectedProjectId} className={`${project.projectId === selectedProjectId ? "is-selected" : ""}${projectDisabled ? " is-disabled" : ""}`} disabled={projectDisabled} onClick={() => { onChange(project.projectId); setOpen(false); }}>
+                    <span>{project.projectName}</span>
+                    <small>{project.status === "启用" ? `ID ${project.projectId}` : "禁用"}</small>
+                    {project.projectId === selectedProjectId ? <Check /> : null}
+                </button>;
+            })}
+        </div> : <div className="creation-project-options" role="listbox" aria-label="选择二级项目">
+            <button type="button" role="option" aria-selected className="is-selected" onClick={() => { onChange(undefined); setOpen(false); }}>
+                <span>不选择项目</span>
+                <small>{hasSelectableProject ? "生成记录不绑定运营项目" : "暂无可用二级项目"}</small>
+                <Check />
+            </button>
+        </div>}
+    </div>;
+    return <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottom" arrow={false} classNames={{ root: "creation-control-popover", container: "creation-control-popover-surface", content: "creation-control-popover-content" }} content={menu}>
+        <button type="button" className="creation-chat-control is-project" disabled={disabled} aria-label={`二级项目：${label}`}><FolderTree /><span>{label}</span><ChevronDown className={open ? "is-open" : ""} /></button>
     </Popover>;
 }
 

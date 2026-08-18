@@ -51,6 +51,10 @@ export function listAigcProjects(params: { keyword?: string; status?: string; le
     return request<{ projects: AigcProject[]; total: number; page: number; limit: number }>(api.get("/aigc/projects", { params }));
 }
 
+export function listAvailableAigcProjects() {
+    return request<{ projects: AigcProject[] }>(api.get("/aigc/projects/available"));
+}
+
 export function createAigcProject(input: AigcProjectInput) {
     return request<{ project: AigcProject }>(api.post("/aigc/projects", input));
 }

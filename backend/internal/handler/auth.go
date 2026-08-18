@@ -867,7 +867,12 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	defer releaseChannel()
 	if c.Request.Method == http.MethodPost {
-		order, err := svc.ReserveProxyBillingWithBody(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body), body)
+		aigcProjectID, err := systemProxyAigcProjectID(c, svc, user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		order, err := svc.ReserveProxyBillingWithBody(user.ID, channel.ID, strings.TrimPrefix(modelName, "models/"), capability, c.GetHeader("X-Canvas-Scene"), aigcProjectID, c.GetHeader("X-Idempotency-Key"), proxyRequestVideoSeconds(c.GetHeader("Content-Type"), body), body)
 		if err != nil {
 			failService(c, err)
 			return
@@ -952,6 +957,18 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+}
+
+func systemProxyAigcProjectID(c *gin.Context, svc *service.Service, userID string) (*int64, error) {
+	value := strings.TrimSpace(c.GetHeader("X-Canvas-Aigc-Project-ID"))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return nil, service.BadAuthRequest("运营项目 ID 无效")
+	}
+	return svc.ValidateAigcProjectForUser(userID, &parsed)
 }
 
 func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID string, capability string, protocol model.ChannelInterfaceType, method string, path string, target string, body []byte, contentType string, status model.ApiCallStatus, statusCode int, duration time.Duration, errorText string, concurrencyLimit int) model.ApiCallLog {

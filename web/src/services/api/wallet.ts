@@ -19,6 +19,7 @@ export type CreditLedgerEntry = {
     availableAfterMicrocredits: number;
     reservedAfterMicrocredits: number;
     billingOrderId?: string;
+    aigcProjectId?: number;
     model?: string;
     channelId?: string;
     scene?: string;
@@ -182,6 +183,7 @@ export type BillingOrder = {
     id: string;
     userId: string;
     taskId?: string;
+    aigcProjectId?: number;
     channelId: string;
     model: string;
     capability: string;

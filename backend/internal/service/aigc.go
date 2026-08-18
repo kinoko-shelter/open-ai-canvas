@@ -163,6 +163,22 @@ func (s *Service) AigcProjects(actor *model.User, query AdminListQuery, level st
 	return &AigcProjectPage{Projects: projects, Total: total, Page: page, Limit: limit}, nil
 }
 
+func (s *Service) AvailableAigcSecondLevelProjects(actor *model.User) ([]model.AigcProject, error) {
+	if actor == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	if actor.Status != model.UserStatusActive {
+		return nil, Forbidden("当前账号已停用")
+	}
+	if actor.Role == model.UserRoleAdmin {
+		return s.repo.AigcSecondLevelProjects()
+	}
+	if actor.DeptID == nil {
+		return []model.AigcProject{}, nil
+	}
+	return s.repo.AigcSecondLevelProjectsByDept(*actor.DeptID)
+}
+
 func (s *Service) CreateAigcProject(actor *model.User, req AigcProjectRequest) (*model.AigcProject, error) {
 	if err := s.RequireAigcProjectManager(actor); err != nil {
 		return nil, err
@@ -247,6 +263,47 @@ func (s *Service) DeleteAigcProject(actor *model.User, id string) error {
 		return err
 	}
 	return BadAuthRequest("项目不支持删除，请改为禁用")
+}
+
+func (s *Service) validateTaskAigcProject(userID string, id *int64) (*int64, error) {
+	if id == nil || *id == 0 {
+		return nil, nil
+	}
+	if *id < 0 {
+		return nil, BadAuthRequest("运营项目 ID 无效")
+	}
+	user, err := s.repo.User(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.Status != model.UserStatusActive {
+		return nil, Forbidden("当前账号已停用")
+	}
+	project, err := s.repo.AigcProject(*id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, BadAuthRequest("所选运营项目不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if project.Status != "启用" {
+		return nil, BadAuthRequest("所选运营项目已禁用")
+	}
+	if project.Level != 2 {
+		return nil, BadAuthRequest("请选择二级运营项目")
+	}
+	if user.Role != model.UserRoleAdmin {
+		if user.DeptID == nil || project.DeptID != *user.DeptID {
+			return nil, Forbidden("无权使用所选运营项目")
+		}
+	}
+	value := *id
+	return &value, nil
+}
+
+// ValidateAigcProjectForUser 校验前端透传的项目归属，系统代理计费不能直接信任请求头。
+func (s *Service) ValidateAigcProjectForUser(userID string, id *int64) (*int64, error) {
+	return s.validateTaskAigcProject(userID, id)
 }
 
 func (s *Service) ValidateAigcAssignableDepartment(id *int64, allowRoot bool) error {

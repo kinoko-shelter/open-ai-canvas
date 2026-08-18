@@ -19,6 +19,7 @@ export type BackendGenerationResult = {
 
 type BackendGenerationTaskOptions = {
     projectId?: string;
+    aigcProjectId?: number;
     mode: BackendGenerationMode;
     prompt: string;
     config: AiConfig;
@@ -41,6 +42,7 @@ type PreparedGenerationReferences = {
 // 生成、计费、取消和任务记录必须共用后端任务生命周期，页面层不能再直连供应商。
 export async function runBackendGenerationTask({
     projectId,
+    aigcProjectId,
     mode,
     prompt,
     config,
@@ -55,7 +57,7 @@ export async function runBackendGenerationTask({
     throwIfAborted(signal);
     const prepared = await prepareGenerationReferences({ referenceImages, referenceVideos, referenceAudios, mask });
     throwIfAborted(signal);
-    return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, signal, metadata, onTaskUpdate }, prepared);
+    return createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages, referenceVideos, signal, metadata, onTaskUpdate }, prepared);
 }
 
 export async function runBackendGenerationTaskBatch(options: BackendGenerationTaskOptions & { count: number }) {
@@ -81,10 +83,11 @@ async function prepareGenerationReferences({ referenceImages = [], referenceVide
     return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask };
 }
 
-async function createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages = [], signal, metadata, onTaskUpdate }: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
+async function createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages = [], signal, metadata, onTaskUpdate }: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
     const videoOperation = String(metadata?.videoEditOperation || (referenceImages.length ? "image_to_video" : "text_to_video"));
     const task = await createGenerationTask({
         ...(projectId ? { projectId } : {}),
+        ...(aigcProjectId ? { aigcProjectId } : {}),
         type: `canvas_${mode}`,
         operation: mode === "video" ? videoOperation : mode,
         prompt,

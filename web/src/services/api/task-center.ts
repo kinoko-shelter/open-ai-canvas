@@ -12,6 +12,7 @@ export type GenerationTask = {
     id: string;
     sessionId?: string;
     projectId?: string;
+    aigcProjectId?: number;
     type: string;
     status: TaskStatus;
     progress?: number;
@@ -144,6 +145,7 @@ export type CreateSessionInput = {
 export type CreateTaskInput = {
     sessionId?: string;
     projectId?: string;
+    aigcProjectId?: number;
     type?: string;
     operation?: string;
     prompt: string;

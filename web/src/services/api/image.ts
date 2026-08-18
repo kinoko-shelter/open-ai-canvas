@@ -98,7 +98,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; reasoning: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal; promptCacheKey?: string; onReasoning?: (text: string) => void };
+type RequestOptions = { signal?: AbortSignal; promptCacheKey?: string; onReasoning?: (text: string) => void; scene?: string; aigcProjectId?: number };
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -339,17 +339,27 @@ function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
 }
 
-function aiHeaders(config: AiConfig, contentType?: string) {
+function systemProxyHeaders(config: Pick<AiConfig, "baseUrl">, scene?: string, aigcProjectId?: number) {
+    if (!scene || !isSystemProxyBaseUrl(config.baseUrl)) return {};
+    const projectId = Math.floor(Number(aigcProjectId) || 0);
+    return {
+        "X-Canvas-Scene": scene,
+        "X-Idempotency-Key": createClientId(),
+        ...(projectId > 0 ? { "X-Canvas-Aigc-Project-ID": String(projectId) } : {}),
+    };
+}
+
+function aiHeaders(config: AiConfig, contentType?: string, options?: RequestOptions) {
     return {
         Authorization: `Bearer ${config.apiKey}`,
         ...(contentType ? { "Content-Type": contentType } : {}),
-        ...(isSystemProxyBaseUrl(config.baseUrl) ? { "X-Canvas-Scene": "image", "X-Idempotency-Key": createClientId() } : {}),
+        ...systemProxyHeaders(config, options?.scene || "image", options?.aigcProjectId),
     };
 }
 
 async function postVolcengineArkImage(config: ReturnType<typeof resolveModelRequestConfig>, payload: Record<string, unknown>, options?: RequestOptions) {
     const upstreamUrl = aiApiUrl(config, "/images/generations");
-    const request = channelRequest(config, upstreamUrl, aiHeaders(config, "application/json"));
+    const request = channelRequest(config, upstreamUrl, aiHeaders(config, "application/json", options));
     return (
         await axios.post<ImageApiResponse>(request.url, payload, {
             headers: request.headers,
@@ -375,10 +385,11 @@ function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "gen
     return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;
 }
 
-function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
+function geminiHeaders(config: Pick<AiConfig, "baseUrl" | "apiKey">, options?: RequestOptions) {
     return {
         "x-goog-api-key": config.apiKey,
         "Content-Type": "application/json",
+        ...systemProxyHeaders(config, options?.scene, options?.aigcProjectId),
     };
 }
 
@@ -573,7 +584,8 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
 }
 
 async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const request = channelRequest(config, aiApiUrl(config, "/responses"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
+    const requestOptions = { ...(options || {}), scene: options?.scene || "text" };
+    const request = channelRequest(config, aiApiUrl(config, "/responses"), { ...aiHeaders(config, "application/json", requestOptions), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
@@ -659,7 +671,8 @@ function consumeChatCompletionStreamText(state: ChatCompletionStreamState, text:
 }
 
 async function requestStreamingChatCompletion(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const request = channelRequest(config, aiApiUrl(config, "/chat/completions"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
+    const requestOptions = { ...(options || {}), scene: options?.scene || "text" };
+    const request = channelRequest(config, aiApiUrl(config, "/chat/completions"), { ...aiHeaders(config, "application/json", requestOptions), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
@@ -762,7 +775,8 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
 }
 
 async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const request = channelRequest(config, `${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, geminiHeaders(config));
+    const requestOptions = { ...(options || {}), scene: options?.scene || "text" };
+    const request = channelRequest(config, `${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, geminiHeaders(config, requestOptions));
     const response = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
@@ -858,7 +872,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     for (const image of references) {
         parts.push(toGeminiImagePart(await imageToDataUrl(image)));
     }
-    const request = channelRequest(config, geminiApiUrl(config, "generateContent"), geminiHeaders(config));
+    const request = channelRequest(config, geminiApiUrl(config, "generateContent"), geminiHeaders(config, { ...(options || {}), scene: options?.scene || "image" }));
     const response = await axios.post<GeminiPayload>(
         request.url,
         {
@@ -957,7 +971,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 async function postChannelJSON<T>(config: ReturnType<typeof resolveModelRequestConfig>, upstreamUrl: string, body: unknown, options?: RequestOptions) {
-    const request = channelRequest(config, upstreamUrl, aiHeaders(config, "application/json"));
+    const request = channelRequest(config, upstreamUrl, aiHeaders(config, "application/json", options));
     return (
         await axios.post<T>(request.url, body, {
             headers: request.headers,
@@ -1063,7 +1077,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const request = channelRequest(requestConfig, aiApiUrl(requestConfig, "/images/edits"), aiHeaders(requestConfig));
+        const request = channelRequest(requestConfig, aiApiUrl(requestConfig, "/images/edits"), aiHeaders(requestConfig, undefined, options));
         const response = await axios.post<ImageApiResponse>(request.url, formData, { headers: request.headers, withCredentials: request.credentials === "include", signal: options?.signal });
         const images = parseImagePayload(response.data);
         return images;

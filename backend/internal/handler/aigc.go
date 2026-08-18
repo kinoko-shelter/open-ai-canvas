@@ -74,6 +74,19 @@ func RegisterAigcRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, projects)
 	})
+	r.GET("/aigc/projects/available", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		projects, err := svc.AvailableAigcSecondLevelProjects(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"projects": projects})
+	})
 	r.POST("/aigc/projects", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

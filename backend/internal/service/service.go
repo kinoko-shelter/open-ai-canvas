@@ -61,14 +61,15 @@ type CreateSessionRequest struct {
 }
 
 type CreateTaskRequest struct {
-	SessionID string         `json:"sessionId"`
-	ProjectID string         `json:"projectId"`
-	Type      string         `json:"type"`
-	Operation string         `json:"operation"`
-	Prompt    string         `json:"prompt"`
-	Provider  string         `json:"provider"`
-	Model     string         `json:"model"`
-	Input     map[string]any `json:"input"`
+	SessionID     string         `json:"sessionId"`
+	ProjectID     string         `json:"projectId"`
+	AigcProjectID *int64         `json:"aigcProjectId"`
+	Type          string         `json:"type"`
+	Operation     string         `json:"operation"`
+	Prompt        string         `json:"prompt"`
+	Provider      string         `json:"provider"`
+	Model         string         `json:"model"`
+	Input         map[string]any `json:"input"`
 }
 
 type SessionDetail struct {
@@ -82,6 +83,7 @@ type TaskSummary struct {
 	ID                        string                     `json:"id"`
 	SessionID                 string                     `json:"sessionId,omitempty"`
 	ProjectID                 string                     `json:"projectId,omitempty"`
+	AigcProjectID             *int64                     `json:"aigcProjectId,omitempty"`
 	Type                      string                     `json:"type"`
 	Status                    model.TaskStatus           `json:"status"`
 	Stage                     string                     `json:"stage"`
@@ -453,10 +455,14 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if taskType == "" {
 		taskType = "video_image_to_video"
 	}
-	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
+	aigcProjectID, err := s.validateTaskAigcProject(userID, req.AigcProjectID)
+	if err != nil {
+		return nil, err
+	}
+	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, AigcProjectID: aigcProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
 	if err != nil {
 		return nil, err
@@ -798,6 +804,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		ID:                        task.ID,
 		SessionID:                 task.SessionID,
 		ProjectID:                 task.ProjectID,
+		AigcProjectID:             task.AigcProjectID,
 		Type:                      task.Type,
 		Status:                    task.Status,
 		Stage:                     task.Stage,

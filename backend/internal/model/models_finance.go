@@ -21,6 +21,7 @@ type CreditLedgerEntry struct {
 	AvailableAfterMicrocredits int64            `json:"availableAfterMicrocredits"`
 	ReservedAfterMicrocredits  int64            `json:"reservedAfterMicrocredits"`
 	BillingOrderID             string           `json:"billingOrderId,omitempty" gorm:"index;size:36"`
+	AigcProjectID              *int64           `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id;index"`
 	RedeemCodeID               string           `json:"redeemCodeId,omitempty" gorm:"index;size:36"`
 	ActorUserID                string           `json:"actorUserId,omitempty" gorm:"index;size:36"`
 	Model                      string           `json:"model,omitempty" gorm:"size:120;index"`
@@ -36,6 +37,7 @@ type BillingOrder struct {
 	UserID                       string        `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
 	IdempotencyKey               string        `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
 	TaskID                       string        `json:"taskId,omitempty" gorm:"index;size:36"`
+	AigcProjectID                *int64        `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id;index"`
 	ChannelID                    string        `json:"channelId" gorm:"index;size:36"`
 	ChannelModelID               string        `json:"channelModelId" gorm:"index;size:36"`
 	Model                        string        `json:"model" gorm:"index;size:120"`

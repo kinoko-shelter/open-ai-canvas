@@ -465,6 +465,7 @@ func reserveBillingOrder(tx *gorm.DB, order *model.BillingOrder) error {
 		AvailableAfterMicrocredits: account.AvailableMicrocredits,
 		ReservedAfterMicrocredits:  account.ReservedMicrocredits,
 		BillingOrderID:             order.ID,
+		AigcProjectID:              order.AigcProjectID,
 		Model:                      order.Model,
 		ChannelID:                  order.ChannelID,
 		Scene:                      order.Scene,
@@ -664,14 +665,14 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 			if err := tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerConsume,
 				AmountMicrocredits: -actual, ReservedDeltaMicrocredits: -reserved,
 				AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-				BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene}).Error; err != nil {
+				BillingOrderID: order.ID, AigcProjectID: order.AigcProjectID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene}).Error; err != nil {
 				return err
 			}
 			if refund > 0 {
 				if err := tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerRefund,
 					AmountMicrocredits: refund, AvailableDeltaMicrocredits: refund,
 					AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-					BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, Note: "Token 预授权差额退回"}).Error; err != nil {
+					BillingOrderID: order.ID, AigcProjectID: order.AigcProjectID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, Note: "Token 预授权差额退回"}).Error; err != nil {
 					return err
 				}
 			}
@@ -711,6 +712,7 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 			AvailableAfterMicrocredits: account.AvailableMicrocredits,
 			ReservedAfterMicrocredits:  account.ReservedMicrocredits,
 			BillingOrderID:             order.ID,
+			AigcProjectID:              order.AigcProjectID,
 			Model:                      order.Model,
 			ChannelID:                  order.ChannelID,
 			Scene:                      order.Scene,
@@ -763,6 +765,7 @@ func (r *Repository) RefundBillingOrder(id string, errorText string) error {
 			AvailableAfterMicrocredits: account.AvailableMicrocredits,
 			ReservedAfterMicrocredits:  account.ReservedMicrocredits,
 			BillingOrderID:             order.ID,
+			AigcProjectID:              order.AigcProjectID,
 			Model:                      order.Model,
 			ChannelID:                  order.ChannelID,
 			Scene:                      order.Scene,

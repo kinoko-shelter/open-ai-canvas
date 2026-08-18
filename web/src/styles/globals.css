@@ -7776,13 +7776,118 @@ html:not(.dark) .creation-message-content code { background: rgba(28, 32, 37, .0
 .creation-duration-choices button:hover { background: rgba(255, 255, 255, .055) !important; color: var(--creation-text) !important; }
 .creation-duration-choices button.is-selected { background: rgba(255, 255, 255, .105) !important; color: var(--creation-text) !important; }
 
+.creation-chat-control.is-project {
+    max-width: 180px;
+}
+
+.creation-chat-control.is-project > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.creation-project-menu {
+    width: 284px;
+    padding: 12px;
+}
+
+.creation-project-heading {
+    display: flex;
+    min-height: 18px;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 2px 7px;
+    color: var(--creation-muted);
+    font-size: 11px;
+}
+
+.creation-project-heading strong {
+    color: var(--creation-text);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.creation-project-options {
+    display: grid;
+    max-height: 238px;
+    gap: 3px;
+    overflow-y: auto;
+    padding-right: 1px;
+}
+
+.creation-project-options button {
+    display: grid;
+    min-height: 36px;
+    grid-template-columns: minmax(0, 1fr) auto 14px;
+    align-items: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    padding: 0 8px;
+    color: var(--creation-muted);
+    font-size: 11px;
+    text-align: left;
+    transition: background-color 160ms var(--motion-ease-out), color 160ms var(--motion-ease-out);
+}
+
+.creation-project-options button:hover,
+.creation-project-options button.is-selected {
+    background: rgba(255, 255, 255, .075);
+    color: var(--creation-text);
+}
+
+.creation-project-options button.is-disabled,
+.creation-project-options button:disabled {
+    cursor: not-allowed;
+    opacity: .48;
+}
+
+.creation-project-options button.is-disabled:hover,
+.creation-project-options button:disabled:hover {
+    background: transparent;
+    color: var(--creation-muted);
+}
+
+.creation-project-options button span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.creation-project-options button small {
+    color: var(--creation-faint);
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.creation-project-options button svg {
+    width: 13px;
+    height: 13px;
+}
+
+.creation-project-empty {
+    min-height: 36px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .045);
+    padding: 10px;
+    color: var(--creation-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
 html:not(.dark) .creation-control-popover-surface { background: rgba(255, 255, 255, .98) !important; box-shadow: 0 20px 48px rgba(25, 29, 35, .14) !important; }
 html:not(.dark) .creation-choice-grid button:hover,
 html:not(.dark) .creation-duration-choices button:hover,
+html:not(.dark) .creation-project-options button:hover,
+html:not(.dark) .creation-project-options button.is-selected,
 html:not(.dark) .creation-custom-trigger:hover { background: rgba(28, 32, 37, .055) !important; }
 html:not(.dark) .creation-choice-grid button.is-selected,
 html:not(.dark) .creation-duration-choices button.is-selected { background: rgba(28, 32, 37, .09) !important; }
-html:not(.dark) .creation-custom-value { background: rgba(28, 32, 37, .055) !important; }
+html:not(.dark) .creation-custom-value,
+html:not(.dark) .creation-project-empty { background: rgba(28, 32, 37, .055) !important; }
 
 /* 历史对话是按更新时间倒序排列的普通记录列表，不使用时间轴视觉。 */
 .creation-top-actions {

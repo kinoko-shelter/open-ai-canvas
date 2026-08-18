@@ -75,6 +75,18 @@ func (r *Repository) AigcProjects(keyword string, status string, level string, p
 	return projects, total, nil
 }
 
+func (r *Repository) AigcSecondLevelProjectsByDept(deptID int64) ([]model.AigcProject, error) {
+	var projects []model.AigcProject
+	err := r.db.Where("level = ? AND dept_id = ? AND status = ?", 2, deptID, "启用").Order("project_id asc").Find(&projects).Error
+	return projects, err
+}
+
+func (r *Repository) AigcSecondLevelProjects() ([]model.AigcProject, error) {
+	var projects []model.AigcProject
+	err := r.db.Where("level = ?", 2).Order("project_id asc").Find(&projects).Error
+	return projects, err
+}
+
 func (r *Repository) AigcProject(id int64) (*model.AigcProject, error) {
 	var project model.AigcProject
 	if err := r.db.First(&project, "project_id = ?", id).Error; err != nil {
