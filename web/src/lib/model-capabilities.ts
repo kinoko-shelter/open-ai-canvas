@@ -2,8 +2,19 @@ import type { ModelProtocol } from "@/lib/model-protocols";
 
 export type ModelCapabilityConfig = {
     version: number;
+    text?: TextCapabilityConfig;
     image?: ImageCapabilityConfig;
     video?: VideoCapabilityConfig;
+};
+
+export type TextCapabilityConfig = {
+    references: {
+        promptMaxChars: number;
+        maxImages: number;
+        maxImageBytes: number;
+        maxVideos: number;
+        maxVideoBytes: number;
+    };
 };
 
 export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
@@ -187,6 +198,10 @@ function withCanonicalDefault<T extends { values: string[]; default: string }>(c
 }
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "", apiFormat?: "openai" | "gemini"): ModelCapabilityConfig {
+    const text: TextCapabilityConfig = {
+        // 文本模型的视觉能力必须由管理员明确开启，不能根据模型名猜测。
+        references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 },
+    };
     const video: VideoCapabilityConfig = {
         references: {
             promptMaxChars: 1000,
@@ -253,7 +268,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = [fixedGrokVideoResolution];
         video.defaultResolution = fixedGrokVideoResolution;
     }
-    return { version: 1, image: defaultImageCapabilityConfig(protocol, model, apiFormat), video };
+    return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model, apiFormat), video };
 }
 
 function grokVideoResolutionFromModel(model: string) {

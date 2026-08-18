@@ -66,8 +66,8 @@ export function ModelDefaultGrid({ config, onChange }: { config: AiConfig; onCha
                                             onClick={() => onChange(group.modelKey, model)}
                                         >
                                             <span className="flex min-w-0 items-start gap-2.5">
-                                                <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", selected ? "border-[color-mix(in_srgb,var(--workspace-accent)_28%,transparent)] bg-background/70" : "border-border/70 bg-muted/35")}>
-                                                    <ModelIcon model={model} />
+                                                <span className="model-default-option-icon grid size-8 shrink-0 place-items-center rounded-md">
+                                                    <ModelIcon config={config} model={model} />
                                                 </span>
                                                 <span className="min-w-0 flex-1">
                                                     <span className="block truncate text-xs font-semibold">{modelDisplayName(config, model)}</span>

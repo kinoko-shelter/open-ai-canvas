@@ -22,6 +22,7 @@ import { collectGenerationTaskMedia, persistGenerationImageResult, persistGenera
 import { requestImageQuestion } from "@/services/api/image";
 import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
 import { listAvailableAigcProjectTree, type AigcProjectTreeNode } from "@/services/api/aigc";
+import { logicalModelIDForConfig } from "@/services/api/generation-task";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -179,11 +180,17 @@ export default function CreatePage() {
             textCount: hasPrompt ? 1 : 0,
             imageCount: attachments.filter(isImageAttachment).length,
             videoCount: attachments.filter(isVideoAttachment).length,
-            audioCount: 0,
+            audioCount: attachments.filter((attachment) => creationAttachmentKind(attachment) === "audio").length,
             characterCount: 0,
         },
         videoSeconds: seconds,
-    }), [attachments, hasPrompt, mode, seconds]);
+        imageSize: mode === "image" ? ratio : undefined,
+        options: mode === "image"
+            ? { size: ratio, quality, count: Number(count), transparentBackground: config.transparentBackground === "true" }
+            : mode === "video"
+                ? { size: ratio, videoSeconds: Number(seconds), vquality: videoQuality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
+                : {},
+    }), [attachments, config.transparentBackground, config.videoGenerateAudio, config.videoWatermark, count, hasPrompt, mode, quality, ratio, seconds, videoQuality]);
     const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
@@ -585,16 +592,31 @@ export default function CreatePage() {
             if (mode === "text") {
                 const history = [...(activeConversation.messages || []), userMessage].map((item) => ({
                     role: item.role,
-                    content: item.role === "user"
-                        ? buildTextMessageContent(item)
-                        : item.content,
+                    content: item.role === "user" ? buildTextMessageContent(item) : item.content,
                 }));
-                await requestImageQuestion(requestConfig, history, (text) => updateAssistant(assistantMessage.id, (item) => ({ ...item, content: text })), {
-                    signal: controller.signal,
-                    onReasoning: (reasoning) => updateAssistant(assistantMessage.id, (item) => ({ ...item, reasoning })),
-                    scene: "text",
-                    aigcProjectId: taskAigcProject.projectId,
-                });
+                if (logicalModelIDForConfig(requestConfig)) {
+                    const result = await runBackendGenerationTask({
+                        mode: "text",
+                        aigcProjectId: taskAigcProject.projectId,
+                        prompt: expandedPrompt,
+                        config: requestConfig,
+                        referenceImages,
+                        referenceVideos,
+                        textHistory: history,
+                        signal: controller.signal,
+                        metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, ...aigcProjectMetadata, ...referenceMetadata },
+                        onTaskUpdate: bindTask,
+                    });
+                    if (!result.text?.trim()) throw new Error("后端任务没有返回文本");
+                    updateAssistant(assistantMessage.id, (item) => ({ ...item, content: result.text || "" }));
+                } else {
+                    await requestImageQuestion(requestConfig, history, (value) => updateAssistant(assistantMessage.id, (item) => ({ ...item, content: value })), {
+                        signal: controller.signal,
+                        onReasoning: (reasoning) => updateAssistant(assistantMessage.id, (item) => ({ ...item, reasoning })),
+                        scene: "text",
+                        aigcProjectId: taskAigcProject.projectId,
+                    });
+                }
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runBackendGenerationTaskBatch({

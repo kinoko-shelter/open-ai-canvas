@@ -638,6 +638,7 @@ func (s *Service) CreateSystemChannel(actor *model.User, req ChannelRequest) (*P
 	if err := s.syncInitialChannelModels(&channel, req.Models); err != nil {
 		return nil, err
 	}
+	s.invalidateRouteCatalog()
 	items, err := s.repo.ChannelModels(channel.ID, true)
 	if err != nil {
 		return nil, err
@@ -681,6 +682,7 @@ func (s *Service) UpdateSystemChannel(actor *model.User, id string, req ChannelR
 	if err := s.syncInitialChannelModels(&next, req.Models); err != nil {
 		return nil, err
 	}
+	s.invalidateRouteCatalog()
 	items, err := s.repo.ChannelModels(next.ID, true)
 	if err != nil {
 		return nil, err
@@ -732,6 +734,9 @@ func (s *Service) DeleteSystemChannel(actor *model.User, id string) error {
 	err = s.repo.DeleteSystemChannel(channel.ID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return BadAuthRequest("系统渠道不存在或已删除")
+	}
+	if err == nil {
+		s.invalidateRouteCatalog()
 	}
 	return err
 }

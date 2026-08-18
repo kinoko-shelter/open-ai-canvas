@@ -174,7 +174,11 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		channels, _ := svc.PublicSystemChannels()
+		logicalModels, logicalModelsErr := svc.PublicLogicalModels(nil)
+		if logicalModelsErr != nil {
+			failService(c, logicalModelsErr)
+			return
+		}
 		limits, err := svc.PublicRuntimeLimits()
 		if err != nil {
 			failService(c, err)
@@ -195,7 +199,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		response := gin.H{"user": publicUser, "canImpersonateUsers": canImpersonateUsers, "systemChannels": channels, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features}
+		response := gin.H{"user": publicUser, "canImpersonateUsers": canImpersonateUsers, "systemChannels": channels, "logicalModels": logicalModels, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features}
 		if authSession.Impersonator != nil {
 			response["impersonation"] = gin.H{"actorDisplayName": authSession.Impersonator.DisplayName, "actorUsername": authSession.Impersonator.Username}
 		}
@@ -215,7 +219,12 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, info)
 	})
 	r.GET("/channels/system", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if err := svc.RequireAdmin(actor); err != nil {
 			failService(c, err)
 			return
 		}
