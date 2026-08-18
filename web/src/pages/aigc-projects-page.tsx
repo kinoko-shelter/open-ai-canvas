@@ -80,7 +80,7 @@ export default function AigcProjectsPage() {
         setDrawerOpen(true);
     };
 
-    const treeData = buildProjectTree(treeProjects, isAdmin ? openDrawer : undefined);
+    const treeData = buildProjectTree(treeProjects);
 
     const save = async () => {
         const values = await form.validateFields();
@@ -113,7 +113,7 @@ export default function AigcProjectsPage() {
         <div className="aigc-projects-split">
             <aside className="aigc-projects-tree-panel">
                 <div className="aigc-projects-tree-heading"><span>项目目录</span><em>{treeProjects.length}</em></div>
-                <div className="aigc-projects-tree-scroll">
+                <div className="aigc-projects-tree-scroll app-workspace-sidebar-scroll-area">
                     <button type="button" className={selectedProjectId === ALL_PROJECTS_KEY ? "aigc-projects-tree-root is-active" : "aigc-projects-tree-root"} onClick={() => { setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
                         <FolderTree className="size-4" />
                         <span>全部项目</span>
@@ -162,7 +162,7 @@ async function listAllAigcProjects() {
     return result;
 }
 
-function buildProjectTree(projects: AigcProject[], onEdit?: (project: AigcProject) => void): DataNode[] {
+function buildProjectTree(projects: AigcProject[]): DataNode[] {
     const childrenByParent = new Map<number | "", AigcProject[]>();
     projects.forEach((project) => {
         childrenByParent.set(project.parentId || "", [...(childrenByParent.get(project.parentId || "") || []), project]);
@@ -171,7 +171,7 @@ function buildProjectTree(projects: AigcProject[], onEdit?: (project: AigcProjec
         .sort((left, right) => left.projectId - right.projectId)
         .map((project) => ({
             key: project.projectId,
-            title: <ProjectTreeTitle project={project} childCount={(childrenByParent.get(project.projectId) || []).length} onEdit={onEdit} />,
+            title: <ProjectTreeTitle project={project} childCount={(childrenByParent.get(project.projectId) || []).length} />,
             children: project.level === 1 ? build(project.projectId) : undefined,
         }));
     return build("");
@@ -202,12 +202,11 @@ function projectScope(projects: AigcProject[], selectedProjectId: number, keywor
         .sort((left, right) => left.projectId - right.projectId);
 }
 
-function ProjectTreeTitle({ project, childCount, onEdit }: { project: AigcProject; childCount: number; onEdit?: (project: AigcProject) => void }) {
+function ProjectTreeTitle({ project, childCount }: { project: AigcProject; childCount: number }) {
     return (
         <span className="aigc-projects-tree-title">
             <span>{project.projectName}</span>
             {project.level === 1 ? <em>{childCount}</em> : null}
-            {project.level === 1 && onEdit ? <button type="button" className="grid size-5 place-items-center rounded text-foreground/45 hover:bg-surface-hover hover:text-foreground" title="编辑一级项目" aria-label={`编辑一级项目 ${project.projectName}`} onClick={(event) => { event.stopPropagation(); onEdit(project); }}><Pencil className="size-3" /></button> : null}
         </span>
     );
 }

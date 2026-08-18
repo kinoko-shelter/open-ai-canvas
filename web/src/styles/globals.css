@@ -3563,10 +3563,10 @@
 
     .aigc-projects-tree-panel {
         display: flex;
+        min-height: 0;
         min-width: 0;
-        max-block-size: 30rem;
         flex-direction: column;
-        background: color-mix(in srgb, var(--foreground) 2%, var(--surface));
+        background: var(--surface);
         overflow: hidden;
         padding: var(--space-3) var(--space-2);
     }
@@ -3576,7 +3576,7 @@
         min-height: var(--space-8);
         align-items: center;
         justify-content: space-between;
-        border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+        border-bottom: 1px solid var(--border);
         padding: 0 var(--space-2) var(--space-2);
         color: color-mix(in srgb, var(--foreground) 58%, transparent);
         font-size: var(--fs-label);
