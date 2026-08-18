@@ -112,12 +112,12 @@ export default function AigcProjectsPage() {
         </ListToolbar>
         <div className="aigc-projects-split">
             <aside className="aigc-projects-tree-panel">
-                <div className="aigc-projects-tree-heading"><span>项目目录</span><em>{treeProjects.length}</em></div>
+                <div className="aigc-projects-tree-heading"><span>项目目录</span><span className="aigc-projects-tree-count">{treeProjects.length}</span></div>
                 <div className="aigc-projects-tree-scroll app-workspace-sidebar-scroll-area">
                     <button type="button" className={selectedProjectId === ALL_PROJECTS_KEY ? "aigc-projects-tree-root is-active" : "aigc-projects-tree-root"} onClick={() => { setSelectedProjectId(ALL_PROJECTS_KEY); setPage(1); }}>
                         <FolderTree className="size-4" />
                         <span>全部项目</span>
-                        <em>{treeProjects.filter((item) => item.level === 2).length}</em>
+                        <span className="aigc-projects-tree-count">{treeProjects.filter((item) => item.level === 2).length}</span>
                     </button>
                     <Tree blockNode autoExpandParent expandedKeys={expandedKeys} selectedKeys={[selectedProjectId]} treeData={treeData} onExpand={(keys) => setExpandedKeys(keys as number[])} onSelect={(keys) => { setSelectedProjectId((keys[0] || ALL_PROJECTS_KEY) as ProjectTreeKey); setPage(1); }} />
                 </div>
@@ -206,7 +206,7 @@ function ProjectTreeTitle({ project, childCount }: { project: AigcProject; child
     return (
         <span className="aigc-projects-tree-title">
             <span>{project.projectName}</span>
-            {project.level === 1 ? <em>{childCount}</em> : null}
+            {project.level === 1 ? <span className="aigc-projects-tree-count">{childCount}</span> : null}
         </span>
     );
 }

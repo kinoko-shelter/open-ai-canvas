@@ -3583,14 +3583,9 @@
         font-weight: 600;
     }
 
-    .aigc-projects-tree-heading em {
-        border-radius: var(--r-full);
-        background: color-mix(in srgb, var(--foreground) 7%, transparent);
-        padding: 1px 7px;
+    .aigc-projects-tree-heading .aigc-projects-tree-count {
         color: color-mix(in srgb, var(--foreground) 48%, transparent);
         font-size: var(--fs-micro);
-        font-style: normal;
-        font-variant-numeric: tabular-nums;
     }
 
     .aigc-projects-tree-scroll {
@@ -3643,16 +3638,12 @@
         background: var(--surface-hover);
     }
 
-    .aigc-projects-tree-root em,
-    .aigc-projects-tree-title em {
+    .aigc-projects-tree-count {
         margin-left: auto;
-        border-radius: var(--r-full);
-        background: color-mix(in srgb, var(--foreground) 7%, transparent);
-        padding: 1px 7px;
         color: color-mix(in srgb, var(--foreground) 48%, transparent);
         font-size: var(--fs-micro);
-        font-style: normal;
         font-variant-numeric: tabular-nums;
+        text-align: right;
     }
 
     .aigc-projects-tree-title {
