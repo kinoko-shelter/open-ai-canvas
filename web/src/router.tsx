@@ -23,6 +23,7 @@ const RedemptionCodesPage = lazy(() => import("@/pages/admin/redemption-codes/re
 const RuntimePolicySettingsPage = lazy(() => import("@/pages/admin/settings/runtime-policy-settings-page"));
 const DrawingEngineSettingsPage = lazy(() => import("@/pages/admin/settings/drawing-engine-settings-page"));
 const StorageSettingsPage = lazy(() => import("@/pages/admin/settings/storage-settings-page"));
+const ThirdPartySettingsPage = lazy(() => import("@/pages/admin/settings/libtv-settings-page"));
 const StoryboardPromptsPage = lazy(() => import("@/pages/admin/storyboard-prompts/storyboard-prompts-page"));
 const UsersPage = lazy(() => import("@/pages/admin/users/users-page"));
 const AigcDepartmentsPage = lazy(() => import("@/pages/admin/aigc-departments-page"));
@@ -111,6 +112,8 @@ export const router = createBrowserRouter([
                     { path: "settings/access", element: deferred(<AccessSettingsPage />) },
                     { path: "settings/email", element: deferred(<EmailSettingsPage />) },
                     { path: "settings/storage", element: deferred(<StorageSettingsPage />) },
+                    { path: "settings/third-party", element: deferred(<ThirdPartySettingsPage />) },
+                    { path: "settings/libtv", element: <Navigate to="/admin/settings/third-party" replace /> },
                 ],
             },
             { path: "/aigc-projects", element: <RequireAuth>{deferred(<AigcProjectsPage />)}</RequireAuth> },

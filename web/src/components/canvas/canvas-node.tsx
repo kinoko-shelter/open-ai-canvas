@@ -16,6 +16,7 @@ import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
+import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
 import { MEDIA_NODE_MIN_SIZE } from "@/lib/canvas/canvas-node-size";
 import { VideoPlayer } from "@/components/video-player";
 import { createDefaultSubtitleStyle } from "@/types/timeline";
@@ -1024,6 +1025,7 @@ function ImageContent({
     const imageContainerRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(imageContainerRef);
     const { url, loading } = useNodeResourceUrl(node, nearViewport);
+    const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
@@ -1032,7 +1034,7 @@ function ImageContent({
                     <img
                         src={url}
                         alt={node.title}
-                        loading="lazy"
+                        loading={importedFromLibTV ? "eager" : "lazy"}
                         decoding="async"
                         draggable={false}
                         onDragStart={(event) => event.preventDefault()}
@@ -1055,7 +1057,8 @@ function DeferredMediaLoad({ icon, label, disabled, onClick }: { icon: ReactNode
 
 function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, mode: "cache" | "direct" = "cache") {
     const storageKey = node.metadata?.storageKey || "";
-    const fallback = node.metadata?.content || "";
+    const content = node.metadata?.content || "";
+    const fallback = node.metadata?.previewContent || (node.type === CanvasNodeType.Image && node.metadata?.importSource?.provider === "libtv" ? buildLibTVImagePreviewUrl(content) : content);
     const resourceId = resourceIdFromStorageKey(storageKey);
     const isRemoteResource = Boolean(resourceId);
     const directUrl = resourceId ? resourceFileUrl(resourceId) : fallback;
