@@ -75,10 +75,13 @@ export default function ProjectDetailPage() {
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 lg:min-h-16 lg:flex-nowrap">
                         <div className="flex min-w-0 flex-1 items-center gap-2.5 lg:w-[250px] lg:flex-none xl:w-[290px]">
                             <button type="button" onClick={() => navigate("/projects")} className="grid size-9 shrink-0 place-items-center rounded-md text-foreground/42 transition-colors hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="返回项目" title="返回项目"><ArrowLeft className="size-4" /></button>
-                            <div className="flex min-w-0 items-center gap-2">
-                                <h1 className="min-w-0 truncate text-[var(--fs-body)] font-semibold text-foreground/90">{detail.data.project.name}</h1>
-                                <span className={`size-1.5 shrink-0 rounded-full ${detail.data.project.status === "archived" ? "bg-foreground/30" : "bg-[var(--workspace-accent)]"}`} />
-                                <span className="hidden shrink-0 text-[var(--fs-tiny)] text-foreground/42 sm:inline">{detail.data.project.status === "archived" ? "已归档" : "进行中"}</span>
+                            <div className="flex min-w-0 flex-col gap-0.5">
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <h1 className="min-w-0 truncate text-[var(--fs-body)] font-semibold text-foreground/90">{detail.data.project.name}</h1>
+                                    <span className={`size-1.5 shrink-0 rounded-full ${detail.data.project.status === "archived" ? "bg-foreground/30" : "bg-[var(--workspace-accent)]"}`} />
+                                    <span className="hidden shrink-0 text-[var(--fs-tiny)] text-foreground/42 sm:inline">{detail.data.project.status === "archived" ? "已归档" : "进行中"}</span>
+                                </div>
+                                <span className="max-w-full truncate text-[var(--fs-tiny)] text-foreground/42" title={`业务项目：${detail.data.project.aigcProjectName || "未绑定"}`}>业务项目：{detail.data.project.aigcProjectName || "未绑定"}</span>
                             </div>
                         </div>
                         <nav className="thin-scrollbar order-last mt-1 flex h-11 w-full min-w-0 items-center gap-0.5 overflow-x-auto lg:order-none lg:mt-0 lg:h-16 lg:flex-1 lg:border-l lg:border-border/55 lg:pl-3" aria-label="项目导航">

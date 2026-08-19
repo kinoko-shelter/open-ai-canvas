@@ -4083,6 +4083,7 @@
     .project-library-heading em { flex: 0 0 auto; border-radius: var(--r-xs); background: color-mix(in srgb, var(--foreground) 7%, transparent); padding: 3px 5px; color: color-mix(in srgb, var(--foreground) 44%, transparent); font-size: var(--fs-micro); font-style: normal; }
     .project-library-arrow { margin-left: auto; flex: 0 0 auto; color: color-mix(in srgb, var(--foreground) 25%, transparent); opacity: 0; transform: translateX(-4px); transition: opacity 220ms ease-out, transform 320ms var(--motion-ease-out); }
     .library-card:hover .project-library-arrow, .library-card:focus-within .project-library-arrow { opacity: 1; transform: translateX(0); }
+    .project-library-business-project { display: block; margin-top: 6px; overflow: hidden; color: color-mix(in srgb, var(--foreground) 55%, transparent); font-size: var(--fs-caption); text-overflow: ellipsis; white-space: nowrap; }
     .project-library-subtitle { display: block; margin-top: 6px; overflow: hidden; color: color-mix(in srgb, var(--foreground) 42%, transparent); font-size: var(--fs-caption); text-overflow: ellipsis; white-space: nowrap; }
     .project-library-progress { display: block; margin-top: 13px; color: color-mix(in srgb, var(--foreground) 45%, transparent); font-size: var(--fs-label); }
     .project-library-progress > span { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }

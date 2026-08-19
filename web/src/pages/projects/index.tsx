@@ -12,12 +12,13 @@ import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile } 
 import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
 import { settingsPath } from "@/lib/settings-navigation";
 import { requestImageQuestion } from "@/services/api/image";
+import { listAvailableAigcProjects } from "@/services/api/aigc";
 import { createProject, deleteProject, importProjectUnits, listProjects, type ProjectSummary } from "@/services/api/projects";
 import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store";
 
 import { sourceTypeLabel } from "./detail/shared";
 
-type ProjectForm = { name: string; aspectRatio: string; sourceType: string };
+type ProjectForm = { name: string; aigcProjectId: number; aspectRatio: string; sourceType: string };
 
 export default function ProjectsPage() {
     const navigate = useNavigate();
@@ -45,6 +46,7 @@ export default function ProjectsPage() {
     const [generationStatus, setGenerationStatus] = useState("");
     const [generationPreview, setGenerationPreview] = useState("");
     const generationAbortRef = useRef<AbortController | null>(null);
+    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available"], queryFn: listAvailableAigcProjects });
     const createOpen = searchParams.get("create") === "1";
     const setCreateOpen = (open: boolean) => {
         const next = new URLSearchParams(searchParams);
@@ -62,6 +64,7 @@ export default function ProjectsPage() {
             name: storyDraft.trim().slice(0, 24) || "",
             sourceType: createSource,
             aspectRatio: "9:16",
+            aigcProjectId: 0,
         });
     }, [createForm, createOpen, createSource, storyDraft]);
 
@@ -243,7 +246,7 @@ export default function ProjectsPage() {
             ) : null}
 
             <Modal className="library-modal" title="创建短剧项目" open={createOpen} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={560} styles={{ body: { paddingTop: 12 } }}>
-                <Form<ProjectForm> form={createForm} layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank" }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama", ...(selectedStyle ? { stylePresetId: selectedStyle.id, styleProfileJson: serializeStyleProfile(selectedStyle.profile || createStyleProfileSnapshot(selectedStyle)) } : {}) })}>
+                <Form<ProjectForm> form={createForm} layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank", aigcProjectId: 0 }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama", ...(values.aigcProjectId ? { aigcProjectId: values.aigcProjectId } : {}), ...(selectedStyle ? { stylePresetId: selectedStyle.id, styleProfileJson: serializeStyleProfile(selectedStyle.profile || createStyleProfileSnapshot(selectedStyle)) } : {}) })}>
                     <div className="mb-4 grid grid-cols-3 gap-2">
                         <button type="button" className={createSource === "blank" ? "app-story-source is-active" : "app-story-source"} onClick={() => { setCreateSource("blank"); createForm.setFieldValue("sourceType", "blank"); }}><FolderKanban className="size-4" /><span>空白开始</span></button>
                         <button type="button" className={createSource === "novel" ? "app-story-source is-active" : "app-story-source"} onClick={() => { setCreateSource("novel"); createForm.setFieldValue("sourceType", "novel"); }}><FileText className="size-4" /><span>导入小说</span></button>
@@ -254,6 +257,16 @@ export default function ProjectsPage() {
                         <Form.Item name="aspectRatio" label="默认画幅"><Select options={[{ label: "9:16 竖屏", value: "9:16" }, { label: "16:9 横屏", value: "16:9" }, { label: "1:1 方形", value: "1:1" }]} /></Form.Item>
                         <Form.Item name="sourceType" label="内容来源"><Select options={[{ label: "空白开始", value: "blank" }, { label: "导入小说", value: "novel" }, { label: "粘贴文本", value: "text" }]} /></Form.Item>
                     </div>
+                    <Form.Item name="aigcProjectId" label="业务项目">
+                        <Select
+                            loading={aigcProjectsQuery.isLoading}
+                            options={[
+                                { label: "未绑定业务项目", value: 0 },
+                                ...(aigcProjectsQuery.data?.projects || []).map((project) => ({ label: project.projectName, value: project.projectId })),
+                            ]}
+                            placeholder="选择业务项目（可选）"
+                        />
+                    </Form.Item>
                     <Form.Item label="项目画风"><button type="button" className="app-story-modal-style" onClick={() => setStylePickerOpen(true)}>{selectedStyle ? <><img src={selectedStyle.imageUrl} alt="" /><span>{selectedStyle.title}</span><em>更换</em></> : <><Palette className="size-4" /><span>选择项目画风（可选）</span></>}</button></Form.Item>
                     <p className="-mt-1 mb-5 text-xs leading-5 text-foreground/48">创建后先进入项目概览。章节、画风和参考资产可以逐步补充。</p>
                     <div className="flex justify-end gap-2"><Button onClick={() => setCreateOpen(false)}>取消</Button><Button type="primary" htmlType="submit" loading={mutation.isPending}>创建项目</Button></div>
@@ -390,6 +403,7 @@ function ProjectRow({ row, onDelete }: { row: ProjectSummary; onDelete: () => vo
             </span>
             <span className="project-library-body">
                 <span className="project-library-heading"><strong title={row.project.name}>{row.project.name}</strong>{row.project.status === "archived" ? <em>已归档</em> : null}<ArrowRight className="project-library-arrow size-4" /></span>
+                <span className="project-library-business-project" title={`业务项目：${row.project.aigcProjectName || "未绑定"}`}>业务项目：{row.project.aigcProjectName || "未绑定"}</span>
                 <span className="project-library-subtitle">{styleTitle} · {sourceTypeLabel(row.project.sourceType)}</span>
                 <span className="project-library-progress"><span><span>{row.completedUnitCount}/{row.unitCount} 章</span><span>{completion}%</span></span><i><b style={{ width: `${completion}%` }} /></i></span>
                 <span className="project-library-stats"><ProjectCount icon={<BookOpenText className="size-3.5" />} label="章节" value={row.unitCount} /><ProjectCount icon={<LayoutGrid className="size-3.5" />} label="画布" value={row.canvasCount} /><ProjectCount icon={<Images className="size-3.5" />} label="资产" value={row.assetCount} /></span>

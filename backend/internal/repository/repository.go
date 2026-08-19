@@ -971,7 +971,7 @@ func (r *Repository) CanvasProjectForUser(userID string, id string) (*model.Canv
 func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
 	result := r.db.Model(&model.CanvasProject{}).
 		Where("id = ? AND user_id = ?", project.ID, project.UserID).
-		Updates(map[string]any{"project_id": project.ProjectID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt})
+		Updates(map[string]any{"project_id": project.ProjectID, "aigc_project_id": project.AigcProjectID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt})
 	if result.Error != nil || result.RowsAffected > 0 {
 		return result.Error
 	}
@@ -985,6 +985,12 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 func (r *Repository) Projects(userID string) ([]model.Project, error) {
 	var projects []model.Project
 	err := r.db.Where("user_id = ?", userID).Order("updated_at desc").Find(&projects).Error
+	if err != nil {
+		return nil, err
+	}
+	if err := r.AttachProjectAigcNames(projects); err != nil {
+		return nil, err
+	}
 	return projects, err
 }
 
@@ -993,7 +999,44 @@ func (r *Repository) ProjectForUser(userID string, id string) (*model.Project, e
 	if err := r.db.First(&project, "id = ? AND user_id = ?", id, userID).Error; err != nil {
 		return nil, err
 	}
+	projects := []model.Project{project}
+	if err := r.AttachProjectAigcNames(projects); err != nil {
+		return nil, err
+	}
+	project = projects[0]
 	return &project, nil
+}
+
+func (r *Repository) AttachProjectAigcNames(projects []model.Project) error {
+	ids := make([]int64, 0, len(projects))
+	seen := make(map[int64]struct{}, len(projects))
+	for _, project := range projects {
+		if project.AigcProjectID == nil || *project.AigcProjectID == 0 {
+			continue
+		}
+		if _, ok := seen[*project.AigcProjectID]; ok {
+			continue
+		}
+		seen[*project.AigcProjectID] = struct{}{}
+		ids = append(ids, *project.AigcProjectID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var aigcProjects []model.AigcProject
+	if err := r.db.Select("project_id", "project_name").Where("project_id IN ?", ids).Find(&aigcProjects).Error; err != nil {
+		return err
+	}
+	names := make(map[int64]string, len(aigcProjects))
+	for _, project := range aigcProjects {
+		names[project.ProjectID] = project.ProjectName
+	}
+	for index := range projects {
+		if projects[index].AigcProjectID != nil {
+			projects[index].AigcProjectName = names[*projects[index].AigcProjectID]
+		}
+	}
+	return nil
 }
 
 func (r *Repository) CreateProject(project *model.Project) error {
@@ -1001,11 +1044,22 @@ func (r *Repository) CreateProject(project *model.Project) error {
 }
 
 func (r *Repository) UpdateProject(project *model.Project) error {
-	return r.db.Model(&model.Project{}).Where("id = ? AND user_id = ?", project.ID, project.UserID).Updates(map[string]any{
-		"name": project.Name, "type": project.Type, "aspect_ratio": project.AspectRatio, "source_type": project.SourceType,
-		"description": project.Description, "style_preset_id": project.StylePresetID, "style_profile_json": project.StyleProfileJSON,
-		"status": project.Status, "revision": project.Revision, "updated_at": project.UpdatedAt,
-	}).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.Project{}).Where("id = ? AND user_id = ?", project.ID, project.UserID).Updates(map[string]any{
+			"name": project.Name, "type": project.Type, "aigc_project_id": project.AigcProjectID, "aspect_ratio": project.AspectRatio, "source_type": project.SourceType,
+			"description": project.Description, "style_preset_id": project.StylePresetID, "style_profile_json": project.StyleProfileJSON,
+			"status": project.Status, "revision": project.Revision, "updated_at": project.UpdatedAt,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.CanvasProject{}).
+			Where("user_id = ? AND project_id = ?", project.UserID, project.ID).
+			Update("aigc_project_id", project.AigcProjectID).Error
+	})
 }
 
 func (r *Repository) DeleteProject(userID string, id string) error {
@@ -1168,7 +1222,7 @@ func (r *Repository) UpsertCanvasUnitLink(link *model.CanvasUnitLink) error {
 
 func (r *Repository) ProjectCanvasSummaries(userID string, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
-	err := r.db.Select("id", "user_id", "project_id", "title", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
+	err := r.db.Select("id", "user_id", "project_id", "aigc_project_id", "title", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
 	return canvases, err
 }
 

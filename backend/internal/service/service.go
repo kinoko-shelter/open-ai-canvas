@@ -20,6 +20,8 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 type Service struct {
@@ -458,7 +460,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
 	}
-	aigcProjectID, err := s.validateTaskAigcProject(userID, req.AigcProjectID)
+	aigcProjectID, err := s.resolveTaskAigcProject(userID, req.ProjectID, req.AigcProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -488,6 +490,21 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+func (s *Service) resolveTaskAigcProject(userID string, projectID string, requested *int64) (*int64, error) {
+	if canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(projectID)); err == nil {
+		if canvas.ProjectID != "" {
+			project, projectErr := s.repo.ProjectForUser(userID, canvas.ProjectID)
+			if projectErr != nil {
+				return nil, projectErr
+			}
+			return project.AigcProjectID, nil
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	return s.validateTaskAigcProject(userID, requested)
 }
 
 // 所有任务输入先收敛为 JSON 对象，确保计费与密钥保护不会因 Go 结构体类型不同而被绕过。

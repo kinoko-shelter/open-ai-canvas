@@ -115,6 +115,8 @@ type Project struct {
 	UserID           string        `json:"userId" gorm:"index;size:36;uniqueIndex:idx_projects_user_name,priority:1"`
 	Name             string        `json:"name" gorm:"size:240;uniqueIndex:idx_projects_user_name,priority:2"`
 	Type             string        `json:"type" gorm:"size:32;index"`
+	AigcProjectID    *int64        `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id;index"`
+	AigcProjectName  string        `json:"aigcProjectName,omitempty" gorm:"-"`
 	AspectRatio      string        `json:"aspectRatio" gorm:"size:16"`
 	SourceType       string        `json:"sourceType" gorm:"size:32"`
 	Description      string        `json:"description" gorm:"type:text"`
@@ -231,13 +233,14 @@ type WorkflowStepTask struct {
 }
 
 type CanvasProject struct {
-	ID          string    `json:"id" gorm:"primaryKey;size:80"`
-	UserID      string    `json:"userId" gorm:"index;size:36;index:idx_canvas_projects_user_updated,priority:1"`
-	ProjectID   string    `json:"projectId,omitempty" gorm:"index;size:36"`
-	Title       string    `json:"title" gorm:"size:240"`
-	PayloadJSON string    `json:"payloadJson" gorm:"type:text"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_canvas_projects_user_updated,priority:2"`
+	ID            string    `json:"id" gorm:"primaryKey;size:80"`
+	UserID        string    `json:"userId" gorm:"index;size:36;index:idx_canvas_projects_user_updated,priority:1"`
+	ProjectID     string    `json:"projectId,omitempty" gorm:"index;size:36"`
+	AigcProjectID *int64    `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id;index"`
+	Title         string    `json:"title" gorm:"size:240"`
+	PayloadJSON   string    `json:"payloadJson" gorm:"type:text"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt" gorm:"index:idx_canvas_projects_user_updated,priority:2"`
 }
 
 type CanvasShare struct {

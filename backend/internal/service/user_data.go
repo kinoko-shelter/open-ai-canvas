@@ -212,6 +212,9 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 		return UserDataSummary{}, existingErr
 	}
+	if err := s.inheritCanvasAigcProject(userID, &project); err != nil {
+		return UserDataSummary{}, err
+	}
 	existingBytes := int64(0)
 	if existing != nil {
 		existingBytes = int64(len([]byte(existing.PayloadJSON)))
@@ -245,6 +248,9 @@ func (s *Service) ReplaceUserCanvasProjects(userID string, req CanvasProjectsSyn
 	for _, raw := range req.Projects {
 		item, err := canvasProjectFromJSON(userID, raw)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.inheritCanvasAigcProject(userID, &item); err != nil {
 			return nil, err
 		}
 		projects = append(projects, item)
@@ -355,6 +361,22 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}, nil
+}
+
+func (s *Service) inheritCanvasAigcProject(userID string, project *model.CanvasProject) error {
+	if strings.TrimSpace(project.ProjectID) == "" {
+		project.AigcProjectID = nil
+		return nil
+	}
+	domainProject, err := s.repo.ProjectForUser(userID, project.ProjectID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return BadAuthRequest("画布关联的短剧项目不存在或无权访问")
+		}
+		return err
+	}
+	project.AigcProjectID = domainProject.AigcProjectID
+	return nil
 }
 
 func validateSyncedPayload(raw json.RawMessage, label string) error {

@@ -14,6 +14,7 @@ import (
 type CreateProjectRequest struct {
 	Name             string `json:"name"`
 	Type             string `json:"type"`
+	AigcProjectID    *int64 `json:"aigcProjectId"`
 	AspectRatio      string `json:"aspectRatio"`
 	SourceType       string `json:"sourceType"`
 	Description      string `json:"description"`
@@ -24,6 +25,7 @@ type CreateProjectRequest struct {
 type UpdateProjectRequest struct {
 	Name             string  `json:"name"`
 	Type             string  `json:"type"`
+	AigcProjectID    *int64  `json:"aigcProjectId"`
 	AspectRatio      string  `json:"aspectRatio"`
 	SourceType       string  `json:"sourceType"`
 	Description      *string `json:"description"`
@@ -185,8 +187,12 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 	if err := validateStyleProfilePreset(stylePresetID, styleProfileJSON); err != nil {
 		return model.Project{}, BadAuthRequest(err.Error())
 	}
+	aigcProjectID, err := s.ValidateAigcProjectForUser(userID, req.AigcProjectID)
+	if err != nil {
+		return model.Project{}, err
+	}
 	now := time.Now()
-	project := model.Project{ID: newID(), UserID: userID, Name: name, Type: projectType, AspectRatio: aspectRatio, SourceType: sourceType, Description: strings.TrimSpace(req.Description), StylePresetID: stylePresetID, StyleProfileJSON: styleProfileJSON, Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	project := model.Project{ID: newID(), UserID: userID, Name: name, Type: projectType, AigcProjectID: aigcProjectID, AspectRatio: aspectRatio, SourceType: sourceType, Description: strings.TrimSpace(req.Description), StylePresetID: stylePresetID, StyleProfileJSON: styleProfileJSON, Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.repo.CreateProject(&project); err != nil {
 		return model.Project{}, err
 	}
@@ -215,6 +221,13 @@ func (s *Service) UpdateProject(userID string, id string, req UpdateProjectReque
 	}
 	if value := strings.TrimSpace(req.SourceType); value != "" {
 		project.SourceType = value
+	}
+	if req.AigcProjectID != nil {
+		aigcProjectID, aigcProjectErr := s.ValidateAigcProjectForUser(userID, req.AigcProjectID)
+		if aigcProjectErr != nil {
+			return model.Project{}, aigcProjectErr
+		}
+		project.AigcProjectID = aigcProjectID
 	}
 	if req.Description != nil {
 		project.Description = strings.TrimSpace(*req.Description)
