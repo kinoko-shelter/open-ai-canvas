@@ -66,6 +66,38 @@ func TestBillingOrderAigcProjectIDPropagatesToLedgers(t *testing.T) {
 	}
 }
 
+func TestCreditLedgerAttachesAigcProjectName(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.AigcProject{}, &model.CreditLedgerEntry{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	projectID := int64(42)
+	if err := db.Create(&model.AigcProject{ProjectID: projectID, ProjectName: "测试项目"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditLedgerEntry{
+		ID: "entry-1", UserID: "user-1", Type: model.CreditLedgerConsume,
+		AmountMicrocredits: -100, AigcProjectID: &projectID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	entries, total, err := repo.CreditLedger("user-1", "all", 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(entries) != 1 {
+		t.Fatalf("ledger result = total %d, entries %d, want 1 and 1", total, len(entries))
+	}
+	if entries[0].AigcProjectName != "测试项目" {
+		t.Fatalf("project name = %q, want 测试项目", entries[0].AigcProjectName)
+	}
+}
+
 func billingOrderWithProject(id string, idempotencyKey string, projectID *int64) *model.BillingOrder {
 	return &model.BillingOrder{
 		ID:                         id,

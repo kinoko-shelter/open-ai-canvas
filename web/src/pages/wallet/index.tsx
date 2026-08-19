@@ -169,14 +169,21 @@ export default function WalletPage() {
         { title: "类型", dataIndex: "type", width: 120, render: (type) => <LedgerTypeTag type={type} /> },
         {
             title: "明细",
-            width: 400,
+            width: 300,
             ellipsis: true,
             render: (_, entry) => (
-                <div className="min-w-0 max-w-full overflow-hidden" title={[ledgerModelName(config, entry), [sceneLabel(entry.scene), entry.note].filter(Boolean).join(" · ")].filter(Boolean).join("\n")}>
+                <div className="min-w-0 max-w-full overflow-hidden" title={ledgerEntryTitle(config, entry)}>
                     <div className="truncate font-medium">{ledgerModelName(config, entry)}</div>
                     <div className="mt-1 truncate text-xs text-foreground/50">{[sceneLabel(entry.scene), entry.note].filter(Boolean).join(" · ") || "无补充说明"}</div>
                 </div>
             ),
+        },
+        {
+            title: "项目名称",
+            dataIndex: "aigcProjectName",
+            width: 180,
+            ellipsis: true,
+            render: (value?: string) => value ? <span className="font-medium text-foreground/80" title={value}>{value}</span> : <span className="text-foreground/35">--</span>,
         },
         {
             title: "积分变化",
@@ -285,7 +292,7 @@ export default function WalletPage() {
 
                     {screens.md ? (
                         <TableSurface className="mt-0 rounded-xl border-border/70 bg-transparent">
-                            <Table className="app-data-table wallet-ledger-table" rowKey="id" size="middle" loading={loading} columns={columns} dataSource={entries} pagination={false} tableLayout="fixed" scroll={{ x: 990 }} />
+                            <Table className="app-data-table wallet-ledger-table" rowKey="id" size="middle" loading={loading} columns={columns} dataSource={entries} pagination={false} tableLayout="fixed" scroll={{ x: 1070 }} />
                         </TableSurface>
                     ) : (
                         <div className="overflow-hidden rounded-md border border-border/70 bg-background">{entries.length ? entries.map((entry) => <LedgerMobileRow key={entry.id} config={config} entry={entry} />) : <WorkspaceState compact icon="wallet" title="没有匹配的积分记录" description="切换流水类型，或完成一次生成后再回来查看。" />}</div>
@@ -368,6 +375,7 @@ function LedgerMobileRow({ config, entry }: { config: AiConfig; entry: CreditLed
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                         <div className="truncate text-sm font-medium">{ledgerModelName(config, entry)}</div>
+                        {entry.aigcProjectName ? <div className="mt-1 truncate text-xs text-foreground/60">项目：{entry.aigcProjectName}</div> : null}
                         <div className="mt-1 text-xs text-foreground/45">{formatTime(entry.createdAt)}</div>
                     </div>
                     <CreditDelta value={entry.amountMicrocredits} />
@@ -426,6 +434,14 @@ function ledgerTitle(entry: CreditLedgerEntry) {
 
 function ledgerModelName(config: AiConfig, entry: CreditLedgerEntry) {
     return entry.model ? modelDisplayName(config, entry.model) : ledgerTitle(entry);
+}
+
+function ledgerEntryTitle(config: AiConfig, entry: CreditLedgerEntry) {
+    return [
+        ledgerModelName(config, entry),
+        entry.aigcProjectName ? `项目：${entry.aigcProjectName}` : "",
+        [sceneLabel(entry.scene), entry.note].filter(Boolean).join(" · "),
+    ].filter(Boolean).join("\n");
 }
 
 function sceneLabel(scene?: string) {

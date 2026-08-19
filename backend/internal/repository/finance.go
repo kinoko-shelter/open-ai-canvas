@@ -192,8 +192,46 @@ func (r *Repository) CreditLedger(userID string, entryType string, limit int, of
 	if offset < 0 {
 		offset = 0
 	}
-	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&items).Error
-	return items, total, err
+	if err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachAigcProjectNames(items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *Repository) attachAigcProjectNames(items []model.CreditLedgerEntry) error {
+	ids := make([]int64, 0, len(items))
+	seen := make(map[int64]struct{}, len(items))
+	for _, item := range items {
+		if item.AigcProjectID == nil {
+			continue
+		}
+		if _, ok := seen[*item.AigcProjectID]; ok {
+			continue
+		}
+		seen[*item.AigcProjectID] = struct{}{}
+		ids = append(ids, *item.AigcProjectID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var projects []model.AigcProject
+	if err := r.db.Select("project_id", "project_name").Where("project_id IN ?", ids).Find(&projects).Error; err != nil {
+		return err
+	}
+	names := make(map[int64]string, len(projects))
+	for _, project := range projects {
+		names[project.ProjectID] = project.ProjectName
+	}
+	for index := range items {
+		if items[index].AigcProjectID != nil {
+			items[index].AigcProjectName = names[*items[index].AigcProjectID]
+		}
+	}
+	return nil
 }
 
 func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, error) {

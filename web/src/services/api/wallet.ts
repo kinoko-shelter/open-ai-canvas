@@ -20,6 +20,7 @@ export type CreditLedgerEntry = {
     reservedAfterMicrocredits: number;
     billingOrderId?: string;
     aigcProjectId?: number;
+    aigcProjectName?: string;
     model?: string;
     channelId?: string;
     scene?: string;
