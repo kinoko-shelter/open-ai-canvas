@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -81,6 +82,16 @@ data: [DONE]
 	}
 }
 
+func TestParseTextEventStreamRejectsUnterminatedResponse(t *testing.T) {
+	responses := []byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"{\"title\":\"分镜\"}"}
+
+`)
+	if _, err := parseTextEventStream(responses, "responses"); err == nil || !strings.Contains(err.Error(), "未收到完成标记") {
+		t.Fatalf("unterminated Responses stream error = %v", err)
+	}
+}
+
 func TestPostStreamingTextSetsStreamHeaders(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +117,36 @@ data: [DONE]
 	got, err := postStreamingText(context.Background(), providerConfig{BaseURL: server.URL, APIKey: "test-key"}, "/chat/completions", map[string]interface{}{"model": "test-model"}, "chat-completion")
 	if err != nil || got != "流式分镜" {
 		t.Fatalf("postStreamingText() = %q, err = %v", got, err)
+	}
+}
+
+func TestPostStreamingTextRetriesIncompleteResponse(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		if attempts.Add(1) == 1 {
+			_, _ = w.Write([]byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"{\"title\":\"第一次\"}"}
+
+`))
+			return
+		}
+		_, _ = w.Write([]byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"{\"title\":\"重试成功\"}"}
+
+data: [DONE]
+
+`))
+	}))
+	defer server.Close()
+
+	got, err := postStreamingText(context.Background(), providerConfig{BaseURL: server.URL, APIKey: "test-key"}, "/responses", map[string]interface{}{"model": "test-model"}, "responses")
+	if err != nil || got != `{"title":"重试成功"}` {
+		t.Fatalf("postStreamingText() = %q, err = %v", got, err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("attempts = %d, want 2", got)
 	}
 }
 

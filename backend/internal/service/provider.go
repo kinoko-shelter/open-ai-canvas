@@ -67,6 +67,8 @@ type providerConfig struct {
 const providerHTTPTimeout = 5 * time.Minute
 const videoPollTimeout = 30 * time.Minute
 const maxProviderResponseBytes int64 = 64 << 20
+const maxStreamingTextAttempts = 2
+const streamingTextRetryDelay = time.Second
 
 type providerMedia struct {
 	ID         string `json:"id"`
@@ -2523,6 +2525,33 @@ func requestTextProvider(ctx context.Context, config providerConfig, path string
 }
 
 func postStreamingText(ctx context.Context, config providerConfig, path string, body map[string]interface{}, protocol string) (string, error) {
+	var lastErr error
+	retried := false
+	for attempt := 1; attempt <= maxStreamingTextAttempts; attempt++ {
+		text, err := postStreamingTextOnce(ctx, config, path, body, protocol)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if attempt == maxStreamingTextAttempts || !shouldRetryStreamingText(err) {
+			break
+		}
+		// 上游可能已产出部分 token 后才断流；只重试一次明确可恢复的传输错误，避免无限重复计费。
+		retried = true
+		if err := sleepContext(ctx, streamingTextRetryDelay); err != nil {
+			return "", err
+		}
+	}
+	if lastErr == nil {
+		return "", errors.New("流式文本请求失败")
+	}
+	if retried {
+		return "", fmt.Errorf("流式文本请求已自动重试一次仍失败：%w", lastErr)
+	}
+	return "", lastErr
+}
+
+func postStreamingTextOnce(ctx context.Context, config providerConfig, path string, body map[string]interface{}, protocol string) (string, error) {
 	// 只把分镜规划/修复切到上游 SSE，完整 JSON 仍在流结束后校验，避免半截结构污染画布。
 	body["stream"] = true
 	data, mimeType, err := postStreamingBinary(ctx, config, path, body)
@@ -2544,6 +2573,24 @@ func postStreamingText(ctx context.Context, config providerConfig, path string, 
 		return text, nil
 	}
 	return parseTextEventStream(data, protocol)
+}
+
+func shouldRetryStreamingText(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var httpErr providerHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusBadGateway || httpErr.StatusCode == http.StatusServiceUnavailable || httpErr.StatusCode == http.StatusGatewayTimeout
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "stream error") ||
+		strings.Contains(message, "internal_error") ||
+		strings.Contains(message, "unexpected eof") ||
+		strings.Contains(message, "unexpected end of json") ||
+		strings.Contains(message, "读取流式文本响应失败") ||
+		strings.Contains(message, "流式文本事件解析失败") ||
+		strings.Contains(message, "流式文本响应未正常结束")
 }
 
 func extractTextPayload(payload map[string]interface{}, protocol string) string {
@@ -2575,6 +2622,7 @@ func parseTextEventStream(data []byte, protocol string) (string, error) {
 	var text strings.Builder
 	var eventName string
 	var dataLines []string
+	terminated := false
 
 	flush := func() error {
 		if len(dataLines) == 0 {
@@ -2583,7 +2631,12 @@ func parseTextEventStream(data []byte, protocol string) (string, error) {
 		}
 		raw := strings.TrimSpace(strings.Join(dataLines, "\n"))
 		dataLines = nil
-		if raw == "" || raw == "[DONE]" {
+		if raw == "" {
+			eventName = ""
+			return nil
+		}
+		if raw == "[DONE]" {
+			terminated = true
 			eventName = ""
 			return nil
 		}
@@ -2591,7 +2644,8 @@ func parseTextEventStream(data []byte, protocol string) (string, error) {
 		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 			return fmt.Errorf("流式文本事件解析失败：%w", err)
 		}
-		if eventName == "error" {
+		eventType := firstNonEmpty(eventName, stringField(payload, "type"))
+		if eventType == "error" || eventType == "response.failed" || eventType == "response.incomplete" {
 			if err := validateTextPayload(payload); err != nil {
 				return err
 			}
@@ -2599,6 +2653,11 @@ func parseTextEventStream(data []byte, protocol string) (string, error) {
 		}
 		if err := validateTextPayload(payload); err != nil {
 			return err
+		}
+		if eventType == "response.completed" {
+			terminated = true
+			eventName = ""
+			return nil
 		}
 		if protocol == "responses" {
 			text.WriteString(stringField(payload, "delta"))
@@ -2638,6 +2697,9 @@ func parseTextEventStream(data []byte, protocol string) (string, error) {
 	}
 	if text.Len() == 0 {
 		return "", errors.New("流式文本接口没有返回内容")
+	}
+	if !terminated {
+		return "", errors.New("流式文本响应未正常结束，未收到完成标记")
 	}
 	return text.String(), nil
 }
