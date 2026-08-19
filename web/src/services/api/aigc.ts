@@ -33,6 +33,11 @@ export type AigcProject = {
     updatedAt: string;
 };
 
+export type AigcProjectTreeNode = {
+    project: AigcProject;
+    children?: AigcProjectTreeNode[];
+};
+
 export type AigcProjectInput = Pick<AigcProject, "projectName" | "projectNameOuter" | "projectType" | "projectDesc" | "status" | "level" | "parentId" | "deptId" | "remark">;
 
 export function listAigcDepartments(params: { keyword?: string } = {}) {
@@ -53,6 +58,10 @@ export function listAigcProjects(params: { keyword?: string; status?: string; le
 
 export function listAvailableAigcProjects() {
     return request<{ projects: AigcProject[] }>(api.get("/aigc/projects/available"));
+}
+
+export function listAvailableAigcProjectTree() {
+    return request<{ projects: AigcProjectTreeNode[] }>(api.get("/aigc/projects/available/tree"));
 }
 
 export function createAigcProject(input: AigcProjectInput) {

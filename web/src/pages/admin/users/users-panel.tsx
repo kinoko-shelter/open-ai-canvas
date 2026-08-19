@@ -16,6 +16,7 @@ import { AdminUserCreateDrawer, AdminUserEditDrawer, AdminUserPasswordModal } fr
 
 const columnStorageKey = "admin-users-visible-columns";
 const allColumnKeys = userColumnOptions.map((item) => item.key);
+const defaultVisibleColumnKeys: UserColumnKey[] = ["user", "department", "actions"];
 
 export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: LocalUser) => void }) {
     const actor = useUserStore((state) => state.user);
@@ -37,7 +38,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
         try {
             const saved = JSON.parse(window.localStorage.getItem(columnStorageKey) || "[]") as UserColumnKey[];
             const valid = saved.filter((key) => allColumnKeys.includes(key));
-            return new Set(valid.length ? [...valid, "user", "actions"] : allColumnKeys);
+            return new Set(valid.length ? [...valid, ...defaultVisibleColumnKeys] : allColumnKeys);
         } catch {
             return new Set(allColumnKeys);
         }

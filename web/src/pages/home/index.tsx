@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { App, Button } from "antd";
+import { Button } from "antd";
 import { ArrowRight, Bot, Clapperboard, FolderKanban, Images, LayoutGrid, ListChecks, Plus, Sparkles } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
@@ -9,7 +9,6 @@ import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/
 import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
 import { projectDetailStage, projectSummaryCompletion } from "@/lib/project-workbench";
 import { getProject, listProjects, type ProjectSummary } from "@/services/api/projects";
-import { createCanvasProjectWithRemoteSync } from "@/services/user-data-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -21,7 +20,6 @@ const workflow = [
 ];
 
 export default function IndexPage() {
-    const { message } = App.useApp();
     const navigate = useNavigate();
     const canvasHydrated = useCanvasStore((state) => state.hydrated);
     const canvasProjects = useCanvasStore((state) => state.projects);
@@ -50,10 +48,7 @@ export default function IndexPage() {
             navigate(`/login?next=${encodeURIComponent("/canvas?mode=new")}`);
             return;
         }
-        void createCanvasProjectWithRemoteSync(`自由画布 ${canvasProjects.length + 1}`).then(({ id, syncError }) => {
-            if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
-            navigate(`/canvas/${id}`);
-        });
+        navigate("/canvas?mode=new");
     };
 
     const loadingUserWorkspace = !userHydrated || (Boolean(user && shortDramaEnabled) && domainProjectsQuery.isLoading);

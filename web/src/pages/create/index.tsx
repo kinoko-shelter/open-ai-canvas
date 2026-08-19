@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
 import localforage from "localforage";
 import { App, Drawer, Modal, Popover, Spin, Tooltip } from "antd";
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, FolderTree, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Clock3, Download, FileText, Film, FolderOpen, FolderPlus, History, Image as ImageIcon, LoaderCircle, Maximize2, MessageSquareText, Music2, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, Square, Trash2, X } from "lucide-react";
 import { Link } from "react-router";
 
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
@@ -20,14 +20,14 @@ import { resolveCompatibleModel, type ModelRequirements } from "@/lib/model-sele
 import { parseBackendGenerationResult, runBackendGenerationTask, runBackendGenerationTaskBatch } from "@/services/api/generation-task";
 import { collectGenerationTaskMedia, persistGenerationImageResult, persistGenerationVideoResult } from "@/services/generation-media-collection";
 import { requestImageQuestion } from "@/services/api/image";
-import { listAvailableAigcProjects, type AigcProject } from "@/services/api/aigc";
+import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
+import { listAvailableAigcProjectTree, type AigcProjectTreeNode } from "@/services/api/aigc";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { modelDisplayName, modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
-import { useUserStore } from "@/stores/use-user-store";
 import { buildCreationMentionReferences, creationReferenceMetadata, displayCreationPrompt, expandCreationPrompt, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationImageAsset, creationVideoAsset, type CreationAttachment } from "./creation-assets";
 
@@ -127,8 +127,6 @@ export default function CreatePage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
-    const userDeptId = useUserStore((state) => state.user?.deptId);
-    const userRole = useUserStore((state) => state.user?.role);
     const [conversations, setConversations] = useState<CreationConversation[]>([]);
     const [activeId, setActiveId] = useState("");
     const [hydrated, setHydrated] = useState(false);
@@ -137,7 +135,7 @@ export default function CreatePage() {
     const [attachments, setAttachments] = useState<CreationAttachment[]>([]);
     const [draftReferences, setDraftReferences] = useState<CreationReference[]>([]);
     const [addedSkills, setAddedSkills] = useState<Skill[]>([]);
-    const [availableAigcProjects, setAvailableAigcProjects] = useState<AigcProject[]>([]);
+    const [availableAigcProjects, setAvailableAigcProjects] = useState<AigcProjectTreeNode[]>([]);
     const [aigcProjectsLoading, setAigcProjectsLoading] = useState(false);
     const [aigcProjectLoadError, setAigcProjectLoadError] = useState("");
     const [selectedAigcProjectId, setSelectedAigcProjectId] = useState<number | undefined>();
@@ -198,7 +196,7 @@ export default function CreatePage() {
     const recoverableErrorTaskIds = useMemo(() => recoverableCreationErrorTaskIds(conversations), [conversations]);
     const shots = useMemo(() => shotsFromMessages(activeConversation?.messages || []), [activeConversation]);
     const visibleShotIndex = shots.length ? selectedShotIndex >= 0 && selectedShotIndex < shots.length ? selectedShotIndex : shots.length - 1 : -1;
-    const selectedAigcProject = useMemo(() => availableAigcProjects.find((item) => item.projectId === selectedAigcProjectId), [availableAigcProjects, selectedAigcProjectId]);
+    const selectedAigcProject = useMemo(() => findAigcProjectTreeNode(availableAigcProjects, selectedAigcProjectId)?.project, [availableAigcProjects, selectedAigcProjectId]);
 
     useEffect(() => {
         if (mode !== "image") return;
@@ -350,16 +348,16 @@ export default function CreatePage() {
         let cancelled = false;
         setAigcProjectsLoading(true);
         setAigcProjectLoadError("");
-        listAvailableAigcProjects().then(({ projects }) => {
+        listAvailableAigcProjectTree().then(({ projects }) => {
             if (cancelled) return;
-            const isAdmin = userRole === "admin";
-            const availableProjects = projects.filter((project) => project.level === 2 && (isAdmin || (project.status === "启用" && (!userDeptId || project.deptId === userDeptId))));
-            const selectableProjects = availableProjects.filter((project) => project.status === "启用");
+            const availableProjects = projects.filter((project) => project.project.status === "启用" || project.children?.some((child) => child.project.status === "启用"));
             setAvailableAigcProjects(availableProjects);
             const lastProjectId = readLastAigcProjectId(lastAigcProjectStorageKeyRef.current);
             setSelectedAigcProjectId((current) => {
+                const selectableProjects = flattenAigcProjectTree(availableProjects).filter((project) => project.status === "启用");
                 if (current && selectableProjects.some((project) => project.projectId === current)) return current;
                 if (lastProjectId && selectableProjects.some((project) => project.projectId === lastProjectId)) return lastProjectId;
+                if (selectableProjects[0]) return selectableProjects[0].projectId;
                 if (lastProjectId) writeLastAigcProjectId(lastAigcProjectStorageKeyRef.current, undefined);
                 return undefined;
             });
@@ -375,7 +373,7 @@ export default function CreatePage() {
         return () => {
             cancelled = true;
         };
-    }, [userDeptId, userRole]);
+    }, []);
 
     useEffect(() => {
         if (!followLatestMessageRef.current) return;
@@ -536,15 +534,19 @@ export default function CreatePage() {
             return;
         }
         const taskAigcProject = selectedAigcProject;
-        const aigcProjectMetadata = taskAigcProject ? {
+        if (!taskAigcProject) {
+            toast.warning("请先选择业务项目");
+            return;
+        }
+        const aigcProjectMetadata = {
             aigcProjectId: taskAigcProject.projectId,
             aigcProjectName: taskAigcProject.projectName,
             aigcProjectDeptId: taskAigcProject.deptId,
             aigcProjectParentId: taskAigcProject.parentId,
             aigcProjectFirstCategoryId: taskAigcProject.firstCategoryId,
             aigcProjectFirstCategoryName: taskAigcProject.firstCategoryName,
-        } : {};
-        const settings = { ratio, seconds, quality, videoQuality, count, ...(taskAigcProject ? { aigcProjectId: taskAigcProject.projectId, aigcProjectName: taskAigcProject.projectName } : {}) };
+        };
+        const settings = { ratio, seconds, quality, videoQuality, count, aigcProjectId: taskAigcProject.projectId, aigcProjectName: taskAigcProject.projectName };
         const references = selectedCreationReferences(text, mentionReferences);
         // 后端对图片和视频使用不同的参考字段；这里先拆分，避免媒体类型在写入任务时被误判。
         const referenceImages = attachments.filter(isImageAttachment);
@@ -589,13 +591,13 @@ export default function CreatePage() {
                     signal: controller.signal,
                     onReasoning: (reasoning) => updateAssistant(assistantMessage.id, (item) => ({ ...item, reasoning })),
                     scene: "text",
-                    aigcProjectId: taskAigcProject?.projectId,
+                    aigcProjectId: taskAigcProject.projectId,
                 });
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runBackendGenerationTaskBatch({
                     mode: "image",
-                    aigcProjectId: taskAigcProject?.projectId,
+                    aigcProjectId: taskAigcProject.projectId,
                     prompt: expandedPrompt,
                     config: { ...requestConfig, count: "1" },
                     referenceImages,
@@ -631,7 +633,7 @@ export default function CreatePage() {
             } else {
                 const result = await runBackendGenerationTask({
                     mode: "video",
-                    aigcProjectId: taskAigcProject?.projectId,
+                    aigcProjectId: taskAigcProject.projectId,
                     prompt: expandedPrompt,
                     config: requestConfig,
                     referenceImages,
@@ -735,7 +737,7 @@ export default function CreatePage() {
         setQuality(nextSettings.quality);
         setVideoQuality(nextSettings.videoQuality);
         setCount(nextSettings.count);
-        if (nextSettings.aigcProjectId && availableAigcProjects.some((project) => project.projectId === nextSettings.aigcProjectId && project.status === "启用")) changeAigcProject(nextSettings.aigcProjectId);
+        if (nextSettings.aigcProjectId && flattenAigcProjectTree(availableAigcProjects).some((project) => project.projectId === nextSettings.aigcProjectId && project.status === "启用")) changeAigcProject(nextSettings.aigcProjectId);
     };
 
     const retryFailedMessage = (item: CreationMessage, index: number) => {
@@ -944,6 +946,28 @@ function CreationMediaPreviewModal({ url, type, onClose }: { url: string; type: 
     return <Modal open={Boolean(url)} title={null} footer={null} centered destroyOnHidden width={type === "video" ? "min(1160px, calc(100vw - 32px))" : "min(980px, calc(100vw - 32px))"} onCancel={onClose} className="creation-media-preview-modal" styles={{ body: { padding: 0 } }}>{url ? type === "video" ? <video controls autoPlay className="creation-media-preview-video" src={url} /> : <img className="creation-media-preview-image" src={url} alt="媒体预览" /> : null}</Modal>;
 }
 
+function findAigcProjectTreeNode(tree: AigcProjectTreeNode[], value?: number): AigcProjectTreeNode | undefined {
+    if (!value) return undefined;
+    for (const node of tree) {
+        if (node.project.projectId === value) return node;
+        const child = node.children?.length ? findAigcProjectTreeNode(node.children, value) : undefined;
+        if (child) return child;
+    }
+    return undefined;
+}
+
+function flattenAigcProjectTree(tree: AigcProjectTreeNode[]): AigcProjectTreeNode["project"][] {
+    const result: AigcProjectTreeNode["project"][] = [];
+    const visit = (nodes: AigcProjectTreeNode[]) => {
+        for (const node of nodes) {
+            result.push(node.project);
+            if (node.children?.length) visit(node.children);
+        }
+    };
+    visit(tree);
+    return result;
+}
+
 type ComposerProps = {
     variant: "empty" | "thread";
     mode: CreationMode;
@@ -967,7 +991,7 @@ type ComposerProps = {
     setRatio: (value: string) => void;
     seconds: string;
     setSeconds: (value: string) => void;
-    aigcProjects: AigcProject[];
+    aigcProjects: AigcProjectTreeNode[];
     aigcProjectsLoading: boolean;
     aigcProjectLoadError: string;
     selectedAigcProjectId?: number;
@@ -1021,7 +1045,17 @@ function CreationComposer(props: ComposerProps) {
                 <ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} showSelectedPrice={false} variant="creation" />
                 {props.mode === "video" || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
                 {props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
-                <AigcProjectMenu projects={props.aigcProjects} loading={props.aigcProjectsLoading} error={props.aigcProjectLoadError} selectedProjectId={props.selectedAigcProjectId} disabled={props.busy} onChange={props.onAigcProjectChange} />
+                <AigcProjectTreePicker
+                    tree={props.aigcProjects}
+                    loading={props.aigcProjectsLoading}
+                    error={props.aigcProjectLoadError}
+                    value={props.selectedAigcProjectId}
+                    required
+                    disabled={props.busy}
+                    onChange={props.onAigcProjectChange}
+                    placeholder="选择业务项目"
+                    buttonClassName="creation-chat-control is-project"
+                />
             </div>
             {props.busy ? <button type="button" className="creation-chat-submit is-stopping" onClick={props.onStop} aria-label="停止生成"><Square className="size-3.5 fill-current" /></button> : <button type="button" className="creation-chat-submit" disabled={!canSubmit} onClick={props.onSubmit} aria-label="发送"><ArrowUp className="size-4" /></button>}
         </footer>
@@ -1087,40 +1121,6 @@ function DurationMenu({ profile, seconds, onChange }: { profile: VideoCapability
     </> : <div className="creation-duration-choices">{presets.map((item) => <button key={item} type="button" className={item === value ? "is-selected" : ""} onClick={() => onChange(String(item))}>{item}s</button>)}</div>;
     return <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottom" arrow={false} classNames={{ root: "creation-control-popover", container: "creation-control-popover-surface", content: "creation-control-popover-content" }} content={<div className="creation-duration-menu"><div className="creation-duration-heading"><span>时长</span><strong>{value} 秒</strong></div>{durationControl}</div>}>
         <button type="button" className="creation-chat-control is-duration" aria-label={`视频时长：${value}秒`}><Clock3 /><span>{value}s</span><ChevronDown className={open ? "is-open" : ""} /></button>
-    </Popover>;
-}
-
-function AigcProjectMenu({ projects, selectedProjectId, loading, error, disabled, onChange }: { projects: AigcProject[]; selectedProjectId?: number; loading: boolean; error: string; disabled: boolean; onChange: (value?: number) => void }) {
-    const [open, setOpen] = useState(false);
-    const selected = projects.find((project) => project.projectId === selectedProjectId);
-    const hasSelectableProject = projects.some((project) => project.status === "启用");
-    const label = loading ? "项目..." : selected?.projectName || "不选择项目";
-    const menu = <div className="creation-project-menu">
-        <div className="creation-project-heading"><span>二级项目</span>{projects.length ? <strong>{projects.length} 个</strong> : null}</div>
-        {loading ? <div className="creation-project-empty">正在读取项目</div> : error ? <div className="creation-project-empty">{error}</div> : projects.length ? <div className="creation-project-options" role="listbox" aria-label="选择二级项目">
-            <button type="button" role="option" aria-selected={!selectedProjectId} className={!selectedProjectId ? "is-selected" : ""} onClick={() => { onChange(undefined); setOpen(false); }}>
-                <span>不选择项目</span>
-                <small>生成记录不绑定运营项目</small>
-                {!selectedProjectId ? <Check /> : null}
-            </button>
-            {projects.map((project) => {
-                const projectDisabled = project.status !== "启用";
-                return <button key={project.projectId} type="button" role="option" aria-selected={project.projectId === selectedProjectId} className={`${project.projectId === selectedProjectId ? "is-selected" : ""}${projectDisabled ? " is-disabled" : ""}`} disabled={projectDisabled} onClick={() => { onChange(project.projectId); setOpen(false); }}>
-                    <span>{project.projectName}</span>
-                    <small>{project.status === "启用" ? `ID ${project.projectId}` : "禁用"}</small>
-                    {project.projectId === selectedProjectId ? <Check /> : null}
-                </button>;
-            })}
-        </div> : <div className="creation-project-options" role="listbox" aria-label="选择二级项目">
-            <button type="button" role="option" aria-selected className="is-selected" onClick={() => { onChange(undefined); setOpen(false); }}>
-                <span>不选择项目</span>
-                <small>{hasSelectableProject ? "生成记录不绑定运营项目" : "暂无可用二级项目"}</small>
-                <Check />
-            </button>
-        </div>}
-    </div>;
-    return <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottom" arrow={false} classNames={{ root: "creation-control-popover", container: "creation-control-popover-surface", content: "creation-control-popover-content" }} content={menu}>
-        <button type="button" className="creation-chat-control is-project" disabled={disabled} aria-label={`二级项目：${label}`}><FolderTree /><span>{label}</span><ChevronDown className={open ? "is-open" : ""} /></button>
     </Popover>;
 }
 

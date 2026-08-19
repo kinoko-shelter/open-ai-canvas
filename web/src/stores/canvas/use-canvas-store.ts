@@ -11,6 +11,7 @@ import type { TimelineProject } from "@/types/timeline";
 export type CanvasProject = {
     id: string;
     projectId?: string;
+    aigcProjectId?: number;
     title: string;
     createdAt: string;
     updatedAt: string;
@@ -28,13 +29,13 @@ export type CanvasProject = {
 type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
-    createProject: (title?: string, projectId?: string) => string;
+    createProject: (title?: string, projectId?: string, aigcProjectId?: number) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "projectId" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "timeline">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "projectId" | "aigcProjectId" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "timeline">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -85,12 +86,13 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             projects: [],
-            createProject: (title = "未命名画布", projectId) => {
+            createProject: (title = "未命名画布", projectId, aigcProjectId) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
                 const project: CanvasProject = {
                     id,
                     projectId,
+                    aigcProjectId,
                     title,
                     createdAt: now,
                     updatedAt: now,
@@ -111,6 +113,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const project: CanvasProject = {
                     id: nanoid(),
                     projectId: source.projectId,
+                    aigcProjectId: source.aigcProjectId,
                     title: source.title || "导入画布",
                     createdAt: source.createdAt || now,
                     updatedAt: now,

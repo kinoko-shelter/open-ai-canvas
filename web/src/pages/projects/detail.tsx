@@ -35,6 +35,11 @@ export default function ProjectDetailPage() {
     const refreshProject = () => { void queryClient.invalidateQueries({ queryKey: ["project", projectId] }); void queryClient.invalidateQueries({ queryKey: ["projects"] }); };
     const createCanvas = () => {
         if (detail.data?.project.status === "archived") { message.warning("项目已归档，请先在项目设置中恢复"); return; }
+        if (!detail.data?.project.aigcProjectId) {
+            message.warning("请先在项目设置中选择业务项目");
+            navigate(`/projects/${projectId}/settings`);
+            return;
+        }
         const activeChapterId = chapterId || sessionStorage.getItem(`project-active-chapter:${projectId}`) || "";
         const unit = activeView === "chapters"
             ? detail.data?.units.find((item) => item.id === activeChapterId) || detail.data?.units.slice().sort((left, right) => left.position - right.position)[0]
@@ -43,7 +48,7 @@ export default function ProjectDetailPage() {
         const seed = unit && shots.length ? upsertProjectChapterStoryboard([], [], { unit, shots }) : undefined;
         const initialContent = seed ? { nodes: seed.nodes, connections: seed.connections } : undefined;
         const title = unit ? `${unit.title} · ${shots.length ? "分镜画布" : "画布"}` : `${detail.data?.project.name || "项目"} · 新画布`;
-        void createCanvasProjectWithRemoteSync(title, projectId, initialContent).then(async ({ id, syncError }) => {
+        void createCanvasProjectWithRemoteSync(title, projectId, initialContent, detail.data?.project.aigcProjectId || undefined).then(async ({ id, syncError }) => {
             if (syncError) {
                 message.warning(syncError instanceof Error ? `画布已保存在本地，项目关联稍后重试：${syncError.message}` : "画布已保存在本地，项目关联稍后重试");
                 navigate(`/canvas/${id}`);

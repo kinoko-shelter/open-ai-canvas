@@ -177,7 +177,7 @@ export function getProject(id: string) {
     return request<ProjectDetail>(api.get(`/projects/${encodeURIComponent(id)}`));
 }
 
-export function createProject(input: { name: string; type: string; aigcProjectId?: number; aspectRatio: string; sourceType: string; description?: string; stylePresetId?: string; styleProfileJson?: string }) {
+export function createProject(input: { name: string; type: string; aigcProjectId: number; aspectRatio: string; sourceType: string; description?: string; stylePresetId?: string; styleProfileJson?: string }) {
     return request<{ project: Project }>(api.post("/projects", input));
 }
 

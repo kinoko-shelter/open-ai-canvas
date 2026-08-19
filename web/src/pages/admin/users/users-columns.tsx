@@ -13,7 +13,7 @@ export type UserColumnKey = "user" | "email" | "department" | "credits" | "role"
 export const userColumnOptions: Array<{ key: UserColumnKey; label: string; locked?: boolean }> = [
     { key: "user", label: "用户", locked: true },
     { key: "email", label: "邮箱" },
-    { key: "department", label: "团队" },
+    { key: "department", label: "所属团队" },
     { key: "credits", label: "当前积分" },
     { key: "role", label: "角色" },
     { key: "status", label: "状态" },
@@ -53,7 +53,7 @@ export function createUserColumns({
             ),
         },
         { key: "email", title: "邮箱", dataIndex: "email", render: (email) => email || <span className="text-foreground/40">未填写</span> },
-        { key: "department", title: "团队", dataIndex: "departmentName", width: 140, render: (value) => value || <span className="text-foreground/40">未分配</span> },
+        { key: "department", title: "所属团队", dataIndex: "departmentName", width: 160, render: (value) => value || <span className="text-foreground/40">未分配</span> },
         {
             key: "credits",
             title: "当前积分",

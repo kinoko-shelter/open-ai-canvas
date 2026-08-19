@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router";
+import { Modal } from "antd";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
@@ -47,6 +48,9 @@ import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/componen
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { getProject } from "@/services/api/projects";
+import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
+import { listAvailableAigcProjectTree } from "@/services/api/aigc";
+import { saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasShareModal } from "@/components/canvas/canvas-share-modal";
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
@@ -182,6 +186,9 @@ function InfiniteCanvasPage() {
     const [workspaceMode, setWorkspaceMode] = useState<CanvasWorkspaceMode>(readCanvasWorkspaceMode);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [shareModalOpen, setShareModalOpen] = useState(false);
+    const [canvasSettingsOpen, setCanvasSettingsOpen] = useState(false);
+    const [canvasSettingsProjectId, setCanvasSettingsProjectId] = useState<number | undefined>();
+    const [canvasSettingsSaving, setCanvasSettingsSaving] = useState(false);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
     const [tapNowImportOpen, setTapNowImportOpen] = useState(false);
     const [nodeSearchOpen, setNodeSearchOpen] = useState(false);
@@ -338,6 +345,25 @@ function InfiniteCanvasPage() {
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available-tree"], queryFn: listAvailableAigcProjectTree, enabled: canvasSettingsOpen });
+    const openCanvasSettings = useCallback(() => {
+        setCanvasSettingsProjectId(currentProject?.aigcProjectId);
+        setCanvasSettingsOpen(true);
+    }, [currentProject?.aigcProjectId]);
+    const saveCanvasSettings = useCallback(async () => {
+        if (!canvasSettingsProjectId) return;
+        setCanvasSettingsSaving(true);
+        updateProject(projectId, { aigcProjectId: canvasSettingsProjectId });
+        try {
+            await saveRemoteUserDataNow();
+            message.success("画布业务项目已保存");
+            setCanvasSettingsOpen(false);
+        } catch (error) {
+            message.error(error instanceof Error ? `画布业务项目保存失败：${error.message}` : "画布业务项目保存失败");
+        } finally {
+            setCanvasSettingsSaving(false);
+        }
+    }, [canvasSettingsProjectId, message, projectId, updateProject]);
     const refetchLinkedProject = linkedProjectQuery.refetch;
     useEffect(() => {
         if (!projectLoaded || !linkedProjectQuery.data) return;
@@ -1591,6 +1617,7 @@ function InfiniteCanvasPage() {
                             onUndo={undoCanvas}
                             onRedo={redoCanvas}
                             onShare={() => setShareModalOpen(true)}
+                            onOpenSettings={openCanvasSettings}
                             agentOpen={assistantOpen}
                             compactAgentStatus={codexCompactAgent ? { connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity } : undefined}
                             onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
@@ -1635,6 +1662,33 @@ function InfiniteCanvasPage() {
                     ) : null}
 
                     <CanvasShareModal projectId={projectId} open={shareModalOpen} onClose={() => setShareModalOpen(false)} beforeCreate={saveCanvasProject} />
+                    <Modal
+                        title="画布设置"
+                        open={canvasSettingsOpen}
+                        okText="保存"
+                        cancelText="取消"
+                        confirmLoading={canvasSettingsSaving}
+                        okButtonProps={{ disabled: !canvasSettingsProjectId }}
+                        onCancel={() => setCanvasSettingsOpen(false)}
+                        onOk={() => void saveCanvasSettings()}
+                        width={520}
+                        styles={{ body: { paddingTop: 12 } }}
+                    >
+                        <div className="grid gap-2">
+                            <div className="text-sm font-semibold">所属业务项目</div>
+                            <p className="m-0 text-xs text-foreground/50">一级项目和二级项目都可以选择，项目为必填项。</p>
+                            <AigcProjectTreePicker
+                                tree={aigcProjectsQuery.data?.projects || []}
+                                loading={aigcProjectsQuery.isLoading}
+                                error={aigcProjectsQuery.error instanceof Error ? aigcProjectsQuery.error.message : ""}
+                                value={canvasSettingsProjectId}
+                                required
+                                onChange={setCanvasSettingsProjectId}
+                                placeholder="选择业务项目"
+                                buttonClassName="creation-chat-control is-project w-full"
+                            />
+                        </div>
+                    </Modal>
                     <LibTVImportDialog open={libTVImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setLibTVImportOpen(false)} onApply={applyImportedCanvas} />
                     <TapNowImportDialog open={tapNowImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setTapNowImportOpen(false)} onApply={applyImportedCanvas} />
 

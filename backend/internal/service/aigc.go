@@ -38,6 +38,11 @@ type AigcProjectPage struct {
 	Limit    int                 `json:"limit"`
 }
 
+type AigcProjectTreeNode struct {
+	Project  model.AigcProject      `json:"project"`
+	Children []AigcProjectTreeNode `json:"children,omitempty"`
+}
+
 func (s *Service) RequireAigcProjectManager(user *model.User) error {
 	if user == nil {
 		return Unauthorized("请先登录")
@@ -179,6 +184,38 @@ func (s *Service) AvailableAigcSecondLevelProjects(actor *model.User) ([]model.A
 	return s.repo.AigcSecondLevelProjectsByDept(*actor.DeptID)
 }
 
+func (s *Service) AvailableAigcProjectTree(actor *model.User) ([]AigcProjectTreeNode, error) {
+	if actor == nil {
+		return nil, Unauthorized("请先登录")
+	}
+	if actor.Status != model.UserStatusActive {
+		return nil, Forbidden("当前账号已停用")
+	}
+	roots, err := s.repo.AigcAvailableFirstLevelProjects()
+	if err != nil {
+		return nil, err
+	}
+	var secondLevel []model.AigcProject
+	switch actor.Role {
+	case model.UserRoleAdmin:
+		secondLevel, err = s.repo.AigcAvailableSecondLevelProjects(nil)
+	case model.UserRoleTeamLead:
+		if actor.DeptID == nil {
+			return buildAigcProjectTree(roots, nil), nil
+		}
+		secondLevel, err = s.repo.AigcAvailableSecondLevelProjects(actor.DeptID)
+	default:
+		if actor.DeptID == nil {
+			return buildAigcProjectTree(roots, nil), nil
+		}
+		secondLevel, err = s.repo.AigcAvailableSecondLevelProjects(actor.DeptID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return buildAigcProjectTree(roots, secondLevel), nil
+}
+
 func (s *Service) CreateAigcProject(actor *model.User, req AigcProjectRequest) (*model.AigcProject, error) {
 	if err := s.RequireAigcProjectManager(actor); err != nil {
 		return nil, err
@@ -195,6 +232,9 @@ func (s *Service) CreateAigcProject(actor *model.User, req AigcProjectRequest) (
 	}
 	if err := s.ensureAigcProjectNameUnique(project.ProjectName, 0); err != nil {
 		return nil, err
+	}
+	if project.Level == 2 && project.DeptID <= 0 {
+		return nil, BadAuthRequest("二级项目必须选择团队")
 	}
 	project.UpdatedAt = project.CreatedAt
 	if err := s.repo.Create(&project); err != nil {
@@ -289,10 +329,7 @@ func (s *Service) validateTaskAigcProject(userID string, id *int64) (*int64, err
 	if project.Status != "启用" {
 		return nil, BadAuthRequest("所选运营项目已禁用")
 	}
-	if project.Level != 2 {
-		return nil, BadAuthRequest("请选择二级运营项目")
-	}
-	if user.Role != model.UserRoleAdmin {
+	if project.Level == 2 && user.Role != model.UserRoleAdmin {
 		if user.DeptID == nil || project.DeptID != *user.DeptID {
 			return nil, Forbidden("无权使用所选运营项目")
 		}
@@ -381,6 +418,20 @@ func (s *Service) aigcProjectFromRequest(req AigcProjectRequest, project model.A
 	project.FirstCategoryID = &parent.ProjectID
 	project.FirstCategoryName = parent.ProjectName
 	return project, nil
+}
+
+func buildAigcProjectTree(roots []model.AigcProject, secondLevel []model.AigcProject) []AigcProjectTreeNode {
+	childrenByParent := make(map[int64][]AigcProjectTreeNode, len(roots))
+	for _, project := range secondLevel {
+		parentID := project.ParentID
+		childrenByParent[parentID] = append(childrenByParent[parentID], AigcProjectTreeNode{Project: project})
+	}
+	nodes := make([]AigcProjectTreeNode, 0, len(roots))
+	for _, root := range roots {
+		node := AigcProjectTreeNode{Project: root, Children: childrenByParent[root.ProjectID]}
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 func (s *Service) ensureAigcProjectNameUnique(name string, currentID int64) error {

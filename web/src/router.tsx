@@ -34,6 +34,7 @@ const LoginPage = lazy(() => import("@/pages/auth/login"));
 const RegisterPage = lazy(() => import("@/pages/auth/register"));
 const CanvasPage = lazy(loadCanvasPage);
 const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
+const CanvasSettingsPage = lazy(() => import("@/pages/canvas/settings"));
 const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
 const CreatePage = lazy(loadCreatePage);
 const HomePage = lazy(loadHomePage);
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
             { path: "/projects/:projectId/chapters/:chapterId", element: <RequireAuth><RequireFeature feature="shortDramaEnabled">{deferred(<ProjectDetailPage />)}</RequireFeature></RequireAuth> },
             { path: "/canvas", element: <RequireAuth>{deferred(<CanvasPage />)}</RequireAuth> },
             { path: "/canvas/:id", element: <RequireAuth>{deferred(<CanvasProjectPage />)}</RequireAuth> },
+            { path: "/canvas/:id/settings", element: <RequireAuth>{deferred(<CanvasSettingsPage />)}</RequireAuth> },
             {
                 path: "/admin",
                 element: <RequireAuth>{deferred(<AdminPage />)}</RequireAuth>,

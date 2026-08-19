@@ -191,6 +191,9 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 	if err != nil {
 		return model.Project{}, err
 	}
+	if aigcProjectID == nil {
+		return model.Project{}, BadAuthRequest("请选择业务项目")
+	}
 	now := time.Now()
 	project := model.Project{ID: newID(), UserID: userID, Name: name, Type: projectType, AigcProjectID: aigcProjectID, AspectRatio: aspectRatio, SourceType: sourceType, Description: strings.TrimSpace(req.Description), StylePresetID: stylePresetID, StyleProfileJSON: styleProfileJSON, Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.repo.CreateProject(&project); err != nil {

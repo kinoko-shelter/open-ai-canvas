@@ -6,13 +6,14 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { CollectionGrid, ListToolbar, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
+import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
 import { CanvasStylePickerModal, resolveCanvasStylePreset, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { projectSummaryCompletion, projectSummaryStage } from "@/lib/project-workbench";
 import { settingsPath } from "@/lib/settings-navigation";
 import { requestImageQuestion } from "@/services/api/image";
-import { listAvailableAigcProjects } from "@/services/api/aigc";
+import { listAvailableAigcProjectTree, type AigcProject, type AigcProjectTreeNode } from "@/services/api/aigc";
 import { createProject, deleteProject, importProjectUnits, listProjects, type ProjectSummary } from "@/services/api/projects";
 import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store";
 
@@ -45,8 +46,9 @@ export default function ProjectsPage() {
     const [generating, setGenerating] = useState(false);
     const [generationStatus, setGenerationStatus] = useState("");
     const [generationPreview, setGenerationPreview] = useState("");
+    const [selectedAigcProjectId, setSelectedAigcProjectId] = useState<number | undefined>();
     const generationAbortRef = useRef<AbortController | null>(null);
-    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available"], queryFn: listAvailableAigcProjects });
+    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available-tree"], queryFn: listAvailableAigcProjectTree });
     const createOpen = searchParams.get("create") === "1";
     const setCreateOpen = (open: boolean) => {
         const next = new URLSearchParams(searchParams);
@@ -64,9 +66,21 @@ export default function ProjectsPage() {
             name: storyDraft.trim().slice(0, 24) || "",
             sourceType: createSource,
             aspectRatio: "9:16",
-            aigcProjectId: 0,
+            aigcProjectId: selectedAigcProjectId,
         });
-    }, [createForm, createOpen, createSource, storyDraft]);
+    }, [createForm, createOpen, createSource, selectedAigcProjectId, storyDraft]);
+
+    useEffect(() => {
+        const projects = flattenAigcProjectTree(aigcProjectsQuery.data?.projects || []).filter((project) => project.status === "启用");
+        if (!projects.length) {
+            setSelectedAigcProjectId(undefined);
+            return;
+        }
+        setSelectedAigcProjectId((current) => {
+            if (current && projects.some((project) => project.projectId === current)) return current;
+            return projects[0]?.projectId;
+        });
+    }, [aigcProjectsQuery.data]);
 
     const generateStory = async () => {
         const story = storyDraft.trim();
@@ -86,13 +100,17 @@ export default function ProjectsPage() {
             }
             return;
         }
+        if (!selectedAigcProjectId) {
+            message.warning("请先选择业务项目");
+            return;
+        }
         setGenerating(true);
         setGenerationStatus("正在创建项目…");
         setGenerationPreview("");
         const controller = new AbortController();
         generationAbortRef.current = controller;
         try {
-            const project = await createUniqueProjectName(story, selectedStyle);
+            const project = await createUniqueProjectName(story, selectedStyle, selectedAigcProjectId);
             setGenerationStatus("AI 正在生成故事大纲与章节…");
             const answer = await requestImageQuestion(
                 { ...effectiveConfig, model: textModel, imageModel: textModel, videoModel: textModel, textModel },
@@ -246,7 +264,13 @@ export default function ProjectsPage() {
             ) : null}
 
             <Modal className="library-modal" title="创建短剧项目" open={createOpen} footer={null} destroyOnHidden onCancel={() => setCreateOpen(false)} width={560} styles={{ body: { paddingTop: 12 } }}>
-                <Form<ProjectForm> form={createForm} layout="vertical" initialValues={{ aspectRatio: "9:16", sourceType: "blank", aigcProjectId: 0 }} onFinish={(values) => mutation.mutate({ ...values, type: "short-drama", ...(values.aigcProjectId ? { aigcProjectId: values.aigcProjectId } : {}), ...(selectedStyle ? { stylePresetId: selectedStyle.id, styleProfileJson: serializeStyleProfile(selectedStyle.profile || createStyleProfileSnapshot(selectedStyle)) } : {}) })}>
+                <Form<ProjectForm>
+                    form={createForm}
+                    layout="vertical"
+                    initialValues={{ aspectRatio: "9:16", sourceType: "blank", aigcProjectId: selectedAigcProjectId }}
+                    onValuesChange={(_, values) => setSelectedAigcProjectId(values.aigcProjectId)}
+                    onFinish={(values) => mutation.mutate({ ...values, type: "short-drama", ...(selectedStyle ? { stylePresetId: selectedStyle.id, styleProfileJson: serializeStyleProfile(selectedStyle.profile || createStyleProfileSnapshot(selectedStyle)) } : {}) })}
+                >
                     <div className="mb-4 grid grid-cols-3 gap-2">
                         <button type="button" className={createSource === "blank" ? "app-story-source is-active" : "app-story-source"} onClick={() => { setCreateSource("blank"); createForm.setFieldValue("sourceType", "blank"); }}><FolderKanban className="size-4" /><span>空白开始</span></button>
                         <button type="button" className={createSource === "novel" ? "app-story-source is-active" : "app-story-source"} onClick={() => { setCreateSource("novel"); createForm.setFieldValue("sourceType", "novel"); }}><FileText className="size-4" /><span>导入小说</span></button>
@@ -257,14 +281,19 @@ export default function ProjectsPage() {
                         <Form.Item name="aspectRatio" label="默认画幅"><Select options={[{ label: "9:16 竖屏", value: "9:16" }, { label: "16:9 横屏", value: "16:9" }, { label: "1:1 方形", value: "1:1" }]} /></Form.Item>
                         <Form.Item name="sourceType" label="内容来源"><Select options={[{ label: "空白开始", value: "blank" }, { label: "导入小说", value: "novel" }, { label: "粘贴文本", value: "text" }]} /></Form.Item>
                     </div>
-                    <Form.Item name="aigcProjectId" label="业务项目">
-                        <Select
+                    <Form.Item name="aigcProjectId" label="业务项目" rules={[{ required: true, message: "请选择业务项目" }]}>
+                        <AigcProjectTreePicker
+                            tree={aigcProjectsQuery.data?.projects || []}
                             loading={aigcProjectsQuery.isLoading}
-                            options={[
-                                { label: "未绑定业务项目", value: 0 },
-                                ...(aigcProjectsQuery.data?.projects || []).map((project) => ({ label: project.projectName, value: project.projectId })),
-                            ]}
-                            placeholder="选择业务项目（可选）"
+                            error={aigcProjectsQuery.error instanceof Error ? aigcProjectsQuery.error.message : ""}
+                            value={selectedAigcProjectId}
+                            required
+                            onChange={(value) => {
+                                setSelectedAigcProjectId(value);
+                                createForm.setFieldValue("aigcProjectId", value);
+                            }}
+                            placeholder="选择业务项目"
+                            buttonClassName="creation-chat-control is-project w-full"
                         />
                     </Form.Item>
                     <Form.Item label="项目画风"><button type="button" className="app-story-modal-style" onClick={() => setStylePickerOpen(true)}>{selectedStyle ? <><img src={selectedStyle.imageUrl} alt="" /><span>{selectedStyle.title}</span><em>更换</em></> : <><Palette className="size-4" /><span>选择项目画风（可选）</span></>}</button></Form.Item>
@@ -334,11 +363,12 @@ function parseGeneratedStory(answer: string) {
     return { title: title || storyTitleFromAnswer(answer), synopsis, chapters };
 }
 
-async function createUniqueProjectName(story: string, selectedStyle: CanvasStylePreset | null) {
+async function createUniqueProjectName(story: string, selectedStyle: CanvasStylePreset | null, aigcProjectId: number) {
     const base = story.trim().slice(0, 24);
     const buildInput = (name: string) => ({
         name,
         type: "short-drama" as const,
+        aigcProjectId,
         aspectRatio: "9:16",
         sourceType: "blank",
         description: story.trim(),
@@ -414,4 +444,16 @@ function ProjectRow({ row, onDelete }: { row: ProjectSummary; onDelete: () => vo
 
 function ProjectCount({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
     return <span className="inline-flex items-center gap-1.5" title={`${value} ${label}`}><span className="text-foreground/32">{icon}</span><strong className="font-medium tabular-nums text-foreground/65">{value}</strong><span>{label}</span></span>;
+}
+
+function flattenAigcProjectTree(tree: AigcProjectTreeNode[]): AigcProject[] {
+    const result: AigcProject[] = [];
+    const visit = (nodes: AigcProjectTreeNode[]) => {
+        for (const node of nodes) {
+            result.push(node.project);
+            if (node.children?.length) visit(node.children);
+        }
+    };
+    visit(tree);
+    return result;
 }

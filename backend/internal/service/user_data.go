@@ -336,11 +336,12 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		return model.CanvasProject{}, err
 	}
 	var payload struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
-		ProjectID string `json:"projectId"`
-		CreatedAt string `json:"createdAt"`
-		UpdatedAt string `json:"updatedAt"`
+		ID           string `json:"id"`
+		Title        string `json:"title"`
+		ProjectID    string `json:"projectId"`
+		AigcProjectID *int64 `json:"aigcProjectId"`
+		CreatedAt    string `json:"createdAt"`
+		UpdatedAt    string `json:"updatedAt"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return model.CanvasProject{}, BadAuthRequest("画布数据格式错误")
@@ -353,17 +354,26 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		id = newID()
 	}
 	return model.CanvasProject{
-		ID:          id,
-		UserID:      userID,
-		ProjectID:   strings.TrimSpace(payload.ProjectID),
-		Title:       strings.TrimSpace(payload.Title),
-		PayloadJSON: string(raw),
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
+		ID:            id,
+		UserID:        userID,
+		ProjectID:     strings.TrimSpace(payload.ProjectID),
+		AigcProjectID:  normalizeOptionalInt64(payload.AigcProjectID),
+		Title:         strings.TrimSpace(payload.Title),
+		PayloadJSON:   string(raw),
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}, nil
 }
 
 func (s *Service) inheritCanvasAigcProject(userID string, project *model.CanvasProject) error {
+	if project.AigcProjectID != nil {
+		returnValue, err := s.ValidateAigcProjectForUser(userID, project.AigcProjectID)
+		if err != nil {
+			return err
+		}
+		project.AigcProjectID = returnValue
+		return nil
+	}
 	if strings.TrimSpace(project.ProjectID) == "" {
 		project.AigcProjectID = nil
 		return nil
@@ -377,6 +387,14 @@ func (s *Service) inheritCanvasAigcProject(userID string, project *model.CanvasP
 	}
 	project.AigcProjectID = domainProject.AigcProjectID
 	return nil
+}
+
+func normalizeOptionalInt64(value *int64) *int64 {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	next := *value
+	return &next
 }
 
 func validateSyncedPayload(raw json.RawMessage, label string) error {

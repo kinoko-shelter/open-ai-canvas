@@ -3,9 +3,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Input, Modal, Select } from "antd";
 import { Archive, Check, Eye, Palette, Pencil, Save, ShieldAlert } from "lucide-react";
 
+import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
 import { CanvasStyleDetailModal, CanvasStylePickerModal, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { createStyleProfileSnapshot, parseStyleProfile, resolveStyleExecutionPlan, serializeStyleProfile } from "@/lib/canvas/style-profile";
-import { listAvailableAigcProjects } from "@/services/api/aigc";
+import { listAvailableAigcProjectTree, type AigcProjectTreeNode } from "@/services/api/aigc";
 import { updateProject } from "@/services/api/projects";
 import { resolveModelRequestConfig, useEffectiveConfig } from "@/stores/use-config-store";
 
@@ -17,7 +18,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
     const { project } = detail;
     const [name, setName] = useState(project.name);
     const [description, setDescription] = useState(project.description || "");
-    const [aigcProjectId, setAigcProjectId] = useState(project.aigcProjectId || 0);
+    const [aigcProjectId, setAigcProjectId] = useState<number | undefined>(project.aigcProjectId || undefined);
     const [aspectRatio, setAspectRatio] = useState(project.aspectRatio);
     const [sourceType, setSourceType] = useState(project.sourceType);
     const [stylePresetId, setStylePresetId] = useState(project.stylePresetId || "");
@@ -26,9 +27,14 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
     const [stylePickerOpen, setStylePickerOpen] = useState(false);
     const [styleEditorRequested, setStyleEditorRequested] = useState(false);
     const [archiveOpen, setArchiveOpen] = useState(false);
-    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available"], queryFn: listAvailableAigcProjects });
-    useEffect(() => { setName(project.name); setDescription(project.description || ""); setAigcProjectId(project.aigcProjectId || 0); setAspectRatio(project.aspectRatio); setSourceType(project.sourceType); setStylePresetId(project.stylePresetId || ""); setStyleProfileJson(project.styleProfileJson || ""); }, [project]);
-    const dirty = useMemo(() => name.trim() !== project.name || description !== (project.description || "") || aigcProjectId !== (project.aigcProjectId || 0) || aspectRatio !== project.aspectRatio || sourceType !== project.sourceType || stylePresetId !== (project.stylePresetId || "") || styleProfileJson !== (project.styleProfileJson || ""), [aigcProjectId, aspectRatio, description, name, project, sourceType, stylePresetId, styleProfileJson]);
+    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available-tree"], queryFn: listAvailableAigcProjectTree });
+    useEffect(() => { setName(project.name); setDescription(project.description || ""); setAigcProjectId(project.aigcProjectId || undefined); setAspectRatio(project.aspectRatio); setSourceType(project.sourceType); setStylePresetId(project.stylePresetId || ""); setStyleProfileJson(project.styleProfileJson || ""); }, [project]);
+    useEffect(() => {
+        const projects = flattenAigcProjectTree(aigcProjectsQuery.data?.projects || []).filter((item) => item.status === "启用");
+        if (!projects.length) return;
+        setAigcProjectId((current) => current && projects.some((item) => item.projectId === current) ? current : projects[0]?.projectId);
+    }, [aigcProjectsQuery.data]);
+    const dirty = useMemo(() => name.trim() !== project.name || description !== (project.description || "") || aigcProjectId !== (project.aigcProjectId || undefined) || aspectRatio !== project.aspectRatio || sourceType !== project.sourceType || stylePresetId !== (project.stylePresetId || "") || styleProfileJson !== (project.styleProfileJson || ""), [aigcProjectId, aspectRatio, description, name, project, sourceType, stylePresetId, styleProfileJson]);
     const selectedStyle = useMemo(() => resolveProjectCanvasStyle(stylePresetId, styleProfileJson), [stylePresetId, styleProfileJson]);
     const styleProfile = useMemo(() => parseStyleProfile(styleProfileJson) || selectedStyle?.profile || (selectedStyle ? createStyleProfileSnapshot(selectedStyle) : null), [selectedStyle, styleProfileJson]);
     const enabledStyleAssets = styleProfile?.assets.filter((asset) => asset.enabled !== false) || [];
@@ -41,7 +47,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
             video: resolveStyleExecutionPlan(styleProfile, { mode: "video", model: videoConfig.model, interfaceType: videoConfig.interfaceType || videoConfig.apiFormat }),
         };
     }, [effectiveConfig, styleProfile]);
-    const saveMutation = useMutation({ mutationFn: () => updateProject(project.id, { name: name.trim(), description, aigcProjectId, aspectRatio, sourceType, stylePresetId, styleProfileJson }), onSuccess: () => { refreshProject(); message.success("项目设置已保存"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目设置保存失败") });
+    const saveMutation = useMutation({ mutationFn: () => updateProject(project.id, { name: name.trim(), description, ...(aigcProjectId ? { aigcProjectId } : {}), aspectRatio, sourceType, stylePresetId, styleProfileJson }), onSuccess: () => { refreshProject(); message.success("项目设置已保存"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目设置保存失败") });
     const archiveMutation = useMutation({ mutationFn: () => updateProject(project.id, { status: project.status === "archived" ? "active" : "archived" }), onSuccess: () => { setArchiveOpen(false); refreshProject(); message.success(project.status === "archived" ? "项目已恢复" : "项目已归档"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目状态更新失败") });
 
     return (
@@ -54,7 +60,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
                     <Field label="项目名称" className="xl:col-span-2"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field>
                     <Field label="默认画幅"><Select className="w-full" value={aspectRatio} options={[{ label: "9:16 · 竖屏短剧", value: "9:16" }, { label: "16:9 · 横屏", value: "16:9" }, { label: "1:1 · 方形", value: "1:1" }]} onChange={setAspectRatio} /></Field>
                     <Field label="内容来源"><Select className="w-full" value={sourceType} options={[{ label: "空白开始", value: "blank" }, { label: "导入小说", value: "novel" }, { label: "粘贴文本", value: "text" }]} onChange={setSourceType} /></Field>
-                    <Field label="业务项目"><Select className="w-full" value={aigcProjectId} loading={aigcProjectsQuery.isLoading} options={[{ label: "未绑定业务项目", value: 0 }, ...(aigcProjectsQuery.data?.projects || []).map((item) => ({ label: item.projectName, value: item.projectId }))]} onChange={setAigcProjectId} /></Field>
+                    <Field label="业务项目"><AigcProjectTreePicker tree={aigcProjectsQuery.data?.projects || []} loading={aigcProjectsQuery.isLoading} error={aigcProjectsQuery.error instanceof Error ? aigcProjectsQuery.error.message : ""} value={aigcProjectId} required onChange={setAigcProjectId} placeholder="请选择业务项目" buttonClassName="creation-chat-control is-project w-full" /></Field>
                     <Field label="项目简介" className="md:col-span-2 xl:col-span-4"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话说明项目目标" /></Field>
                 </div>
             </section>
@@ -103,4 +109,16 @@ function styleExecutionStatusLabel(status?: "ready" | "degraded" | "blocked") {
 
 function Field({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
     return <label className={`grid gap-1.5 text-xs ${className}`}><span className="font-medium text-foreground/62">{label}</span>{children}</label>;
+}
+
+function flattenAigcProjectTree(tree: AigcProjectTreeNode[]) {
+    const result: Array<{ projectId: number; status: string }> = [];
+    const visit = (nodes: typeof tree) => {
+        for (const node of nodes) {
+            result.push(node.project);
+            if (node.children?.length) visit(node.children);
+        }
+    };
+    visit(tree);
+    return result;
 }

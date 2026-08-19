@@ -295,7 +295,7 @@ export default function ProjectChaptersView({ detail, refreshProject, onCreateCa
                 await saveRemoteUserDataNow();
             } else {
                 const seed = upsertProjectChapterStoryboard([], [], { unit: selectedUnit, shots });
-                const created = await createCanvasProjectWithRemoteSync(`${selectedUnit.title} · 分镜画布`, detail.project.id, { nodes: seed.nodes, connections: seed.connections });
+                const created = await createCanvasProjectWithRemoteSync(`${selectedUnit.title} · 分镜画布`, detail.project.id, { nodes: seed.nodes, connections: seed.connections }, detail.project.aigcProjectId || undefined);
                 canvasId = created.id;
                 if (created.syncError) {
                     message.warning(created.syncError instanceof Error ? `分镜画布已保存在本地，章节关联稍后重试：${created.syncError.message}` : "分镜画布已保存在本地，章节关联稍后重试");

@@ -33,6 +33,7 @@ type CanvasTopBarProps = {
     onUndo: () => void;
     onRedo: () => void;
     onShare: () => void;
+    onOpenSettings: () => void;
     agentOpen: boolean;
     compactAgentStatus?: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
@@ -65,6 +66,7 @@ export function CanvasTopBar({
     onUndo,
     onRedo,
     onShare,
+    onOpenSettings,
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
@@ -260,6 +262,9 @@ export function CanvasTopBar({
                             </Button>
                         </Tooltip>
                     ) : null}
+                    <Tooltip title="画布设置">
+                        <Button type="text" className="!h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Settings2 className="size-4" />} onClick={onOpenSettings} aria-label="画布设置" />
+                    </Tooltip>
                     <Button type="text" className="!h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Share2 className="size-4" />} onClick={onShare} aria-label="分享画布" title="分享画布" />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button

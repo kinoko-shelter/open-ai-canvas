@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Modal, Select } from "antd";
 import { ArrowDownAZ, Clock3, Download, FileUp, ListFilter, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 
+import { AigcProjectTreePicker } from "@/components/aigc/aigc-project-tree-picker";
 import { CollectionGrid, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 
@@ -17,6 +18,7 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { listAvailableAigcProjectTree, type AigcProjectTreeNode } from "@/services/api/aigc";
 import { listProjects } from "@/services/api/projects";
 
 export default function CanvasPage() {
@@ -30,6 +32,8 @@ export default function CanvasPage() {
     const [projectFilter, setProjectFilter] = useState("all");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(24);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [createAigcProjectId, setCreateAigcProjectId] = useState<number | undefined>();
     const hydrated = useCanvasStore((state) => state.hydrated);
     const projects = useCanvasStore((state) => state.projects);
     const importProject = useCanvasStore((state) => state.importProject);
@@ -39,6 +43,7 @@ export default function CanvasPage() {
     const [associationOpen, setAssociationOpen] = useState(false);
     const [associationProjectId, setAssociationProjectId] = useState("");
     const projectQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
+    const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available-tree"], queryFn: listAvailableAigcProjectTree });
 
     const mode = searchParams.get("mode");
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
@@ -46,12 +51,13 @@ export default function CanvasPage() {
     const enterProject = (id: string) => {
         navigate(`/canvas/${id}${agentQuery}`);
     };
-    const createAndEnter = () => {
-        void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
-            if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
-            enterProject(id);
-        });
-    };
+    useEffect(() => {
+        const projectsTree = aigcProjectsQuery.data?.projects || [];
+        const selectableProjects = flattenAigcProjectTree(projectsTree).filter((project) => project.status === "启用");
+        if (!selectableProjects.length) return;
+        setCreateAigcProjectId((current) => current && selectableProjects.some((project) => project.projectId === current) ? current : selectableProjects[0]?.projectId);
+    }, [aigcProjectsQuery.data]);
+    const createAndEnter = () => setCreateOpen(true);
     const filteredProjects = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         const scoped = projects.filter((project) => projectFilter === "all" || (projectFilter === "independent" ? !project.projectId : project.projectId === projectFilter));
@@ -153,13 +159,10 @@ export default function CanvasPage() {
             enterProject(projects[0].id);
             return;
         }
-        void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
-            if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
-            enterProject(id);
-        });
-    }, [hydrated, message, mode, projects]);
+        setCreateOpen(true);
+    }, [hydrated, mode, projects]);
 
-    if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
+    if (hydrated && mode === "recent") return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
         <WorkspacePage grid className="canvas-library-page">
@@ -232,6 +235,48 @@ export default function CanvasPage() {
                     <p className="mb-3 text-sm text-foreground/60">选中的画布会保留原有节点和本地媒体，只增加项目关联。</p>
                     <Select className="w-full" value={associationProjectId || undefined} placeholder="选择项目" options={(projectQuery.data?.projects || []).map((item) => ({ label: item.project.name, value: item.project.id }))} onChange={setAssociationProjectId} />
                 </Modal>
+                <Modal
+                    title="新建画布"
+                    open={createOpen}
+                    okText="创建"
+                    cancelText="取消"
+                    okButtonProps={{ disabled: !createAigcProjectId, loading: aigcProjectsQuery.isFetching }}
+                    onCancel={() => setCreateOpen(false)}
+                    onOk={() => {
+                        if (!createAigcProjectId) return;
+                        void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`, undefined, undefined, createAigcProjectId).then(({ id, syncError }) => {
+                            setCreateOpen(false);
+                            if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
+                            enterProject(id);
+                        }).catch((error) => message.error(error instanceof Error ? error.message : "画布创建失败"));
+                    }}
+                    width={520}
+                    styles={{ body: { paddingTop: 12 } }}
+                >
+                    <p className="mb-3 text-sm text-foreground/60">先选择一个业务项目，再继续创建画布。</p>
+                    <AigcProjectTreePicker
+                        tree={aigcProjectsQuery.data?.projects || []}
+                        loading={aigcProjectsQuery.isLoading}
+                        error={aigcProjectsQuery.error instanceof Error ? aigcProjectsQuery.error.message : ""}
+                        value={createAigcProjectId}
+                        required
+                        onChange={setCreateAigcProjectId}
+                        placeholder="选择业务项目"
+                        buttonClassName="creation-chat-control is-project w-full"
+                    />
+                </Modal>
         </WorkspacePage>
     );
+}
+
+function flattenAigcProjectTree(tree: AigcProjectTreeNode[]) {
+    const result: AigcProjectTreeNode["project"][] = [];
+    const visit = (nodes: AigcProjectTreeNode[]) => {
+        for (const node of nodes) {
+            result.push(node.project);
+            if (node.children?.length) visit(node.children);
+        }
+    };
+    visit(tree);
+    return result;
 }
