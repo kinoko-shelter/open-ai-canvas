@@ -195,12 +195,20 @@ export function CanvasTopBar({
 
                 <div className="canvas-topbar-cluster pointer-events-auto flex items-center gap-1.5">
                     <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
-                    <Button type="text" className="canvas-topbar-import-button !h-10 !rounded-xl !px-2.5 !font-medium" style={{ color: theme.node.text }} icon={<CopyPlus className="size-4" />} onClick={onImportLibTV} aria-label="导入 LibTV 画布" title="导入 LibTV 画布">
-                        <span className="hidden xl:inline">导入 LibTV</span>
-                    </Button>
-                    <Button type="text" className="canvas-topbar-import-button !h-10 !rounded-xl !px-2.5 !font-medium" style={{ color: theme.node.text }} icon={<CloudDownload className="size-4" />} onClick={onImportTapNow} aria-label="导入 TapNow 画布" title="导入 TapNow 画布">
-                        <span className="hidden xl:inline">导入 TapNow</span>
-                    </Button>
+                    <Dropdown
+                        trigger={["click"]}
+                        menu={{
+                            items: [
+                                { key: "libtv", icon: <CopyPlus className="size-4" />, label: "导入 LibTV 画布", onClick: onImportLibTV },
+                                { key: "tapnow", icon: <CloudDownload className="size-4" />, label: "导入 TapNow 画布", onClick: onImportTapNow },
+                            ],
+                        }}
+                    >
+                        <Button type="text" className="canvas-topbar-import-button !h-10 !rounded-xl !px-2.5 !font-medium" style={{ color: theme.node.text }} icon={<CloudDownload className="size-4" />} aria-label="导入外部画布" title="导入外部画布">
+                            <span className="hidden xl:inline">导入</span>
+                            <ChevronDown className="size-3.5 opacity-70" aria-hidden="true" />
+                        </Button>
+                    </Dropdown>
                     <Dropdown
                         trigger={["click"]}
                         menu={{
