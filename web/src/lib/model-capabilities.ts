@@ -74,7 +74,6 @@ export type VideoCapabilityConfig = {
     defaultOperation: string;
 };
 
-const defaultImageSizes = ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "21:9", "9:16", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"];
 const gptImage2Ratios = ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"];
 const geminiImageRatios = ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "3:2", "2:3", "5:4", "4:5"];
 const geminiNano2ExtraRatios = ["1:4", "1:8", "4:1", "8:1"];
@@ -82,6 +81,92 @@ const geminiNano2ExtraRatios = ["1:4", "1:8", "4:1", "8:1"];
 export function isGptImage2Model(model: string) {
     return model.trim().toLowerCase().startsWith("gpt-image-2");
 }
+export function normalizeCapabilityString(value: string) {
+    const normalized = value.trim();
+    return normalized.startsWith("string:") ? normalized.slice("string:".length) : normalized;
+}
+
+function normalizeCapabilityStrings(values: string[]) {
+    return Array.from(new Set(values.map(normalizeCapabilityString)));
+}
+
+function normalizeStoredModelCapabilityConfig(config: ModelCapabilityConfig): ModelCapabilityConfig {
+    return {
+        ...config,
+        image: config.image
+            ? {
+                  ...config.image,
+                  size: {
+                      ...config.image.size,
+                      values: normalizeCapabilityStrings(config.image.size.values),
+                      default: normalizeCapabilityString(config.image.size.default),
+                  },
+                  quality: {
+                      ...config.image.quality,
+                      values: normalizeCapabilityStrings(config.image.quality.values),
+                      default: normalizeCapabilityString(config.image.quality.default),
+                  },
+              }
+            : undefined,
+        video: config.video
+            ? {
+                  ...config.video,
+                  ratios: normalizeCapabilityStrings(config.video.ratios),
+                  defaultRatio: normalizeCapabilityString(config.video.defaultRatio),
+                  resolutions: normalizeCapabilityStrings(config.video.resolutions),
+                  defaultResolution: normalizeCapabilityString(config.video.defaultResolution),
+                  operations: normalizeCapabilityStrings(config.video.operations),
+                  defaultOperation: normalizeCapabilityString(config.video.defaultOperation),
+              }
+            : undefined,
+    };
+}
+
+// Keep explicit pixel presets for each resolution tier so the settings panel can
+// switch between 1K, 2K and 4K without silently converting the requested ratio.
+const defaultImageSizes = [
+    "auto",
+    "1:1",
+    "3:2",
+    "2:3",
+    "4:3",
+    "3:4",
+    "5:4",
+    "4:5",
+    "16:9",
+    "21:9",
+    "9:16",
+    "1024x1024",
+    "1360x1024",
+    "1024x1360",
+    "1536x1024",
+    "1024x1536",
+    "1024x1280",
+    "1280x1024",
+    "2048x878",
+    "1824x1024",
+    "1024x1824",
+    "2048x2048",
+    "2304x1728",
+    "1728x2304",
+    "2496x1664",
+    "1664x2496",
+    "1792x2240",
+    "2240x1792",
+    "3136x1344",
+    "2752x1536",
+    "1536x2752",
+    "2880x2880",
+    "3264x2448",
+    "2448x3264",
+    "3504x2336",
+    "2336x3504",
+    "2560x3200",
+    "3200x2560",
+    "3808x1632",
+    "3840x2160",
+    "2160x3840",
+];
 
 function isGeminiImageModel(model: string) {
     const value = model.trim().toLowerCase();
@@ -305,7 +390,35 @@ export function modelCapabilityConfigFor(
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
     const channel = config.channels.find((item) => item.id === channelId) || config.channels.find((item) => item.models.includes(modelName));
     const cost = channel?.modelCosts?.find((item) => item.model === modelName);
-    return normalizeModelCapabilityConfig(cost?.capabilityConfig, cost?.protocol || channel?.interfaceType, modelName, channel?.apiFormat);
+    const fallback = defaultModelCapabilityConfig(cost?.protocol || channel?.interfaceType, modelName, channel?.apiFormat);
+    const normalized = normalizeModelCapabilityConfig(cost?.capabilityConfig, cost?.protocol || channel?.interfaceType, modelName, channel?.apiFormat);
+    const capabilityConfig = normalizeStoredModelCapabilityConfig(normalized);
+    const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
+    const video = capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video;
+    const configuredImage = capabilityConfig.image;
+    const image = configuredImage
+        ? (() => {
+              const configuredSize = configuredImage.size;
+              const configuredValues = configuredSize?.values?.map(normalizeCapabilityString);
+              const allowCustom = Boolean(configuredSize?.allowCustom || configuredValues?.includes("*"));
+              const concreteValues = configuredValues?.filter((value) => value !== "*") || [];
+              const values = !configuredValues ? fallback.image!.size.values : concreteValues.length || !allowCustom ? concreteValues : [...defaultImageSizes];
+              const configuredDefault = configuredSize?.default ? normalizeCapabilityString(configuredSize.default) : undefined;
+              const defaultValue = configuredDefault && configuredDefault !== "*" && values.includes(configuredDefault) ? configuredDefault : values.find((value) => value !== "*") || fallback.image!.size.default;
+              return {
+                  ...fallback.image!,
+                  ...configuredImage,
+                  size: {
+                      ...fallback.image!.size,
+                      ...configuredSize,
+                      values,
+                      default: defaultValue,
+                      allowCustom,
+                  },
+              };
+          })()
+        : fallback.image;
+    return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
 export function normalizeImageValue(profile: ImageCapabilityConfig, value: { size?: string; quality?: string; count?: string; transparentBackground?: string }) {

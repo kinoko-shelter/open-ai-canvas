@@ -199,6 +199,7 @@ export function CanvasTopBar({
                     <Button type="text" className="!hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Search className="size-4" />} onClick={onOpenSearch} aria-label="搜索画布节点" title="搜索画布节点" />
                     <Dropdown
                         trigger={["click"]}
+                        placement="bottomRight"
                         menu={{
                             items: [
                                 { key: "libtv", icon: <CopyPlus className="size-4" />, label: "导入 LibTV 画布", onClick: onImportLibTV },
@@ -206,9 +207,8 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <Button type="text" className="canvas-topbar-import-button !h-10 !rounded-xl !px-2.5 !font-medium" style={{ color: theme.node.text }} icon={<CloudDownload className="size-4" />} aria-label="导入外部画布" title="导入外部画布">
-                            <span className="hidden xl:inline">导入</span>
-                            <ChevronDown className="size-3.5 opacity-70" aria-hidden="true" />
+                        <Button type="text" className="canvas-topbar-import-button !h-10 !rounded-xl !px-2.5 !font-medium" style={{ color: theme.node.text }} icon={<CloudDownload className="size-4" />} aria-label="导入第三方画布" title="导入第三方画布">
+                            <span className="hidden lg:inline">导入第三方画布</span>
                         </Button>
                     </Dropdown>
                     <Dropdown

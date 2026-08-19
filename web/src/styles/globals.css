@@ -1380,8 +1380,9 @@
     }
 
     .app-workspace-shell.is-spatial .app-workspace-rail .app-workspace-rail-tile {
-        width: 64px !important;
-        min-height: 56px !important;
+        width: 40px !important;
+        height: auto !important;
+        min-height: 40px;
         border-radius: var(--r-md);
         margin-bottom: 0 !important;
     }
@@ -8119,12 +8120,22 @@ html:not(.dark) .creation-message-content code { background: rgba(28, 32, 37, .0
     height: 100%;
 }
 
+.admin-page-root.admin-page-root-scrollable > div {
+    height: auto;
+    min-height: 100%;
+}
+
 .admin-page-frame {
     display: flex;
     height: 100%;
     min-height: 0;
     flex-direction: column;
     padding: 12px 16px 0;
+}
+
+.admin-page-frame-scrollable {
+    height: auto;
+    min-height: 100%;
 }
 
 .admin-page-header {

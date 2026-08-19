@@ -25,6 +25,7 @@ var (
 	ErrCreditBalanceOverflow   = errors.New("credit balance overflow")
 	ErrCreditTransferReplay    = errors.New("credit transfer replay conflict")
 	ErrCreditTransferForbidden = errors.New("credit transfer participant is no longer eligible")
+	ErrChannelModelInUse       = errors.New("channel model is in use")
 )
 
 type TeamCreditTransferResult struct {
@@ -115,6 +116,24 @@ func (r *Repository) SaveChannelModel(item *model.ChannelModel) error {
 
 func (r *Repository) DeleteChannelModel(channelID string, id string, modelsJSON string, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var activeReferences int64
+		if err := tx.Table("logical_model_routes AS route").
+			Joins("JOIN logical_models AS logical_model ON logical_model.active_revision_id = route.logical_model_revision_id").
+			Where("route.channel_model_id = ?", id).
+			Count(&activeReferences).Error; err != nil {
+			return err
+		}
+		if activeReferences > 0 {
+			return ErrChannelModelInUse
+		}
+		if err := tx.Model(&model.Task{}).
+			Where("channel_model_id = ? AND status IN ?", id, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+			Count(&activeReferences).Error; err != nil {
+			return err
+		}
+		if activeReferences > 0 {
+			return ErrChannelModelInUse
+		}
 		result := tx.Model(&model.ChannelModel{}).
 			Where("id = ? AND channel_id = ?", id, channelID).
 			Updates(map[string]any{"enabled": false, "price_version": gorm.Expr("price_version + 1"), "updated_at": now})
@@ -427,7 +446,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil,
 			"route_run":                 gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID,
-			"physical_variant_id": prepared.PhysicalVariantID, "input_json": prepared.InputJSON,
+			"channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
 			"model": prepared.Model, "provider": prepared.Provider,
 			"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
 		}

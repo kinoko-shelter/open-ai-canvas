@@ -552,6 +552,7 @@ function InfiniteCanvasPage() {
         setContextMenu,
         setDialogNodeId,
     });
+    const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
 
     // 时间线弹窗内新增素材的回填通道：素材库/上传创建节点后由弹窗通过 ref 加入草稿。
     const timelineAddNodeRef = useRef<((node: CanvasNodeData) => void) | null>(null);
@@ -1849,6 +1850,8 @@ function InfiniteCanvasPage() {
                                     mentionReferencesByNodeId={mentionReferencesByNodeId}
                                     mediaEffectsDisabledNodeId={emotionNodeId}
                                     selectedNodeBounds={selectedNodeBounds}
+                                    batchSourceNodeIds={Array.from(selectedNodeIds)}
+                                    batchConnectionPreview={batchConnectionPreview}
                                     isNodeDragging={isNodeDragging}
                                     selectionBoundsElementRef={selectionBoundsElementRef}
                                     renderCanvasNodeContent={renderCanvasNodeContent}
@@ -1881,7 +1884,12 @@ function InfiniteCanvasPage() {
                                     onOpenTaskDetails={openCanvasNodeTaskDetails}
                                     onOpenVersions={openCanvasNodeVersions}
                                     onViewImage={viewCanvasNodeImage}
-                                    onReplaceMedia={(node) => handleUploadRequest(node.id)}
+                                    onStartBatchConnection={(event, sourceNodeIds) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        beginBatchConnectionMode(sourceNodeIds);
+                                    }}
+                                    onReplaceMedia={replaceCanvasNodeMedia}
                                     onOpenTextEditor={openTextNodeEditor}
                                     onOpenDirector={editCanvasDirector}
                                     onOpenDrawing={openDrawingNode}

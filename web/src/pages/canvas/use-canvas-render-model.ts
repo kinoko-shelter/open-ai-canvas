@@ -109,8 +109,8 @@ export function useCanvasRenderModel({
         });
         return { left, top, width: Math.max(2, right - left), height: Math.max(2, bottom - top) };
     }, [nodes]);
-    const visibleNodes = useMemo(() => {
-        const padding = (reduceMediaEffects ? Math.max(240, Math.max(viewportSize.width, viewportSize.height) * 0.4) : Math.max(800, Math.max(viewportSize.width, viewportSize.height) * 1.5)) / viewport.k;
+    const renderBounds = useMemo(() => {
+        const padding = (reduceMediaEffects ? 240 : 360) / viewport.k;
         const viewLeft = -viewport.x / viewport.k - padding;
         const viewTop = -viewport.y / viewport.k - padding;
         const viewRight = viewLeft + viewportSize.width / viewport.k + padding * 2;
@@ -118,11 +118,13 @@ export function useCanvasRenderModel({
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
         nodes.forEach((node) => {
-            if (renderHiddenNodeIds.has(node.id) || node.position.x + node.width <= viewLeft || node.position.x >= viewRight || node.position.y + node.height <= viewTop || node.position.y >= viewBottom) return;
+            if (renderHiddenNodeIds.has(node.id)) return;
+            const retained = selectedNodeIds.has(node.id) || Boolean(dragPreview?.nodeIds.has(node.id));
+            if (!retained && (node.position.x + node.width <= renderBounds.left || node.position.x >= renderBounds.right || node.position.y + node.height <= renderBounds.top || node.position.y >= renderBounds.bottom)) return;
             (isFrameNode(node) ? frames : regular).push(node);
         });
         return [...frames, ...regular];
-    }, [nodes, reduceMediaEffects, renderHiddenNodeIds, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
+    }, [dragPreview, nodes, renderBounds, renderHiddenNodeIds, selectedNodeIds]);
 
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
     const canvasImageNodes = useMemo(() => nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content) && !collapsedBatchChildIds.has(node.id) && !(node.parentId && nodeById.get(node.parentId)?.metadata?.frame?.collapsed)), [collapsedBatchChildIds, nodeById, nodes]);
