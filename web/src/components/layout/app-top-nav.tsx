@@ -67,11 +67,12 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                 onPointerDown={() => preloadWorkspaceRoute(tool.slug)}
                 onPointerEnter={() => preloadWorkspaceRoute(tool.slug)}
                 className={cn(
-                    "app-workspace-nav-link app-workspace-rail-tile grid size-10 place-items-center rounded-md text-[var(--fs-tiny)] transition-colors",
+                    "app-workspace-nav-link app-workspace-rail-tile transition-colors",
                     active ? "is-active font-medium" : "",
                 )}
             >
                 <Icon className="app-workspace-nav-icon shrink-0" strokeWidth={1.8} />
+                <span className="app-workspace-rail-label">{tool.label}</span>
             </Link>
         );
     };
@@ -119,19 +120,20 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                 {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={window.innerWidth < 1024 ? mobileSidebarExpanded : !desktopSidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
                 <div className="app-workspace-main-row flex min-h-0 min-w-0 flex-1 overflow-hidden">
                 {!hideChrome ? (
-                    <aside className={cn("app-workspace-sidebar flex shrink-0 flex-col overflow-hidden transition-all duration-200", mobileSidebarExpanded ? "is-mobile-expanded w-[196px]" : "w-0 lg:w-[var(--workspace-sidebar-width)] lg:shrink-0")} style={{ "--workspace-sidebar-width": desktopSidebarCollapsed ? "0px" : "64px" } as CSSProperties}>
-                        {/* 桌面：64px 电影胶片条式轨道 */}
+                    <aside className={cn("app-workspace-sidebar flex shrink-0 flex-col overflow-hidden transition-all duration-200", mobileSidebarExpanded ? "is-mobile-expanded w-[196px]" : "w-0 lg:w-[var(--workspace-sidebar-width)] lg:shrink-0")} style={{ "--workspace-sidebar-width": desktopSidebarCollapsed ? "0px" : "80px" } as CSSProperties}>
+                        {/* 桌面：图标 + 文字的电影胶片条式轨道 */}
                         <div className="app-workspace-rail hidden min-h-0 flex-col overflow-y-auto lg:flex">
                             <div className="app-workspace-rail-header flex h-16 shrink-0 items-center justify-center">
-                                <Link to="/home" className="grid size-10 shrink-0 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-surface-hover hover:text-foreground" title="工作台首页" onFocus={() => preloadWorkspaceRoute("home")} onPointerDown={() => preloadWorkspaceRoute("home")} onPointerEnter={() => preloadWorkspaceRoute("home")}>
+                                <Link to="/home" className="app-workspace-rail-tile app-workspace-rail-home shrink-0 transition-colors" title="工作台首页" onFocus={() => preloadWorkspaceRoute("home")} onPointerDown={() => preloadWorkspaceRoute("home")} onPointerEnter={() => preloadWorkspaceRoute("home")}>
                                     <Home className="app-workspace-nav-icon" strokeWidth={1.8} />
+                                    <span className="app-workspace-rail-label">首页</span>
                                 </Link>
                             </div>
-                            <div className="app-workspace-rail-middle flex min-h-0 w-full flex-1 flex-col items-center justify-start overflow-y-auto px-3 pt-3">
-                                <nav className="flex w-full flex-col items-center gap-2">
+                            <div className="app-workspace-rail-middle flex min-h-0 w-full flex-1 flex-col items-center justify-start overflow-y-auto px-2 pt-3">
+                                <nav className="flex w-full flex-col items-center gap-1.5">
                                     {topRailNavTools.map((tool) => renderSidebarLink(tool))}
                                 </nav>
-                                <nav className="mt-4 flex w-full flex-col items-center gap-2 pb-3">
+                                <nav className="mt-4 flex w-full flex-col items-center gap-1.5 pb-3">
                                     {bottomRailNavTools.map((tool) => renderSidebarLink(tool))}
                                 </nav>
                             </div>
