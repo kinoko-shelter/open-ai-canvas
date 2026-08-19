@@ -66,6 +66,7 @@ import { CanvasAgentChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast
 import { backendProviderConfig, getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { CanvasTopBar } from "./canvas-project-top-bar";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
+import { TapNowImportDialog } from "./components/tapnow-import-dialog";
 import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
 import { CanvasProjectContextMenu } from "./canvas-project-context-menu";
 import { CanvasProjectMediaDialogs } from "./canvas-project-media-dialogs";
@@ -182,6 +183,7 @@ function InfiniteCanvasPage() {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [shareModalOpen, setShareModalOpen] = useState(false);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
+    const [tapNowImportOpen, setTapNowImportOpen] = useState(false);
     const [nodeSearchOpen, setNodeSearchOpen] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
@@ -313,7 +315,7 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles,
     });
 
-    const applyLibTVImport = useCallback(
+    const applyImportedCanvas = useCallback(
         async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => {
             const previousNodes = nodesRef.current;
             const previousConnections = connectionsRef.current;
@@ -329,7 +331,7 @@ function InfiniteCanvasPage() {
                 connectionsRef.current = previousConnections;
                 setNodes(previousNodes);
                 setConnections(previousConnections);
-                throw new Error("画布保存失败，已撤销本次 LibTV 导入");
+                throw new Error("画布保存失败，已撤销本次导入");
             }
         },
         [saveCanvasProject, setConnections, setNodes],
@@ -1585,6 +1587,7 @@ function InfiniteCanvasPage() {
                             onDeleteProject={deleteCurrentProject}
                             onImportImage={() => handleUploadRequest()}
                             onImportLibTV={() => setLibTVImportOpen(true)}
+                            onImportTapNow={() => setTapNowImportOpen(true)}
                             onUndo={undoCanvas}
                             onRedo={redoCanvas}
                             onShare={() => setShareModalOpen(true)}
@@ -1632,7 +1635,8 @@ function InfiniteCanvasPage() {
                     ) : null}
 
                     <CanvasShareModal projectId={projectId} open={shareModalOpen} onClose={() => setShareModalOpen(false)} beforeCreate={saveCanvasProject} />
-                    <LibTVImportDialog open={libTVImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setLibTVImportOpen(false)} onApply={applyLibTVImport} />
+                    <LibTVImportDialog open={libTVImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setLibTVImportOpen(false)} onApply={applyImportedCanvas} />
+                    <TapNowImportDialog open={tapNowImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setTapNowImportOpen(false)} onApply={applyImportedCanvas} />
 
                     <CanvasStylePickerModal open={stylePickerOpen} value={activeStylePresetId} applying={styleApplying} onClose={() => setStylePickerOpen(false)} onSelect={selectCanvasStyle} />
 
