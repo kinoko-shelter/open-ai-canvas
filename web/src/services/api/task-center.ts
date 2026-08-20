@@ -3,7 +3,7 @@ import { apiClient, request, type BackendEnvelope } from "@/services/api/request
 
 export type { BackendEnvelope } from "@/services/api/request";
 
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "text_replay";
 export type TaskBillingStatus = "reserved" | "running" | "settled" | "refunded" | "uncertain";
 export type ProviderCancelStatus = "requested" | "confirmed" | "uncertain";
 export type AgentSessionStatus = "active" | "completed" | "failed";
@@ -211,6 +211,10 @@ export function queryGenerationTask(id: string, options?: { signal?: AbortSignal
 
 export function appendTaskTextDelta(id: string, content: string) {
     return request<TaskTextDelta>(api.post(`/tasks/${encodeURIComponent(id)}/text-deltas`, { content }));
+}
+
+export function completeTextReplayTask(id: string, text: string) {
+    return request<GenerationTask>(api.post(`/tasks/${encodeURIComponent(id)}/text-replay-complete`, { text }));
 }
 
 export function queryTaskTextReplay(id: string, after = 0) {
