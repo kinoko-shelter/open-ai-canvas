@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
+import { applyCanvasLiveViewport, canvasDotPx, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
 
@@ -382,7 +382,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "dots"
                 "--canvas-grid-size": `${48 * viewport.k}px`,
                 "--canvas-grid-x": `${viewport.x % (48 * viewport.k)}px`,
                 "--canvas-grid-y": `${viewport.y % (48 * viewport.k)}px`,
-                "--canvas-dot-size": viewport.k < 0.12 ? "0.8px" : "1.15px",
+                "--canvas-dot-size": canvasDotPx(viewport.k),
             } as React.CSSProperties}
             onPointerDown={handlePointerDown}
             onDoubleClick={(event) => {
