@@ -2346,6 +2346,10 @@ func xaiVideoRequestBody(input canvasGenerationInput) (xaiVideoRequest, error) {
 	}
 	startFrameID := metadataString(input.Metadata, "videoStartFrameNodeId")
 	if startFrameID == "" {
+		// ICAN/xAI 的 R2V 上游不接受 1080p；在创建前报出可操作的错误，避免返回不透明的 invalid-argument。
+		if resolution == "1080p" {
+			return xaiVideoRequest{}, errors.New("Grok 参考图生视频暂不支持 1080P，请切换至 720P 或设置单张首帧图生成")
+		}
 		// 未设置首帧：所有参考图作为 R2V 参考，不受单张起始图限制。
 		for index := range input.ReferenceImages {
 			imageURL, err := openAIImageInputURL(input.ReferenceImages[index])
