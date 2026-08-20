@@ -306,11 +306,11 @@ func (s *Service) taskProjectStyleProfile(userID string, canvasOrProjectID strin
 	if id == "" {
 		return "", "", false, nil
 	}
-	if canvas, err := s.repo.CanvasProjectForUser(userID, id); err == nil {
+	if canvas, err := s.canvasProjectForUserID(userID, id); err == nil {
 		if strings.TrimSpace(canvas.ProjectID) == "" {
 			return "", "", false, nil
 		}
-		project, projectErr := s.repo.ProjectForUser(userID, canvas.ProjectID)
+		project, projectErr := s.projectForUserID(userID, canvas.ProjectID)
 		if projectErr != nil {
 			return "", "", true, projectErr
 		}
@@ -318,7 +318,7 @@ func (s *Service) taskProjectStyleProfile(userID string, canvasOrProjectID strin
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", "", false, err
 	}
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.projectForUserID(userID, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", "", false, nil
@@ -501,7 +501,7 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, requ
 	}
 	resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
 	if requirePublicURL {
-		resource, err := s.repo.ResourceForUser(userID, resourceID)
+		resource, err := s.ResourceForUser(&model.User{ID: userID}, resourceID)
 		if err != nil {
 			return fmt.Errorf("读取任务参考资源失败：%w", err)
 		}

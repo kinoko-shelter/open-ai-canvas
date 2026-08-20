@@ -82,7 +82,11 @@ type ProjectDetail struct {
 }
 
 func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
-	projects, err := s.repo.Projects(userID)
+	scope, err := s.dataScopeForUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := s.repo.ProjectsForScope(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +96,7 @@ func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
 		if unitsErr != nil {
 			return nil, unitsErr
 		}
-		canvases, canvasesErr := s.repo.ProjectCanvasSummaries(userID, project.ID)
+		canvases, canvasesErr := s.repo.ProjectCanvasSummariesForScope(scope, project.ID)
 		if canvasesErr != nil {
 			return nil, canvasesErr
 		}
@@ -112,13 +116,13 @@ func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
 }
 
 func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error) {
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.projectForUserID(userID, id)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
 	// 项目读取允许降级修复：旧任务可能已成功持久化图片，但浏览器刷新中断了角色版本绑定。
 	if s.reconcileCharacterTurnaroundTasks(userID, project.ID) {
-		project, err = s.repo.ProjectForUser(userID, id)
+		project, err = s.projectForUserID(userID, id)
 		if err != nil {
 			return ProjectDetail{}, err
 		}
@@ -128,7 +132,11 @@ func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
-	canvases, err := s.repo.ProjectCanvasSummaries(userID, project.ID)
+	scope, err := s.dataScopeForUserID(userID)
+	if err != nil {
+		return ProjectDetail{}, err
+	}
+	canvases, err := s.repo.ProjectCanvasSummariesForScope(scope, project.ID)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
@@ -209,7 +217,7 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 }
 
 func (s *Service) UpdateProject(userID string, id string, req UpdateProjectRequest) (model.Project, error) {
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.projectForUserID(userID, id)
 	if err != nil {
 		return model.Project{}, err
 	}
@@ -263,14 +271,15 @@ func (s *Service) UpdateProject(userID string, id string, req UpdateProjectReque
 }
 
 func (s *Service) DeleteProject(userID string, id string) error {
-	if _, err := s.repo.ProjectForUser(userID, id); err != nil {
+	project, err := s.projectForUserID(userID, id)
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteProject(userID, id)
+	return s.repo.DeleteProject(project.UserID, id)
 }
 
 func (s *Service) CreateProjectUnit(userID string, projectID string, req CreateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := newProjectUnit(projectID, req, req.Position)
@@ -287,7 +296,7 @@ func (s *Service) CreateProjectUnit(userID string, projectID string, req CreateP
 }
 
 func (s *Service) GetProjectUnit(userID string, projectID string, unitID string) (model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, strings.TrimSpace(unitID))
@@ -298,7 +307,7 @@ func (s *Service) GetProjectUnit(userID string, projectID string, unitID string)
 }
 
 func (s *Service) ImportProjectUnits(userID string, projectID string, req ImportProjectUnitsRequest) ([]model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return nil, err
 	}
 	if len(req.Units) == 0 || len(req.Units) > 2500 {
@@ -323,7 +332,7 @@ func (s *Service) ImportProjectUnits(userID string, projectID string, req Import
 }
 
 func (s *Service) ReorderProjectUnits(userID string, projectID string, req ReorderProjectUnitsRequest) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return err
 	}
 	units, err := s.repo.ProjectUnits(projectID)
@@ -354,7 +363,7 @@ func (s *Service) ReorderProjectUnits(userID string, projectID string, req Reord
 }
 
 func (s *Service) DeleteProjectUnit(userID string, projectID string, unitID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
@@ -384,7 +393,7 @@ func newProjectUnit(projectID string, req CreateProjectUnitRequest, position int
 }
 
 func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID string, req UpdateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, unitID)
@@ -412,7 +421,7 @@ func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID stri
 }
 
 func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvasUnitRequest) (model.CanvasUnitLink, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.CanvasUnitLink{}, err
 	}
 	canvasID := strings.TrimSpace(req.CanvasID)
@@ -420,13 +429,14 @@ func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvas
 	if canvasID == "" || unitID == "" {
 		return model.CanvasUnitLink{}, BadAuthRequest("画布和章节不能为空")
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, canvasID); err != nil {
+	canvas, err := s.canvasProjectForUserID(userID, canvasID)
+	if err != nil {
 		return model.CanvasUnitLink{}, err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
 		return model.CanvasUnitLink{}, err
 	}
-	if err := s.repo.AssignCanvasToProject(userID, canvasID, projectID); err != nil {
+	if err := s.repo.AssignCanvasToProject(canvas.UserID, canvasID, projectID); err != nil {
 		return model.CanvasUnitLink{}, err
 	}
 	role := strings.TrimSpace(req.Role)
@@ -445,10 +455,10 @@ func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvas
 }
 
 func (s *Service) UnlinkCanvasUnit(userID string, projectID string, canvasID string, unitID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return err
 	}
-	canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(canvasID))
+	canvas, err := s.canvasProjectForUserID(userID, strings.TrimSpace(canvasID))
 	if err != nil {
 		return err
 	}
@@ -462,10 +472,10 @@ func (s *Service) UnlinkCanvasUnit(userID string, projectID string, canvasID str
 }
 
 func (s *Service) UnlinkCanvasProject(userID string, projectID string, canvasID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return err
 	}
-	canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(canvasID))
+	canvas, err := s.canvasProjectForUserID(userID, strings.TrimSpace(canvasID))
 	if err != nil {
 		return err
 	}
@@ -478,7 +488,7 @@ func (s *Service) UnlinkCanvasProject(userID string, projectID string, canvasID 
 		return err
 	}
 	// 关系列、同步快照和更新时间必须原子更新，否则浏览器会用旧 projectId 把关系重新写回。
-	return s.repo.UnassignCanvasFromProject(userID, projectID, canvas.ID, payloadJSON, now)
+	return s.repo.UnassignCanvasFromProject(canvas.UserID, projectID, canvas.ID, payloadJSON, now)
 }
 
 func canvasPayloadWithoutProject(payloadJSON string, updatedAt time.Time) (string, error) {
@@ -501,15 +511,23 @@ func IsProjectNotFound(err error) bool {
 
 // 任务仍以画布 ID 作为 projectId；写入前必须解析到业务项目并阻止归档项目继续生成。
 func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID string) error {
+	actor, err := s.actorForUserID(userID)
+	if err != nil {
+		return err
+	}
+	return s.ensureTaskProjectActiveForUser(actor, canvasOrProjectID)
+}
+
+func (s *Service) ensureTaskProjectActiveForUser(actor *model.User, canvasOrProjectID string) error {
 	id := strings.TrimSpace(canvasOrProjectID)
 	if id == "" {
 		return nil
 	}
-	if canvas, err := s.repo.CanvasProjectForUser(userID, id); err == nil {
+	if canvas, err := s.scopedCanvasProject(actor, id); err == nil {
 		if canvas.ProjectID == "" {
 			return nil
 		}
-		project, projectErr := s.repo.ProjectForUser(userID, canvas.ProjectID)
+		project, projectErr := s.scopedProject(actor, canvas.ProjectID)
 		if projectErr != nil {
 			return projectErr
 		}
@@ -520,7 +538,7 @@ func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID strin
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	project, err := s.repo.ProjectForUser(userID, id)
+	project, err := s.scopedProject(actor, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil

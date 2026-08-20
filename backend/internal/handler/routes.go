@@ -57,7 +57,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-		tasks, err := svc.TasksWithOptions(user.ID, service.TaskListOptions{
+		tasks, err := svc.TasksForUserWithOptions(user, service.TaskListOptions{
 			Limit:      limit,
 			ProjectID:  c.Query("projectId"),
 			ActiveOnly: c.Query("activeOnly") == "true",
@@ -74,7 +74,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		task, err := svc.Task(user.ID, c.Param("id"))
+		task, err := svc.TaskForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -139,7 +139,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		task, err := svc.RetryTask(user.ID, c.Param("id"))
+		task, err := svc.RetryTaskForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -152,7 +152,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		result, err := svc.QueryFailedVideoTask(c.Request.Context(), user.ID, c.Param("id"))
+		result, err := svc.QueryFailedVideoTaskForUser(c.Request.Context(), user, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -165,7 +165,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		task, err := svc.CancelTask(c.Request.Context(), user.ID, c.Param("id"))
+		task, err := svc.CancelTaskForUser(c.Request.Context(), user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -178,7 +178,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		logs, err := svc.TaskLogs(user.ID, c.Param("id"))
+		logs, err := svc.TaskLogsForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusInternalServerError, err)
 			return

@@ -157,7 +157,7 @@ func (s *Service) ImportTapNow(userID, canvasProjectID, shareID string) (*TapNow
 	if userID == "" || canvasProjectID == "" {
 		return nil, Unauthorized("请先打开已同步的故事创作画布")
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, canvasProjectID); err != nil {
+	if _, err := s.canvasProjectForUserID(userID, canvasProjectID); err != nil {
 		return nil, err
 	}
 	detail, normalizedShareID, err := fetchTapNowDetail(strings.TrimSpace(shareID))

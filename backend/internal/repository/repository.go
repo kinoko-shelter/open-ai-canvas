@@ -351,6 +351,15 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 	return &task, nil
 }
 
+func (r *Repository) TaskForScope(scope UserDataScope, id string) (*model.Task, error) {
+	var task model.Task
+	query := scope.apply(r.db.Model(&model.Task{}), "tasks")
+	if err := query.First(&task, "tasks.id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 func (r *Repository) ActiveTaskCountForUser(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error
@@ -594,19 +603,24 @@ func (r *Repository) ClaimNextTaskProviderCancellation(owner string, leaseDurati
 }
 
 func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
+	return r.TasksForScope(PersonalUserDataScope(userID), limit, projectID, activeOnly)
+}
+
+func (r *Repository) TasksForScope(scope UserDataScope, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
 	var tasks []model.Task
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "session_id", "project_id", "aigc_project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
-		Where("user_id = ?", userID)
+	query := r.db.Select("id", "user_id", "session_id", "project_id", "aigc_project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
+		Model(&model.Task{})
+	query = scope.apply(query, "tasks")
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}
 	if activeOnly {
 		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
 	}
-	err := query.Order("created_at desc").Limit(limit).Find(&tasks).Error
+	err := query.Order("tasks.created_at desc").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -665,8 +679,13 @@ func (r *Repository) SessionResults(userID string, sessionID string) ([]model.Re
 }
 
 func (r *Repository) TaskLogs(userID string, taskID string) ([]model.TaskLog, error) {
+	return r.TaskLogsForScope(PersonalUserDataScope(userID), taskID)
+}
+
+func (r *Repository) TaskLogsForScope(scope UserDataScope, taskID string) ([]model.TaskLog, error) {
 	var logs []model.TaskLog
-	err := r.db.Order("created_at asc").Find(&logs, "user_id = ? AND task_id = ?", userID, taskID).Error
+	query := scope.apply(r.db.Model(&model.TaskLog{}), "task_logs")
+	err := query.Order("task_logs.created_at asc").Find(&logs, "task_logs.task_id = ?", taskID).Error
 	return logs, err
 }
 
@@ -881,30 +900,62 @@ func (r *Repository) ResourceForUser(userID string, id string) (*model.Resource,
 	return &resource, nil
 }
 
+func (r *Repository) ResourceForScope(scope UserDataScope, id string) (*model.Resource, error) {
+	var resource model.Resource
+	query := scope.apply(r.db.Model(&model.Resource{}), "resources")
+	if err := query.First(&resource, "resources.id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
 func (r *Repository) Resources(userID string, limit int) ([]model.Resource, error) {
+	return r.ResourcesForScope(PersonalUserDataScope(userID), limit)
+}
+
+func (r *Repository) ResourcesForScope(scope UserDataScope, limit int) ([]model.Resource, error) {
 	var resources []model.Resource
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	err := r.db.Order("created_at desc").Limit(limit).Find(&resources, "user_id = ?", userID).Error
+	query := scope.apply(r.db.Model(&model.Resource{}), "resources")
+	err := query.Order("resources.created_at desc").Limit(limit).Find(&resources).Error
 	return resources, err
 }
 
 func (r *Repository) Assets(userID string) ([]model.Asset, error) {
+	return r.AssetsForScope(PersonalUserDataScope(userID))
+}
+
+func (r *Repository) AssetsForScope(scope UserDataScope) ([]model.Asset, error) {
 	var assets []model.Asset
-	err := r.db.Order("updated_at desc").Find(&assets, "user_id = ?", userID).Error
+	query := scope.apply(r.db.Model(&model.Asset{}), "assets")
+	err := query.Order("assets.updated_at desc").Find(&assets).Error
 	return assets, err
 }
 
 func (r *Repository) AssetSummaries(userID string) ([]model.Asset, error) {
+	return r.AssetSummariesForScope(PersonalUserDataScope(userID))
+}
+
+func (r *Repository) AssetSummariesForScope(scope UserDataScope) ([]model.Asset, error) {
 	var assets []model.Asset
-	err := r.db.Select("id", "kind", "category", "status", "primary_version_id", "title", "created_at", "updated_at").Order("updated_at desc").Find(&assets, "user_id = ?", userID).Error
+	query := scope.apply(r.db.Model(&model.Asset{}), "assets")
+	err := query.Select("assets.id", "assets.user_id", "assets.kind", "assets.category", "assets.status", "assets.primary_version_id", "assets.title", "assets.created_at", "assets.updated_at").Order("assets.updated_at desc").Find(&assets).Error
 	return assets, err
 }
 
 func (r *Repository) AssetForUser(userID string, id string) (*model.Asset, error) {
 	var asset model.Asset
 	if err := r.db.First(&asset, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+func (r *Repository) Asset(id string) (*model.Asset, error) {
+	var asset model.Asset
+	if err := r.db.First(&asset, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &asset, nil
@@ -949,20 +1000,38 @@ func (r *Repository) ReplaceAssets(userID string, assets []model.Asset) error {
 }
 
 func (r *Repository) CanvasProjects(userID string) ([]model.CanvasProject, error) {
+	return r.CanvasProjectsForScope(PersonalUserDataScope(userID))
+}
+
+func (r *Repository) CanvasProjectsForScope(scope UserDataScope) ([]model.CanvasProject, error) {
 	var projects []model.CanvasProject
-	err := r.db.Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
+	query := scope.apply(r.db.Model(&model.CanvasProject{}), "canvas_projects")
+	err := query.Order("canvas_projects.updated_at desc").Find(&projects).Error
 	return projects, err
 }
 
 func (r *Repository) CanvasProjectSummaries(userID string) ([]model.CanvasProject, error) {
+	return r.CanvasProjectSummariesForScope(PersonalUserDataScope(userID))
+}
+
+func (r *Repository) CanvasProjectSummariesForScope(scope UserDataScope) ([]model.CanvasProject, error) {
 	var projects []model.CanvasProject
-	err := r.db.Select("id", "title", "created_at", "updated_at").Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
+	query := scope.apply(r.db.Model(&model.CanvasProject{}), "canvas_projects")
+	err := query.Select("canvas_projects.id", "canvas_projects.user_id", "canvas_projects.title", "canvas_projects.created_at", "canvas_projects.updated_at").Order("canvas_projects.updated_at desc").Find(&projects).Error
 	return projects, err
 }
 
 func (r *Repository) CanvasProjectForUser(userID string, id string) (*model.CanvasProject, error) {
 	var project model.CanvasProject
 	if err := r.db.First(&project, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
+func (r *Repository) CanvasProject(id string) (*model.CanvasProject, error) {
+	var project model.CanvasProject
+	if err := r.db.First(&project, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &project, nil
@@ -983,8 +1052,13 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 }
 
 func (r *Repository) Projects(userID string) ([]model.Project, error) {
+	return r.ProjectsForScope(PersonalUserDataScope(userID))
+}
+
+func (r *Repository) ProjectsForScope(scope UserDataScope) ([]model.Project, error) {
 	var projects []model.Project
-	err := r.db.Where("user_id = ?", userID).Order("updated_at desc").Find(&projects).Error
+	query := scope.apply(r.db.Model(&model.Project{}), "projects")
+	err := query.Order("projects.updated_at desc").Find(&projects).Error
 	if err != nil {
 		return nil, err
 	}
@@ -992,6 +1066,14 @@ func (r *Repository) Projects(userID string) ([]model.Project, error) {
 		return nil, err
 	}
 	return projects, err
+}
+
+func (r *Repository) Project(id string) (*model.Project, error) {
+	var project model.Project
+	if err := r.db.First(&project, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &project, nil
 }
 
 func (r *Repository) ProjectForUser(userID string, id string) (*model.Project, error) {
@@ -1221,14 +1303,24 @@ func (r *Repository) UpsertCanvasUnitLink(link *model.CanvasUnitLink) error {
 }
 
 func (r *Repository) ProjectCanvasSummaries(userID string, projectID string) ([]model.CanvasProject, error) {
+	return r.ProjectCanvasSummariesForScope(PersonalUserDataScope(userID), projectID)
+}
+
+func (r *Repository) ProjectCanvasSummariesForScope(scope UserDataScope, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
-	err := r.db.Select("id", "user_id", "project_id", "aigc_project_id", "title", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
+	query := scope.apply(r.db.Model(&model.CanvasProject{}), "canvas_projects")
+	err := query.Select("canvas_projects.id", "canvas_projects.user_id", "canvas_projects.project_id", "canvas_projects.aigc_project_id", "canvas_projects.title", "canvas_projects.created_at", "canvas_projects.updated_at").Where("canvas_projects.project_id = ?", projectID).Order("canvas_projects.updated_at desc").Find(&canvases).Error
 	return canvases, err
 }
 
 func (r *Repository) ProjectCanvasDocuments(userID string, projectID string) ([]model.CanvasProject, error) {
+	return r.ProjectCanvasDocumentsForScope(PersonalUserDataScope(userID), projectID)
+}
+
+func (r *Repository) ProjectCanvasDocumentsForScope(scope UserDataScope, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
-	err := r.db.Select("id", "title", "payload_json").Where("user_id = ? AND project_id = ?", userID, projectID).Find(&canvases).Error
+	query := scope.apply(r.db.Model(&model.CanvasProject{}), "canvas_projects")
+	err := query.Select("canvas_projects.id", "canvas_projects.user_id", "canvas_projects.title", "canvas_projects.payload_json").Where("canvas_projects.project_id = ?", projectID).Find(&canvases).Error
 	return canvases, err
 }
 
@@ -1274,8 +1366,13 @@ func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, 
 }
 
 func (r *Repository) ProjectAssets(userID string, projectID string) ([]model.Asset, error) {
+	return r.ProjectAssetsForScope(PersonalUserDataScope(userID), projectID)
+}
+
+func (r *Repository) ProjectAssetsForScope(scope UserDataScope, projectID string) ([]model.Asset, error) {
 	var assets []model.Asset
-	err := r.db.Table("assets").Select("assets.*").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id").Where("assets.user_id = ? AND project_asset_links.project_id = ?", userID, projectID).Order("assets.updated_at desc").Scan(&assets).Error
+	query := scope.apply(r.db.Table("assets").Select("assets.*").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id"), "assets")
+	err := query.Where("project_asset_links.project_id = ?", projectID).Order("assets.updated_at desc").Scan(&assets).Error
 	return assets, err
 }
 

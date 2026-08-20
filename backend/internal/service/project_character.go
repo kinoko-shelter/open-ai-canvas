@@ -116,7 +116,7 @@ func (s *Service) ListVoiceProfiles(userID string) ([]VoiceProfileSummary, error
 }
 
 func (s *Service) CreateProjectCharacter(userID string, projectID string, req CreateProjectCharacterRequest) (ProjectCharacterDetail, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return ProjectCharacterDetail{}, err
 	}
 	name := strings.TrimSpace(req.Name)
@@ -191,7 +191,7 @@ func (s *Service) ReplaceProjectCharacterRepresentations(userID string, projectI
 		}
 		roles[role] = struct{}{}
 		resourceID := strings.TrimSpace(input.ResourceID)
-		resource, resourceErr := s.repo.ResourceForUser(userID, resourceID)
+		resource, resourceErr := s.ResourceForUser(&model.User{ID: userID}, resourceID)
 		if resourceErr != nil || resource.Kind != "image" || resource.Status != model.ResourceStatusReady {
 			return ProjectCharacterDetail{}, BadAuthRequest("角色形象资源不可用")
 		}
@@ -251,7 +251,7 @@ func (s *Service) finalizeCharacterTurnaroundTask(task model.Task, result map[st
 		return false, err
 	}
 	resourceID := strings.TrimSpace(output.Images[0].ResourceID)
-	resource, err := s.repo.ResourceForUser(task.UserID, resourceID)
+	resource, err := s.ResourceForUser(&model.User{ID: task.UserID}, resourceID)
 	if err != nil || resource.Kind != "image" || resource.Status != model.ResourceStatusReady {
 		return false, BadAuthRequest("三视图任务生成的图片资源不可用")
 	}

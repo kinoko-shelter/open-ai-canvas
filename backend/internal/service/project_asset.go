@@ -72,7 +72,11 @@ func (s *Service) FilterProjectAssets(userID string, projectID string, filter Pr
 }
 
 func (s *Service) ProjectAssets(userID string, projectID string) ([]ProjectAssetSummary, error) {
-	assets, err := s.repo.ProjectAssets(userID, projectID)
+	scope, err := s.dataScopeForUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := s.repo.ProjectAssetsForScope(scope, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -88,11 +92,11 @@ func (s *Service) ProjectAssets(userID string, projectID string) ([]ProjectAsset
 }
 
 func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProjectAssetRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	assetID := strings.TrimSpace(req.AssetID)
-	asset, err := s.repo.AssetForUser(userID, assetID)
+	asset, err := s.assetForUserID(userID, assetID)
 	if err != nil {
 		return ProjectAssetSummary{}, err
 	}
@@ -141,7 +145,7 @@ func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProj
 		return ProjectAssetSummary{}, err
 	}
 	if !created {
-		current, currentErr := s.repo.AssetForUser(userID, asset.ID)
+		current, currentErr := s.assetForUserID(userID, asset.ID)
 		if currentErr != nil {
 			return ProjectAssetSummary{}, currentErr
 		}
@@ -159,15 +163,19 @@ func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProj
 }
 
 func (s *Service) UnlinkProjectAsset(userID string, projectID string, assetID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return err
 	}
-	asset, err := s.repo.AssetForUser(userID, assetID)
+	asset, err := s.assetForUserID(userID, assetID)
 	if err != nil {
 		return err
 	}
 	if asset.Category == model.AssetCategoryCharacter {
-		canvases, canvasErr := s.repo.ProjectCanvasDocuments(userID, projectID)
+		scope, scopeErr := s.dataScopeForUserID(userID)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		canvases, canvasErr := s.repo.ProjectCanvasDocumentsForScope(scope, projectID)
 		if canvasErr != nil {
 			return canvasErr
 		}
@@ -215,10 +223,10 @@ func canvasReferencesCharacterAsset(payloadJSON string, assetID string) (bool, e
 }
 
 func (s *Service) UpdateProjectAssetCategory(userID string, projectID string, assetID string, req UpdateProjectAssetCategoryRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
-	asset, err := s.repo.AssetForUser(userID, strings.TrimSpace(assetID))
+	asset, err := s.assetForUserID(userID, strings.TrimSpace(assetID))
 	if err != nil {
 		return ProjectAssetSummary{}, err
 	}
@@ -253,10 +261,10 @@ func (s *Service) UpdateProjectAssetCategory(userID string, projectID string, as
 }
 
 func (s *Service) CreateProjectAssetVersion(userID string, projectID string, assetID string, req CreateAssetVersionRequest) (model.AssetVersion, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.AssetVersion{}, err
 	}
-	asset, err := s.repo.AssetForUser(userID, assetID)
+	asset, err := s.assetForUserID(userID, assetID)
 	if err != nil {
 		return model.AssetVersion{}, err
 	}
@@ -300,7 +308,7 @@ func (s *Service) CreateProjectAssetVersion(userID string, projectID string, ass
 }
 
 func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, candidateID string, req ConfirmProjectAssetCandidateRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	candidate, err := s.repo.ProjectAssetCandidate(projectID, candidateID)
@@ -364,7 +372,7 @@ func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, 
 		asset = model.Asset{ID: assetID, UserID: userID, Kind: kind, Category: candidate.Category, Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: versionID, Title: candidate.Name, PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
 		version = model.AssetVersion{ID: versionID, AssetID: assetID, Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: candidate.DetailsJSON, CreatedAt: now, UpdatedAt: now}
 	} else {
-		existing, assetErr := s.repo.AssetForUser(userID, assetID)
+		existing, assetErr := s.assetForUserID(userID, assetID)
 		if assetErr != nil {
 			return ProjectAssetSummary{}, assetErr
 		}

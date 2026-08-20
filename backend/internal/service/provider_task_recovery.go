@@ -22,11 +22,15 @@ type ProviderTaskQueryResult struct {
 }
 
 func (s *Service) QueryFailedVideoTask(ctx context.Context, userID string, taskID string) (*ProviderTaskQueryResult, error) {
-	task, err := s.repo.TaskForUser(strings.TrimSpace(userID), strings.TrimSpace(taskID))
+	return s.QueryFailedVideoTaskForUser(ctx, &model.User{ID: userID}, taskID)
+}
+
+func (s *Service) QueryFailedVideoTaskForUser(ctx context.Context, actor *model.User, taskID string) (*ProviderTaskQueryResult, error) {
+	task, err := s.scopedTask(actor, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
-	return s.queryFailedVideoTask(ctx, task, strings.TrimSpace(userID))
+	return s.queryFailedVideoTask(ctx, task, actor.ID)
 }
 
 func (s *Service) AdminQueryFailedVideoTask(ctx context.Context, actor *model.User, logID string) (*ProviderTaskQueryResult, error) {

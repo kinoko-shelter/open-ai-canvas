@@ -519,12 +519,17 @@ func (r *Repository) BillingOrder(id string) (*model.BillingOrder, error) {
 }
 
 func (r *Repository) BillingOrdersByTaskIDs(userID string, taskIDs []string) (map[string]model.BillingOrder, error) {
+	return r.BillingOrdersByTaskIDsForScope(PersonalUserDataScope(userID), taskIDs)
+}
+
+func (r *Repository) BillingOrdersByTaskIDsForScope(scope UserDataScope, taskIDs []string) (map[string]model.BillingOrder, error) {
 	result := make(map[string]model.BillingOrder, len(taskIDs))
 	if len(taskIDs) == 0 {
 		return result, nil
 	}
 	var orders []model.BillingOrder
-	if err := r.db.Where("user_id = ? AND task_id IN ?", userID, taskIDs).Find(&orders).Error; err != nil {
+	query := scope.apply(r.db.Model(&model.BillingOrder{}), "billing_orders")
+	if err := query.Where("billing_orders.task_id IN ?", taskIDs).Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	for _, order := range orders {

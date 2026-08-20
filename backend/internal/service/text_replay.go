@@ -30,7 +30,7 @@ type TextReplayResult struct {
 }
 
 func (s *Service) AppendTaskTextDelta(userID string, taskID string, content string) (*model.TaskTextDelta, error) {
-	task, err := s.repo.TaskForUser(userID, taskID)
+	task, err := s.taskForUserID(userID, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (s *Service) AppendTaskTextDelta(userID string, taskID string, content stri
 }
 
 func (s *Service) TaskTextReplay(userID string, taskID string, after int64) (*TextReplayResult, error) {
-	task, err := s.repo.TaskForUser(userID, taskID)
+	task, err := s.taskForUserID(userID, taskID)
 	if err != nil {
 		return nil, err
 	}

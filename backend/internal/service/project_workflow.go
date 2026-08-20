@@ -111,7 +111,7 @@ func (s *Service) ProjectWorkflows(projectID string) ([]ProjectWorkflowDetail, e
 }
 
 func (s *Service) CreateUnitWorkflow(userID string, projectID string, unitID string) (ProjectWorkflowDetail, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return ProjectWorkflowDetail{}, err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
@@ -121,7 +121,7 @@ func (s *Service) CreateUnitWorkflow(userID string, projectID string, unitID str
 }
 
 func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID string, req UpdateWorkflowStepRequest) (model.WorkflowStepInstance, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
 	step, err := s.repo.WorkflowStepForProject(projectID, stepID)
@@ -180,10 +180,10 @@ func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID str
 }
 
 func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID string, req RegisterTaskOutputRequest) (model.WorkflowStepInstance, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectForUserID(userID, projectID); err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
-	task, err := s.repo.TaskForUser(userID, strings.TrimSpace(req.TaskID))
+	task, err := s.taskForUserID(userID, strings.TrimSpace(req.TaskID))
 	if err != nil {
 		return model.WorkflowStepInstance{}, err
 	}
@@ -206,7 +206,7 @@ func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID str
 		}
 	}
 	if resourceID := strings.TrimSpace(req.ResourceID); resourceID != "" {
-		if _, err := s.repo.ResourceForUser(userID, resourceID); err != nil {
+		if _, err := s.ResourceForUser(&model.User{ID: userID}, resourceID); err != nil {
 			return model.WorkflowStepInstance{}, err
 		}
 	}
@@ -264,6 +264,13 @@ func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID str
 	return *step, nil
 }
 
+func (s *Service) RegisterTaskOutputForUser(actor *model.User, projectID string, stepID string, req RegisterTaskOutputRequest) (model.WorkflowStepInstance, error) {
+	if actor == nil {
+		return model.WorkflowStepInstance{}, Unauthorized("请先登录")
+	}
+	return s.RegisterTaskOutput(actor.ID, projectID, stepID, req)
+}
+
 func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	if strings.TrimSpace(task.ProjectID) == "" || task.Status != model.TaskStatusSucceeded {
 		return nil
@@ -312,7 +319,7 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	}
 	projectID := strings.TrimSpace(input.DomainProjectID)
 	if projectID == "" {
-		if _, projectErr := s.repo.ProjectForUser(task.UserID, task.ProjectID); projectErr == nil {
+		if _, projectErr := s.projectForUserID(task.UserID, task.ProjectID); projectErr == nil {
 			projectID = task.ProjectID
 		}
 	}

@@ -99,7 +99,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
-		resources, err := svc.Resources(user.ID, limit)
+		resources, err := svc.ResourcesForUser(user, limit)
 		if err != nil {
 			failService(c, err)
 			return
@@ -180,7 +180,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		resource, err := svc.Resource(user.ID, c.Param("id"))
+		resource, err := svc.ResourceForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -193,12 +193,12 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		resource, err := svc.Resource(user.ID, c.Param("id"))
+		resource, err := svc.ResourceForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
 		}
-		ossURL, err := svc.DirectResourceURL(user.ID, resource.ID)
+		ossURL, err := svc.DirectResourceURL(resource.UserID, resource.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -214,13 +214,13 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		resource, err := svc.Resource(user.ID, c.Param("id"))
+		resource, err := svc.ResourceForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
 		}
 		if c.Query("direct") == "1" && resource.Provider != "local" {
-			directURL, err := svc.DirectResourceURL(user.ID, resource.ID)
+			directURL, err := svc.DirectResourceURL(resource.UserID, resource.ID)
 			if err != nil {
 				failService(c, err)
 				return
@@ -250,7 +250,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if ifRange := strings.TrimSpace(c.GetHeader("If-Range")); ifRange != "" && ifRange != etag {
 			rangeHeader = ""
 		}
-		stream, err := svc.OpenResourceRange(user.ID, resource.ID, rangeHeader)
+		stream, err := svc.OpenResourceRange(resource.UserID, resource.ID, rangeHeader)
 		if err != nil {
 			failService(c, err)
 			return
@@ -305,7 +305,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		assets, err := svc.UserAssetSummaries(user.ID)
+		assets, err := svc.UserAssetSummariesForUser(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -318,7 +318,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		snapshot, err := svc.UserDataSnapshot(user.ID)
+		snapshot, err := svc.UserDataSnapshotForUser(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -331,7 +331,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		asset, err := svc.UserAsset(user.ID, c.Param("id"))
+		asset, err := svc.UserAssetForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -363,7 +363,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("素材 ID 与请求路径不一致"))
 			return
 		}
-		asset, err := svc.UpsertUserAsset(user.ID, req.Asset)
+		asset, err := svc.UpsertUserAssetForUser(user, req.Asset)
 		if err != nil {
 			failService(c, err)
 			return
@@ -376,7 +376,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserAsset(user.ID, c.Param("id")); err != nil {
+		if err := svc.DeleteUserAssetForUser(user, c.Param("id")); err != nil {
 			failService(c, err)
 			return
 		}
@@ -388,7 +388,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		projects, err := svc.UserCanvasProjectSummaries(user.ID)
+		projects, err := svc.UserCanvasProjectSummariesForUser(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -401,7 +401,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		project, err := svc.UserCanvasProject(user.ID, c.Param("id"))
+		project, err := svc.UserCanvasProjectForUser(user, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -433,7 +433,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("画布 ID 与请求路径不一致"))
 			return
 		}
-		project, err := svc.UpsertUserCanvasProject(user.ID, req.Project)
+		project, err := svc.UpsertUserCanvasProjectForUser(user, req.Project)
 		if err != nil {
 			failService(c, err)
 			return
@@ -446,7 +446,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserCanvasProject(user.ID, c.Param("id")); err != nil {
+		if err := svc.DeleteUserCanvasProjectForUser(user, c.Param("id")); err != nil {
 			failService(c, err)
 			return
 		}

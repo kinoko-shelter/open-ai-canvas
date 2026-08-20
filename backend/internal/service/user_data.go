@@ -36,11 +36,15 @@ type UserDataSnapshot struct {
 }
 
 func (s *Service) UserDataSnapshot(userID string) (UserDataSnapshot, error) {
-	assets, err := s.UserAssets(userID)
+	return s.UserDataSnapshotForUser(&model.User{ID: userID})
+}
+
+func (s *Service) UserDataSnapshotForUser(user *model.User) (UserDataSnapshot, error) {
+	assets, err := s.UserAssetsForUser(user)
 	if err != nil {
 		return UserDataSnapshot{}, err
 	}
-	projects, err := s.UserCanvasProjects(userID)
+	projects, err := s.UserCanvasProjectsForUser(user)
 	if err != nil {
 		return UserDataSnapshot{}, err
 	}
@@ -48,7 +52,15 @@ func (s *Service) UserDataSnapshot(userID string) (UserDataSnapshot, error) {
 }
 
 func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
-	assets, err := s.repo.AssetSummaries(userID)
+	return s.UserAssetSummariesForUser(&model.User{ID: userID})
+}
+
+func (s *Service) UserAssetSummariesForUser(user *model.User) ([]UserDataSummary, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := s.repo.AssetSummariesForScope(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +72,11 @@ func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
 }
 
 func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
-	asset, err := s.repo.AssetForUser(userID, id)
+	return s.UserAssetForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) UserAssetForUser(user *model.User, id string) (json.RawMessage, error) {
+	asset, err := s.scopedAsset(user, id)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +84,29 @@ func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
 }
 
 func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	asset, err := assetFromJSON(userID, raw)
+	return s.upsertUserAssetForOwner(&model.User{ID: userID}, userID, raw)
+}
+
+func (s *Service) UpsertUserAssetForUser(user *model.User, raw json.RawMessage) (UserDataSummary, error) {
+	ownerID := user.ID
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(raw, &identity) == nil && strings.TrimSpace(identity.ID) != "" {
+		if existing, err := s.scopedAsset(user, identity.ID); err == nil {
+			ownerID = existing.UserID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return UserDataSummary{}, err
+		}
+	}
+	return s.upsertUserAssetForOwner(user, ownerID, raw)
+}
+
+func (s *Service) upsertUserAssetForOwner(actor *model.User, ownerID string, raw json.RawMessage) (UserDataSummary, error) {
+	if err := s.canAccessOwnedUser(actor, ownerID); err != nil {
+		return UserDataSummary{}, err
+	}
+	asset, err := assetFromJSON(ownerID, raw)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
@@ -78,7 +116,7 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	existing, existingErr := s.repo.AssetForUser(userID, asset.ID)
+	existing, existingErr := s.repo.AssetForUser(ownerID, asset.ID)
 	if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 		return UserDataSummary{}, existingErr
 	}
@@ -86,7 +124,7 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	if existing != nil {
 		existingBytes = int64(len([]byte(existing.PayloadJSON)))
 	}
-	usage, err := s.repo.UserStorageUsage(userID)
+	usage, err := s.repo.UserStorageUsage(ownerID)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
@@ -97,13 +135,18 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 		return UserDataSummary{}, err
 	}
 	if existingErr != nil {
-		s.recordActivity(userID, "asset", 1)
+		s.recordActivity(ownerID, "asset", 1)
 	}
 	return UserDataSummary{ID: asset.ID, Kind: asset.Kind, Category: string(asset.Category), Status: string(asset.Status), Title: asset.Title, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt}, nil
 }
 
 func (s *Service) DeleteUserAsset(userID string, id string) error {
-	if _, err := s.repo.AssetForUser(userID, id); err != nil {
+	return s.DeleteUserAssetForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) DeleteUserAssetForUser(user *model.User, id string) error {
+	asset, err := s.scopedAsset(user, id)
+	if err != nil {
 		return err
 	}
 	references, err := s.repo.AssetReferenceCount(id)
@@ -113,11 +156,19 @@ func (s *Service) DeleteUserAsset(userID string, id string) error {
 	if references > 0 {
 		return BadAuthRequest("素材仍被项目或镜头引用，请先解除引用")
 	}
-	return s.repo.DeleteAsset(userID, id)
+	return s.repo.DeleteAsset(asset.UserID, id)
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {
-	assets, err := s.repo.Assets(userID)
+	return s.UserAssetsForUser(&model.User{ID: userID})
+}
+
+func (s *Service) UserAssetsForUser(user *model.User) ([]json.RawMessage, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := s.repo.AssetsForScope(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -131,10 +182,19 @@ func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {
 }
 
 func (s *Service) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]json.RawMessage, error) {
+	return s.ReplaceUserAssetsForUser(&model.User{ID: userID}, req)
+}
+
+func (s *Service) ReplaceUserAssetsForUser(user *model.User, req AssetsSyncRequest) ([]json.RawMessage, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	ownerID := user.ID
 	assets := make([]model.Asset, 0, len(req.Assets))
 	var totalBytes int64
 	for _, raw := range req.Assets {
-		item, err := assetFromJSON(userID, raw)
+		item, err := assetFromJSON(ownerID, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -147,24 +207,33 @@ func (s *Service) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	usage, err := s.repo.UserStorageUsage(userID)
+	usage, err := s.repo.UserStorageUsage(ownerID)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateStructuredReplacementQuotaWithPolicy(usage, "asset", len(assets), totalBytes, policy.Resource); err != nil {
 		return nil, err
 	}
-	if err := s.repo.ReplaceAssets(userID, assets); err != nil {
+	if err := s.repo.ReplaceAssets(ownerID, assets); err != nil {
 		return nil, err
 	}
 	if len(assets) > 0 {
-		s.recordActivity(userID, "asset", len(assets))
+		s.recordActivity(ownerID, "asset", len(assets))
 	}
-	return s.UserAssets(userID)
+	_ = scope
+	return s.UserAssetsForUser(user)
 }
 
 func (s *Service) UserCanvasProjects(userID string) ([]json.RawMessage, error) {
-	projects, err := s.repo.CanvasProjects(userID)
+	return s.UserCanvasProjectsForUser(&model.User{ID: userID})
+}
+
+func (s *Service) UserCanvasProjectsForUser(user *model.User) ([]json.RawMessage, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := s.repo.CanvasProjectsForScope(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +247,15 @@ func (s *Service) UserCanvasProjects(userID string) ([]json.RawMessage, error) {
 }
 
 func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, error) {
-	projects, err := s.repo.CanvasProjectSummaries(userID)
+	return s.UserCanvasProjectSummariesForUser(&model.User{ID: userID})
+}
+
+func (s *Service) UserCanvasProjectSummariesForUser(user *model.User) ([]UserDataSummary, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := s.repo.CanvasProjectSummariesForScope(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +267,11 @@ func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, 
 }
 
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	project, err := s.repo.CanvasProjectForUser(userID, id)
+	return s.UserCanvasProjectForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) UserCanvasProjectForUser(user *model.User, id string) (json.RawMessage, error) {
+	project, err := s.scopedCanvasProject(user, id)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +279,29 @@ func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, 
 }
 
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	project, err := canvasProjectFromJSON(userID, raw)
+	return s.upsertUserCanvasProjectForOwner(&model.User{ID: userID}, userID, raw)
+}
+
+func (s *Service) UpsertUserCanvasProjectForUser(user *model.User, raw json.RawMessage) (UserDataSummary, error) {
+	ownerID := user.ID
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(raw, &identity) == nil && strings.TrimSpace(identity.ID) != "" {
+		if existing, err := s.scopedCanvasProject(user, identity.ID); err == nil {
+			ownerID = existing.UserID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return UserDataSummary{}, err
+		}
+	}
+	return s.upsertUserCanvasProjectForOwner(user, ownerID, raw)
+}
+
+func (s *Service) upsertUserCanvasProjectForOwner(actor *model.User, ownerID string, raw json.RawMessage) (UserDataSummary, error) {
+	if err := s.canAccessOwnedUser(actor, ownerID); err != nil {
+		return UserDataSummary{}, err
+	}
+	project, err := canvasProjectFromJSON(ownerID, raw)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
@@ -208,18 +311,18 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	existing, existingErr := s.repo.CanvasProjectForUser(userID, project.ID)
+	existing, existingErr := s.repo.CanvasProjectForUser(ownerID, project.ID)
 	if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 		return UserDataSummary{}, existingErr
 	}
-	if err := s.inheritCanvasAigcProject(userID, &project); err != nil {
+	if err := s.inheritCanvasAigcProject(ownerID, &project); err != nil {
 		return UserDataSummary{}, err
 	}
 	existingBytes := int64(0)
 	if existing != nil {
 		existingBytes = int64(len([]byte(existing.PayloadJSON)))
 	}
-	usage, err := s.repo.UserStorageUsage(userID)
+	usage, err := s.repo.UserStorageUsage(ownerID)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
@@ -230,27 +333,40 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 		return UserDataSummary{}, err
 	}
 	if existingErr != nil || existing.PayloadJSON != project.PayloadJSON || existing.Title != project.Title {
-		s.recordActivity(userID, "canvas", 1)
+		s.recordActivity(ownerID, "canvas", 1)
 	}
 	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt}, nil
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	if err := s.repo.DeleteCanvasShare(userID, id); err != nil {
+	return s.DeleteUserCanvasProjectForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) DeleteUserCanvasProjectForUser(user *model.User, id string) error {
+	project, err := s.scopedCanvasProject(user, id)
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteCanvasProject(userID, id)
+	if err := s.repo.DeleteCanvasShare(project.UserID, id); err != nil {
+		return err
+	}
+	return s.repo.DeleteCanvasProject(project.UserID, id)
 }
 
 func (s *Service) ReplaceUserCanvasProjects(userID string, req CanvasProjectsSyncRequest) ([]json.RawMessage, error) {
+	return s.ReplaceUserCanvasProjectsForUser(&model.User{ID: userID}, req)
+}
+
+func (s *Service) ReplaceUserCanvasProjectsForUser(user *model.User, req CanvasProjectsSyncRequest) ([]json.RawMessage, error) {
+	ownerID := user.ID
 	projects := make([]model.CanvasProject, 0, len(req.Projects))
 	var totalBytes int64
 	for _, raw := range req.Projects {
-		item, err := canvasProjectFromJSON(userID, raw)
+		item, err := canvasProjectFromJSON(ownerID, raw)
 		if err != nil {
 			return nil, err
 		}
-		if err := s.inheritCanvasAigcProject(userID, &item); err != nil {
+		if err := s.inheritCanvasAigcProject(ownerID, &item); err != nil {
 			return nil, err
 		}
 		projects = append(projects, item)
@@ -262,20 +378,20 @@ func (s *Service) ReplaceUserCanvasProjects(userID string, req CanvasProjectsSyn
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	usage, err := s.repo.UserStorageUsage(userID)
+	usage, err := s.repo.UserStorageUsage(ownerID)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateStructuredReplacementQuotaWithPolicy(usage, "canvas", len(projects), totalBytes, policy.Resource); err != nil {
 		return nil, err
 	}
-	if err := s.repo.ReplaceCanvasProjects(userID, projects); err != nil {
+	if err := s.repo.ReplaceCanvasProjects(ownerID, projects); err != nil {
 		return nil, err
 	}
 	if len(projects) > 0 {
-		s.recordActivity(userID, "canvas", 1)
+		s.recordActivity(ownerID, "canvas", 1)
 	}
-	return s.UserCanvasProjects(userID)
+	return s.UserCanvasProjectsForUser(user)
 }
 
 func assetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
@@ -336,12 +452,12 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		return model.CanvasProject{}, err
 	}
 	var payload struct {
-		ID           string `json:"id"`
-		Title        string `json:"title"`
-		ProjectID    string `json:"projectId"`
+		ID            string `json:"id"`
+		Title         string `json:"title"`
+		ProjectID     string `json:"projectId"`
 		AigcProjectID *int64 `json:"aigcProjectId"`
-		CreatedAt    string `json:"createdAt"`
-		UpdatedAt    string `json:"updatedAt"`
+		CreatedAt     string `json:"createdAt"`
+		UpdatedAt     string `json:"updatedAt"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return model.CanvasProject{}, BadAuthRequest("画布数据格式错误")
@@ -357,7 +473,7 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		ID:            id,
 		UserID:        userID,
 		ProjectID:     strings.TrimSpace(payload.ProjectID),
-		AigcProjectID:  normalizeOptionalInt64(payload.AigcProjectID),
+		AigcProjectID: normalizeOptionalInt64(payload.AigcProjectID),
 		Title:         strings.TrimSpace(payload.Title),
 		PayloadJSON:   string(raw),
 		CreatedAt:     createdAt,

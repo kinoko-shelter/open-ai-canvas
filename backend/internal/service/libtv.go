@@ -247,7 +247,7 @@ func (s *Service) ImportLibTV(userID, canvasProjectID, projectUUID string) (*Lib
 	if userID == "" || canvasProjectID == "" {
 		return nil, Unauthorized("请先打开已同步的故事创作画布")
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, canvasProjectID); err != nil {
+	if _, err := s.canvasProjectForUserID(userID, canvasProjectID); err != nil {
 		return nil, err
 	}
 	_, value, err := s.readLibTVSetting()

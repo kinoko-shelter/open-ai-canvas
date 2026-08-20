@@ -51,7 +51,15 @@ type ResourceStream struct {
 }
 
 func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) {
-	resources, err := s.repo.Resources(userID, limit)
+	return s.ResourcesForUser(&model.User{ID: userID}, limit)
+}
+
+func (s *Service) ResourcesForUser(user *model.User, limit int) ([]model.Resource, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := s.repo.ResourcesForScope(scope, limit)
 	for index := range resources {
 		resources[index].PublicURL = ""
 	}
@@ -59,7 +67,15 @@ func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) 
 }
 
 func (s *Service) Resource(userID string, id string) (*model.Resource, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
+	return s.ResourceForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) ResourceForUser(user *model.User, id string) (*model.Resource, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	resource, err := s.repo.ResourceForScope(scope, id)
 	if resource != nil {
 		resource.PublicURL = ""
 	}
@@ -68,7 +84,7 @@ func (s *Service) Resource(userID string, id string) (*model.Resource, error) {
 
 // DirectResourceURL 先校验资源归属，再按实际存储位置签发短时下载地址。
 func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
+	resource, err := s.ResourceForUser(&model.User{ID: userID}, id)
 	if err != nil {
 		return "", err
 	}
@@ -269,7 +285,7 @@ func (s *Service) OpenResource(userID string, id string) (*model.Resource, io.Re
 }
 
 func (s *Service) OpenResourceRange(userID string, id string, rangeHeader string) (*ResourceStream, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
+	resource, err := s.ResourceForUser(&model.User{ID: userID}, id)
 	if err != nil {
 		return nil, err
 	}

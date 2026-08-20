@@ -493,9 +493,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 }
 
 func (s *Service) resolveTaskAigcProject(userID string, projectID string, requested *int64) (*int64, error) {
-	if canvas, err := s.repo.CanvasProjectForUser(userID, strings.TrimSpace(projectID)); err == nil {
+	if canvas, err := s.canvasProjectForUserID(userID, strings.TrimSpace(projectID)); err == nil {
 		if canvas.ProjectID != "" {
-			project, projectErr := s.repo.ProjectForUser(userID, canvas.ProjectID)
+			project, projectErr := s.projectForUserID(userID, canvas.ProjectID)
 			if projectErr != nil {
 				return nil, projectErr
 			}
@@ -575,11 +575,19 @@ func (s *Service) Tasks(userID string, limit int) ([]TaskSummary, error) {
 }
 
 func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]TaskSummary, error) {
-	tasks, err := s.repo.Tasks(userID, options.Limit, options.ProjectID, options.ActiveOnly)
+	return s.TasksForUserWithOptions(&model.User{ID: userID}, options)
+}
+
+func (s *Service) TasksForUserWithOptions(user *model.User, options TaskListOptions) ([]TaskSummary, error) {
+	scope, err := s.dataScope(user)
 	if err != nil {
 		return nil, err
 	}
-	orders, err := s.repo.BillingOrdersByTaskIDs(userID, taskBillingTaskIDs(tasks))
+	tasks, err := s.repo.TasksForScope(scope, options.Limit, options.ProjectID, options.ActiveOnly)
+	if err != nil {
+		return nil, err
+	}
+	orders, err := s.repo.BillingOrdersByTaskIDsForScope(scope, taskBillingTaskIDs(tasks))
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +595,15 @@ func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]Ta
 }
 
 func (s *Service) Task(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	return s.TaskForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) TaskForUser(user *model.User, id string) (*model.Task, error) {
+	scope, err := s.dataScope(user)
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.repo.TaskForScope(scope, id)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +651,11 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	return s.RetryTaskForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) RetryTaskForUser(actor *model.User, id string) (*model.Task, error) {
+	task, err := s.scopedTask(actor, id)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +679,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err := s.requireCustomChannelsForTaskInput(billingInput); err != nil {
 		return nil, err
 	}
-	billingOrder, err := s.taskBillingOrder(userID, task, billingInput)
+	billingOrder, err := s.taskBillingOrder(task.UserID, task, billingInput)
 	if err != nil {
 		return nil, err
 	}
@@ -667,10 +687,10 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
+	if err := s.ensureTaskProjectActiveForUser(actor, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.repo.RetryTaskWithBilling(userID, task.ID, billingOrder, policy.Task.ActiveTaskLimit)
+	task, err = s.repo.RetryTaskWithBilling(task.UserID, task.ID, billingOrder, policy.Task.ActiveTaskLimit)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
 	}
@@ -690,12 +710,16 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 			_ = s.repo.Save(session)
 		}
 	}
-	_ = s.log(userID, task.ID, "info", "任务已重新入队", "")
+	_ = s.log(actor.ID, task.ID, "info", "任务已重新入队", "")
 	return taskForOutput(*task), nil
 }
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
+	return s.CancelTaskForUser(ctx, &model.User{ID: userID}, id)
+}
+
+func (s *Service) CancelTaskForUser(ctx context.Context, actor *model.User, id string) (*model.Task, error) {
+	task, err := s.scopedTask(actor, id)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +729,7 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 	now := time.Now()
 	cancelledRunningTask := false
 	if task.Status == model.TaskStatusQueued {
-		cancelled, err := s.repo.CancelTaskIfStatus(userID, task.ID, model.TaskStatusQueued, now)
+		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusQueued, now)
 		if err != nil {
 			return nil, err
 		}
@@ -713,24 +737,24 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 			if err := s.RefundBilling(task.BillingOrderID, "任务在调用上游前取消"); err != nil {
 				return nil, err
 			}
-			task, err = s.repo.TaskForUser(userID, id)
+			task, err = s.repo.Task(task.ID)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			task, err = s.repo.TaskForUser(userID, id)
+			task, err = s.repo.Task(task.ID)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
 	if task.Status == model.TaskStatusRunning {
-		cancelled, err := s.repo.CancelTaskIfStatus(userID, task.ID, model.TaskStatusRunning, now)
+		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusRunning, now)
 		if err != nil {
 			return nil, err
 		}
 		if !cancelled {
-			latest, latestErr := s.repo.TaskForUser(userID, id)
+			latest, latestErr := s.scopedTask(actor, id)
 			if latestErr != nil {
 				return nil, latestErr
 			}
@@ -744,7 +768,7 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 			if err := s.MarkBillingUncertain(task.BillingOrderID, "运行中的上游请求被用户取消，费用状态待核对"); err != nil {
 				return nil, err
 			}
-			task, err = s.repo.TaskForUser(userID, id)
+			task, err = s.repo.Task(task.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -760,20 +784,31 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 		if err := s.requestProviderCancellation(ctx, task); err != nil {
 			return nil, err
 		}
-		task, err = s.repo.TaskForUser(userID, id)
+		task, err = s.repo.Task(task.ID)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if err := s.finalizeTaskTextReplay(task.ID, model.TaskStatusCancelled); err != nil {
-		_ = s.log(userID, task.ID, "error", "文本回放草稿归并失败", err.Error())
+		_ = s.log(actor.ID, task.ID, "error", "文本回放草稿归并失败", err.Error())
 	}
-	_ = s.log(userID, task.ID, "warn", "任务已取消", "")
+	_ = s.log(actor.ID, task.ID, "warn", "任务已取消", "")
 	return taskForOutput(*task), nil
 }
 
 func (s *Service) TaskLogs(userID string, id string) ([]model.TaskLog, error) {
-	return s.repo.TaskLogs(userID, id)
+	return s.TaskLogsForUser(&model.User{ID: userID}, id)
+}
+
+func (s *Service) TaskLogsForUser(actor *model.User, id string) ([]model.TaskLog, error) {
+	scope, err := s.dataScope(actor)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.TaskForScope(scope, id); err != nil {
+		return nil, err
+	}
+	return s.repo.TaskLogsForScope(scope, id)
 }
 
 func taskSummariesForOutput(tasks []model.Task) []TaskSummary {
