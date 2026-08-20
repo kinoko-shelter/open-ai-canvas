@@ -910,8 +910,8 @@ func TestRunVideoTaskUsesXAIVideoGenerationEndpoint(t *testing.T) {
 	}
 }
 
-func TestXAIVideoBodyWithoutStartFramePutsAllImagesIntoReferenceImages(t *testing.T) {
-	body, err := xaiVideoRequestBody(canvasGenerationInput{
+func TestXAIVideoBodyWithoutStartFrameRejects1080P(t *testing.T) {
+	_, err := xaiVideoRequestBody(canvasGenerationInput{
 		Prompt: "make it move",
 		Config: providerConfig{
 			Model:         "grok-imagine-video-1.5",
@@ -926,10 +926,31 @@ func TestXAIVideoBodyWithoutStartFramePutsAllImagesIntoReferenceImages(t *testin
 		},
 		Metadata: map[string]interface{}{"videoEditOperation": "image_to_video"},
 	})
+	if err == nil || !strings.Contains(err.Error(), "参考图生视频暂不支持 1080P") {
+		t.Fatalf("xaiVideoRequestBody() error = %v", err)
+	}
+}
+
+func TestXAIVideoBodyWithoutStartFramePutsAllImagesIntoReferenceImages(t *testing.T) {
+	body, err := xaiVideoRequestBody(canvasGenerationInput{
+		Prompt: "make it move",
+		Config: providerConfig{
+			Model:         "grok-imagine-video-1.5",
+			InterfaceType: "xai-video",
+			VideoSeconds:  "20",
+			Size:          "1024x1792",
+			VQuality:      "720",
+		},
+		ReferenceImages: []providerMedia{
+			{ID: "image-1", DataURL: testReferenceImageDataURL},
+			{ID: "image-2", DataURL: testReferenceImageDataURL},
+		},
+		Metadata: map[string]interface{}{"videoEditOperation": "image_to_video"},
+	})
 	if err != nil {
 		t.Fatalf("xaiVideoRequestBody() error = %v", err)
 	}
-	if body.Duration != 20 || body.AspectRatio != "9:16" || body.Resolution != "1080p" {
+	if body.Duration != 20 || body.AspectRatio != "9:16" || body.Resolution != "720p" {
 		t.Fatalf("xAI settings = %#v", body)
 	}
 	if body.Image != nil {
