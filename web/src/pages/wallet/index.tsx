@@ -7,7 +7,6 @@ import { ArrowDownLeft, ArrowUpRight, CalendarCheck, Coins, HandCoins, RefreshCw
 import { formatCredits } from "@/constant/credits";
 import { PaginationBar, TableSurface } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
-import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { checkinCredits, getWallet, listTeamCreditRecipients, redeemCredits, transferTeamCredits as requestTeamCreditTransfer, type CreditLedgerEntry, type TeamCreditRecipient, type WalletSummary } from "@/services/api/wallet";
 import { modelDisplayName, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -223,31 +222,25 @@ export default function WalletPage() {
                 </div>
 
                 <section className="library-feature-grid mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
-                    <CometCard rotateDepth={2.2} translateDepth={2} glare={!reducedMotion} className="credit-balance-card overflow-hidden rounded-lg border">
-                        <div className="wallet-balance-inner flex min-h-[210px] flex-col justify-between p-5 sm:p-6">
-                            <div className="flex items-start justify-between gap-4">
-                                <div>
-                                    <div className="flex items-center gap-2 text-xs font-medium opacity-60">
-                                        <Coins className="size-4" />
-                                        可用创作积分
-                                    </div>
-                                    <div className="wallet-balance-number mt-4 flex items-baseline gap-2">
-                                        <span className="text-5xl font-semibold tabular-nums">{formatCredits(account?.availableMicrocredits || 0, 6)}</span>
-                                        <span className="text-sm opacity-55">积分</span>
-                                    </div>
-                                    <div className="mt-2 text-xs opacity-45">最近更新 {formatTime(account?.updatedAt)}</div>
+                    <section className="credit-balance-card">
+                        <div className="wallet-balance-inner">
+                            <div className="wallet-balance-primary">
+                                <div className="wallet-balance-heading">
+                                    <span className="library-icon-tile wallet-balance-icon"><Coins /></span>
+                                    <div><strong>可用创作积分</strong><span>最近更新 {formatTime(account?.updatedAt)}</span></div>
                                 </div>
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-current/15 px-2.5 py-1 text-[var(--fs-label)] font-medium opacity-70">
-                                    <ShieldCheck className="size-3.5" />
-                                    账户正常
-                                </span>
+                                <div className="wallet-balance-number">
+                                    <strong>{formatCredits(account?.availableMicrocredits || 0, 6)}</strong>
+                                    <span>积分</span>
+                                </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-3 border-t border-current/10 pt-4">
+                            <div className="wallet-balance-details">
+                                <span className="wallet-account-status"><ShieldCheck />账户正常</span>
                                 <BalanceMetric label="冻结积分" description="调用中或待核对" value={account?.reservedMicrocredits || 0} icon={<TicketCheck className="size-4" />} />
                                 <BalanceMetric label="账户总额" description="可用与冻结合计" value={totalMicrocredits} icon={<Coins className="size-4" />} />
                             </div>
                         </div>
-                    </CometCard>
+                    </section>
 
                     <motion.div initial={reducedMotion ? false : { opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }} className="wallet-redeem-panel app-workspace-surface flex flex-col rounded-lg border p-5 backdrop-blur-xl sm:p-6">
                         <div className="flex items-start gap-3">
@@ -355,13 +348,9 @@ export default function WalletPage() {
 
 function BalanceMetric({ label, description, value, icon }: { label: string; description: string; value: number; icon: ReactNode }) {
     return (
-        <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-current/[0.055] px-3 py-2.5">
-            <div className="min-w-0">
-                <div className="text-[var(--fs-tiny)] opacity-48">{label}</div>
-                <div className="mt-0.5 truncate text-base font-semibold tabular-nums">{formatCredits(value, 6)}</div>
-                <div className="truncate text-[var(--fs-tiny)] opacity-35">{description}</div>
-            </div>
-            <span className="shrink-0 opacity-30">{icon}</span>
+        <div className="wallet-balance-metric">
+            <span className="wallet-balance-metric-icon">{icon}</span>
+            <div><span>{label}</span><strong>{formatCredits(value, 6)}</strong><small>{description}</small></div>
         </div>
     );
 }

@@ -114,7 +114,7 @@ function WorkspaceSwitcher({ onNavigate }: { onNavigate: () => void }) {
             {isOpen ? (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-                    <div className="app-workspace-nav-popover absolute left-3 right-3 top-full z-50 mt-1 overflow-hidden rounded-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface-strong)] py-1 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                    <div className="app-workspace-nav-popover absolute left-3 right-3 top-full z-50 mt-1 overflow-hidden rounded-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface-strong)] py-1 animate-in fade-in zoom-in-95 duration-100">
                         <div className="px-3 py-2.5">
                             <div className="truncate text-[var(--fs-body)] font-semibold">影策</div>
                             <div className="mt-0.5 truncate text-[var(--fs-label)] text-foreground/45">创作工作台</div>
@@ -269,6 +269,62 @@ function NavItem({ item, activeId, onSelect, onOpenSearch, onLogout, level = 0 }
     );
 }
 
+function NavGroup({ group, activeId, onNavigate, onOpenSearch, onLogout }: {
+    group: WorkspaceNavGroup;
+    activeId: string;
+    onNavigate: () => void;
+    onOpenSearch: () => void;
+    onLogout: () => void;
+}) {
+    const [isOpen, setIsOpen] = useState(true);
+    const hasActive = group.items.some((item) => item.id === activeId || (item.id === "settings" && activeId.startsWith("settings:")));
+
+    // 激活项所在分组自动展开，保证当前位置可见。
+    useEffect(() => {
+        if (hasActive) setIsOpen(true);
+    }, [hasActive]);
+
+    const content = (
+        <div className="flex flex-col gap-0.5">
+            {group.items.map((item) => (
+                <NavItem
+                    key={item.id}
+                    item={item}
+                    activeId={activeId}
+                    onSelect={onNavigate}
+                    onOpenSearch={onOpenSearch}
+                    onLogout={onLogout}
+                />
+            ))}
+        </div>
+    );
+
+    // 无标题分组（核心导航入口）常驻展示，不做折叠。
+    if (!group.heading) {
+        return <div className="flex shrink-0 flex-col">{content}</div>;
+    }
+
+    return (
+        <div className="flex shrink-0 flex-col">
+            <button
+                type="button"
+                onClick={() => setIsOpen((open) => !open)}
+                aria-expanded={isOpen}
+                className="app-workspace-nav-group-toggle select-none"
+            >
+                <span className="app-workspace-nav-group-label">{group.heading}</span>
+                <ChevronRight
+                    className={cn("size-3.5 shrink-0 text-foreground/35 transition-transform duration-200", isOpen && "rotate-90")}
+                    strokeWidth={2}
+                />
+            </button>
+            <div className={cn("grid transition-[grid-template-rows,opacity] duration-300 ease-in-out", isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+                <div className="min-h-0 overflow-hidden pt-0.5">{content}</div>
+            </div>
+        </div>
+    );
+}
+
 export function WorkspaceSidebarNav({ onNavigate, onOpenSearch }: { onNavigate: () => void; onOpenSearch: () => void }) {
     const { pathname } = useLocation();
     const [searchParams] = useSearchParams();
@@ -307,6 +363,20 @@ export function WorkspaceSidebarNav({ onNavigate, onOpenSearch }: { onNavigate: 
         <div className="flex h-full w-[var(--workspace-sidebar-nav-width)] shrink-0 flex-col">
             <WorkspaceSwitcher onNavigate={onNavigate} />
 
+            <div className="shrink-0 px-3 pb-1 pt-2">
+                <button
+                    type="button"
+                    onClick={onOpenSearch}
+                    className="group flex h-9 w-full items-center gap-2 rounded-[var(--r-lg)] bg-foreground/5 px-3 text-left text-[var(--fs-caption)] text-muted-foreground transition-colors hover:bg-foreground/[.07] hover:text-foreground/70"
+                >
+                    <Search className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground/70" strokeWidth={1.6} />
+                    <span className="flex-1 truncate">快速搜索</span>
+                    <kbd className="flex h-5 shrink-0 items-center justify-center rounded-sm border border-[var(--workspace-border)] bg-background/50 px-1.5 font-mono text-[var(--fs-tiny)] font-medium text-foreground/55">
+                        ⌘K
+                    </kbd>
+                </button>
+            </div>
+
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
@@ -317,25 +387,18 @@ export function WorkspaceSidebarNav({ onNavigate, onOpenSearch }: { onNavigate: 
                 )}
             >
                 {groups.map((group, index) => (
-                    <div key={index} className="flex shrink-0 flex-col">
-                        {group.heading ? <span className="app-workspace-nav-group-label">{group.heading}</span> : null}
-                        <div className="flex flex-col gap-0.5">
-                            {group.items.map((item) => (
-                                <NavItem
-                                    key={item.id}
-                                    item={item}
-                                    activeId={activeId}
-                                    onSelect={onNavigate}
-                                    onOpenSearch={onOpenSearch}
-                                    onLogout={() => void handleLogout()}
-                                />
-                            ))}
-                        </div>
-                    </div>
+                    <NavGroup
+                        key={index}
+                        group={group}
+                        activeId={activeId}
+                        onNavigate={onNavigate}
+                        onOpenSearch={onOpenSearch}
+                        onLogout={() => void handleLogout()}
+                    />
                 ))}
             </div>
 
-            <div className="app-workspace-sidebar-footer shrink-0 border-t border-[var(--workspace-border)] px-3 py-3">
+            <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
                 <div className="flex flex-col gap-0.5">
                     {footer.map((item) => (
                         <NavItem
