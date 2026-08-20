@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, Music2, Pencil, Play, Plus, RefreshCw, Replace, Settings2, Square, Star, Type, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -12,7 +13,6 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
