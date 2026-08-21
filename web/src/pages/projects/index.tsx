@@ -434,6 +434,7 @@ function ProjectRow({ row, onDelete }: { row: ProjectSummary; onDelete: () => vo
             <span className="project-library-body">
                 <span className="project-library-heading"><strong title={row.project.name}>{row.project.name}</strong>{row.project.status === "archived" ? <em>已归档</em> : null}<ArrowRight className="project-library-arrow size-4" /></span>
                 <span className="project-library-business-project" title={`业务项目：${row.project.aigcProjectName || "未绑定"}`}>业务项目：{row.project.aigcProjectName || "未绑定"}</span>
+                <OwnerMetaLine creatorName={row.creatorName} creatorUsername={row.creatorUsername} deptName={row.deptName} />
                 <span className="project-library-subtitle">{styleTitle} · {sourceTypeLabel(row.project.sourceType)}</span>
                 <span className="project-library-progress"><span><span>{row.completedUnitCount}/{row.unitCount} 章</span><span>{completion}%</span></span><i><b style={{ width: `${completion}%` }} /></i></span>
                 <span className="project-library-stats"><ProjectCount icon={<BookOpenText className="size-3.5" />} label="章节" value={row.unitCount} /><ProjectCount icon={<LayoutGrid className="size-3.5" />} label="画布" value={row.canvasCount} /><ProjectCount icon={<Images className="size-3.5" />} label="资产" value={row.assetCount} /></span>
@@ -444,6 +445,11 @@ function ProjectRow({ row, onDelete }: { row: ProjectSummary; onDelete: () => vo
 
 function ProjectCount({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
     return <span className="inline-flex items-center gap-1.5" title={`${value} ${label}`}><span className="text-foreground/32">{icon}</span><strong className="font-medium tabular-nums text-foreground/65">{value}</strong><span>{label}</span></span>;
+}
+
+function OwnerMetaLine({ creatorName, creatorUsername, deptName }: { creatorName?: string; creatorUsername?: string; deptName?: string }) {
+    const creator = creatorName || creatorUsername || "未知";
+    return <span className="library-owner-meta"><span title={`创建人: ${creator}`}>创建人: {creator}</span><span title={`所属团队: ${deptName || "未设置"}`}>所属团队: {deptName || "未设置"}</span></span>;
 }
 
 function flattenAigcProjectTree(tree: AigcProjectTreeNode[]): AigcProject[] {

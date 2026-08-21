@@ -13,6 +13,10 @@ export type GenerationTask = {
     sessionId?: string;
     projectId?: string;
     aigcProjectId?: number;
+    creatorName?: string;
+    creatorUsername?: string;
+    deptId?: number;
+    deptName?: string;
     type: string;
     status: TaskStatus;
     progress?: number;

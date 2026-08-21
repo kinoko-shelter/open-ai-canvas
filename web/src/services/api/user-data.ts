@@ -8,9 +8,15 @@ export type RemoteUserDataSummary = {
     id: string;
     kind?: string;
     title: string;
+    creatorName?: string;
+    creatorUsername?: string;
+    deptId?: number;
+    deptName?: string;
     createdAt: string;
     updatedAt: string;
 };
+
+export type OwnerMeta = Pick<RemoteUserDataSummary, "creatorName" | "creatorUsername" | "deptId" | "deptName">;
 
 export type RemoteUserDataSnapshot = {
     assets: Asset[];

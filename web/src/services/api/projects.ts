@@ -154,6 +154,10 @@ export type ProjectSummary = {
     assetCount: number;
     unitCount: number;
     completedUnitCount: number;
+    creatorName?: string;
+    creatorUsername?: string;
+    deptId?: number;
+    deptName?: string;
 };
 
 export type ProjectDetail = {

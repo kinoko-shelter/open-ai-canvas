@@ -1,6 +1,6 @@
 import { AudioLines, Box, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, Image as ImageIcon, Link2, MoreHorizontal, PencilLine, Play, Plus, Search, Trash2, Upload, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Dropdown, Form, Input, Modal, Select, Space, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useNavigate } from "react-router";
@@ -20,6 +20,7 @@ import { useAssetStore, type Asset, type AssetCategory, type AssetKind, type Ima
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { AssetStorageUsage, assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { deleteAssetWithRemoteSync } from "@/services/user-data-sync";
+import { listRemoteAssets, type OwnerMeta } from "@/services/api/user-data";
 
 type LibraryAsset = Exclude<Asset, { kind: "entity" }>;
 
@@ -95,6 +96,8 @@ export default function AssetsPage() {
     const tags = Form.useWatch("tags", form) || [];
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity"), [assets]);
+    const assetSummaryQuery = useQuery({ queryKey: ["assets", "summaries"], queryFn: listRemoteAssets });
+    const assetOwnerMeta = useMemo(() => new Map((assetSummaryQuery.data?.assets || []).map((asset) => [asset.id, asset])), [assetSummaryQuery.data]);
     const selectedAssets = useMemo(() => validAssets.filter((asset) => selectedIds.includes(asset.id)), [selectedIds, validAssets]);
     const kindCounts = useMemo(() => new Map(kindOptions.map((option) => [option.value, option.value === "all" ? validAssets.length : validAssets.filter((asset) => asset.kind === option.value).length])), [validAssets]);
     const categoryCounts = useMemo(() => new Map(categoryOptions.map((option) => [option.value, option.value === "all" ? validAssets.length : validAssets.filter((asset) => (asset.category || "other") === option.value).length])), [validAssets]);
@@ -325,7 +328,7 @@ export default function AssetsPage() {
                                             <span className="library-create-meta">文本、图片、音视频或模型</span>
                                         </button> : null}
                                         {visibleAssets.map((asset) => (
-                                            <AssetCard key={asset.id} asset={asset} selected={selectedIds.includes(asset.id)} onSelect={(selected) => setSelectedIds((current) => selected ? [...new Set([...current, asset.id])] : current.filter((id) => id !== asset.id))} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                                            <AssetCard key={asset.id} asset={asset} ownerMeta={assetOwnerMeta.get(asset.id)} selected={selectedIds.includes(asset.id)} onSelect={(selected) => setSelectedIds((current) => selected ? [...new Set([...current, asset.id])] : current.filter((id) => id !== asset.id))} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                                         ))}
                                     </CollectionGrid>
                                 )}
@@ -461,7 +464,7 @@ export default function AssetsPage() {
     );
 }
 
-function AssetCard({ asset, selected, onSelect, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: LibraryAsset; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; onEdit: () => void; onCopy: (asset: LibraryAsset) => void; onDownload: (asset: LibraryAsset) => void; onDelete: () => void }) {
+function AssetCard({ asset, ownerMeta, selected, onSelect, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: LibraryAsset; ownerMeta?: OwnerMeta; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; onEdit: () => void; onCopy: (asset: LibraryAsset) => void; onDownload: (asset: LibraryAsset) => void; onDelete: () => void }) {
     const summary = assetSummary(asset);
     const menuItems: MenuProps["items"] = [
         ...(asset.kind === "text" || asset.kind === "image" ? [{ key: "edit", icon: <PencilLine className="size-3.5" />, label: "编辑", onClick: onEdit }] : []),
@@ -484,9 +487,15 @@ function AssetCard({ asset, selected, onSelect, onOpen, onEdit, onCopy, onDownlo
                     <span aria-hidden="true">·</span>
                     <span className="truncate">{assetProjectLabel(asset)}</span>
                 </div>
+                <OwnerMetaLine ownerMeta={ownerMeta} />
             </button>
         </AssetLibraryCard>
     );
+}
+
+function OwnerMetaLine({ ownerMeta }: { ownerMeta?: OwnerMeta }) {
+    const creator = ownerMeta?.creatorName || ownerMeta?.creatorUsername || "未知";
+    return <div className="library-owner-meta"><span title={`创建人: ${creator}`}>创建人: {creator}</span><span title={`所属团队: ${ownerMeta?.deptName || "未设置"}`}>所属团队: {ownerMeta?.deptName || "未设置"}</span></div>;
 }
 
 function AssetCover({ asset, selected, onSelect, onOpen, menuItems }: { asset: LibraryAsset; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; menuItems: MenuProps["items"] }) {

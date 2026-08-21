@@ -67,6 +67,10 @@ type ProjectSummary struct {
 	AssetCount         int64         `json:"assetCount"`
 	UnitCount          int           `json:"unitCount"`
 	CompletedUnitCount int           `json:"completedUnitCount"`
+	CreatorName        string        `json:"creatorName,omitempty"`
+	CreatorUsername    string        `json:"creatorUsername,omitempty"`
+	DeptID             *int64        `json:"deptId,omitempty"`
+	DeptName           string        `json:"deptName,omitempty"`
 }
 
 type ProjectDetail struct {
@@ -91,6 +95,14 @@ func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
 		return nil, err
 	}
 	result := make([]ProjectSummary, 0, len(projects))
+	owners, err := s.repo.UsersByIDs(projectOwnerIDs(projects))
+	if err != nil {
+		return nil, err
+	}
+	departmentNames, err := s.repo.AigcDepartmentNames(userDeptIDs(owners))
+	if err != nil {
+		return nil, err
+	}
 	for _, project := range projects {
 		units, unitsErr := s.repo.ProjectUnitSummaries(project.ID)
 		if unitsErr != nil {
@@ -110,7 +122,17 @@ func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
 				completed++
 			}
 		}
-		result = append(result, ProjectSummary{Project: project, CanvasCount: len(canvases), AssetCount: assetCount, UnitCount: len(units), CompletedUnitCount: completed})
+		summary := ProjectSummary{Project: project, CanvasCount: len(canvases), AssetCount: assetCount, UnitCount: len(units), CompletedUnitCount: completed}
+		if owner, ok := owners[project.UserID]; ok {
+			summary.CreatorName = normalizeDisplayName(owner.DisplayName, owner.Username)
+			summary.CreatorUsername = owner.Username
+			if owner.DeptID != nil {
+				deptID := *owner.DeptID
+				summary.DeptID = &deptID
+				summary.DeptName = departmentNames[deptID]
+			}
+		}
+		result = append(result, summary)
 	}
 	return result, nil
 }
@@ -503,6 +525,30 @@ func canvasPayloadWithoutProject(payloadJSON string, updatedAt time.Time) (strin
 		return "", err
 	}
 	return string(next), nil
+}
+
+func projectOwnerIDs(projects []model.Project) []string {
+	ids := make([]string, 0, len(projects))
+	for _, project := range projects {
+		ids = append(ids, project.UserID)
+	}
+	return uniqueNonEmptyStrings(ids)
+}
+
+func userDeptIDs(users map[string]model.User) []int64 {
+	seen := make(map[int64]struct{}, len(users))
+	ids := make([]int64, 0, len(users))
+	for _, user := range users {
+		if user.DeptID == nil {
+			continue
+		}
+		if _, ok := seen[*user.DeptID]; ok {
+			continue
+		}
+		seen[*user.DeptID] = struct{}{}
+		ids = append(ids, *user.DeptID)
+	}
+	return ids
 }
 
 func IsProjectNotFound(err error) bool {

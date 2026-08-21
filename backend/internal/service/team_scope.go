@@ -16,8 +16,11 @@ func (s *Service) dataScope(actor *model.User) (repository.UserDataScope, error)
 	}
 	if actor.Role == model.UserRoleTeamLead {
 		if actor.DeptID == nil {
-			return repository.UserDataScope{}, Forbidden("团队主管未设置团队")
+			return repository.UserDataScope{}, Forbidden("团队管理账号未设置团队")
 		}
+		return repository.TeamUserDataScope(actor.ID, actor.DeptID), nil
+	}
+	if actor.Role == model.UserRoleOperationsManager && actor.DeptID != nil {
 		return repository.TeamUserDataScope(actor.ID, actor.DeptID), nil
 	}
 	return repository.PersonalUserDataScope(actor.ID), nil
@@ -46,11 +49,14 @@ func (s *Service) canAccessOwnedUser(actor *model.User, ownerID string) error {
 	if actor.ID == ownerID {
 		return nil
 	}
-	if actor.Role != model.UserRoleTeamLead {
+	if !repository.TeamDataRole(actor.Role) {
 		return gorm.ErrRecordNotFound
 	}
 	if actor.DeptID == nil {
-		return Forbidden("团队主管未设置团队")
+		if actor.Role == model.UserRoleTeamLead {
+			return Forbidden("团队管理账号未设置团队")
+		}
+		return gorm.ErrRecordNotFound
 	}
 	owner, err := s.repo.User(ownerID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

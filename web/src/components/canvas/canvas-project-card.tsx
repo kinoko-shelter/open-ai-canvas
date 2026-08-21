@@ -8,6 +8,7 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import type { OwnerMeta } from "@/services/api/user-data";
 import { resolveBackendApiUrl } from "@/stores/use-config-store";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +20,7 @@ export function CanvasCreateCard({ disabled, onClick }: { disabled?: boolean; on
     </button>;
 }
 
-export function CanvasProjectCard({ project, projectName, variant = "library", readOnly = false, footer }: { project: CanvasProject; projectName?: string; variant?: "library" | "recent"; readOnly?: boolean; footer?: ReactNode }) {
+export function CanvasProjectCard({ project, projectName, ownerMeta, variant = "library", readOnly = false, footer }: { project: CanvasProject; projectName?: string; ownerMeta?: OwnerMeta; variant?: "library" | "recent"; readOnly?: boolean; footer?: ReactNode }) {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -98,10 +99,16 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
                     ) : null}
                 </div>
                 <div className="canvas-project-stats"><span>{projectName || "自由画布"}</span><span aria-hidden="true">·</span><time dateTime={project.updatedAt}>{formatProjectTime(project.updatedAt)}</time></div>
+                <OwnerMetaLine ownerMeta={ownerMeta} />
                 {footer ? <div className="canvas-project-card-footer" onClick={(event) => event.stopPropagation()}>{footer}</div> : null}
             </div>
         </article>
     );
+}
+
+function OwnerMetaLine({ ownerMeta }: { ownerMeta?: OwnerMeta }) {
+    const creator = ownerMeta?.creatorName || ownerMeta?.creatorUsername || "未知";
+    return <div className="library-owner-meta"><span title={`创建人: ${creator}`}>创建人: {creator}</span><span title={`所属团队: ${ownerMeta?.deptName || "未设置"}`}>所属团队: {ownerMeta?.deptName || "未设置"}</span></div>;
 }
 
 function ProjectPreview({ project }: { project: CanvasProject }) {

@@ -21,13 +21,17 @@ type CanvasProjectsSyncRequest struct {
 }
 
 type UserDataSummary struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind,omitempty"`
-	Category  string    `json:"category,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind,omitempty"`
+	Category        string    `json:"category,omitempty"`
+	Status          string    `json:"status,omitempty"`
+	Title           string    `json:"title"`
+	CreatorName     string    `json:"creatorName,omitempty"`
+	CreatorUsername string    `json:"creatorUsername,omitempty"`
+	DeptID          *int64    `json:"deptId,omitempty"`
+	DeptName        string    `json:"deptName,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type UserDataSnapshot struct {
@@ -67,6 +71,9 @@ func (s *Service) UserAssetSummariesForUser(user *model.User) ([]UserDataSummary
 	result := make([]UserDataSummary, 0, len(assets))
 	for _, asset := range assets {
 		result = append(result, UserDataSummary{ID: asset.ID, Kind: asset.Kind, Category: string(asset.Category), Status: string(asset.Status), Title: asset.Title, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt})
+	}
+	if err := s.attachUserDataSummaryOwners(result, assetOwnerIDs(assets)); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -262,6 +269,9 @@ func (s *Service) UserCanvasProjectSummariesForUser(user *model.User) ([]UserDat
 	result := make([]UserDataSummary, 0, len(projects))
 	for _, project := range projects {
 		result = append(result, UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt})
+	}
+	if err := s.attachUserDataSummaryOwners(result, canvasProjectOwnerIDs(projects)); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -511,6 +521,76 @@ func normalizeOptionalInt64(value *int64) *int64 {
 	}
 	next := *value
 	return &next
+}
+
+func (s *Service) attachUserDataSummaryOwners(items []UserDataSummary, ownerIDs []string) error {
+	if len(items) == 0 || len(ownerIDs) == 0 {
+		return nil
+	}
+	users, err := s.repo.UsersByIDs(uniqueNonEmptyStrings(ownerIDs))
+	if err != nil {
+		return err
+	}
+	deptIDs := make([]int64, 0, len(users))
+	for _, user := range users {
+		if user.DeptID != nil {
+			deptIDs = append(deptIDs, *user.DeptID)
+		}
+	}
+	departmentNames, err := s.repo.AigcDepartmentNames(deptIDs)
+	if err != nil {
+		return err
+	}
+	for index, ownerID := range ownerIDs {
+		if index >= len(items) {
+			break
+		}
+		owner, ok := users[ownerID]
+		if !ok {
+			continue
+		}
+		items[index].CreatorName = normalizeDisplayName(owner.DisplayName, owner.Username)
+		items[index].CreatorUsername = owner.Username
+		if owner.DeptID != nil {
+			deptID := *owner.DeptID
+			items[index].DeptID = &deptID
+			items[index].DeptName = departmentNames[deptID]
+		}
+	}
+	return nil
+}
+
+func assetOwnerIDs(items []model.Asset) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.UserID)
+	}
+	return ids
+}
+
+func canvasProjectOwnerIDs(items []model.CanvasProject) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.UserID)
+	}
+	return ids
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func validateSyncedPayload(raw json.RawMessage, label string) error {

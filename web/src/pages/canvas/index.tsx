@@ -20,6 +20,7 @@ import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/c
 import { createCanvasProjectWithRemoteSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { listAvailableAigcProjectTree, type AigcProjectTreeNode } from "@/services/api/aigc";
 import { listProjects } from "@/services/api/projects";
+import { listRemoteCanvasProjects } from "@/services/api/user-data";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -43,6 +44,7 @@ export default function CanvasPage() {
     const [associationOpen, setAssociationOpen] = useState(false);
     const [associationProjectId, setAssociationProjectId] = useState("");
     const projectQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
+    const canvasSummaryQuery = useQuery({ queryKey: ["canvas-projects", "summaries"], queryFn: listRemoteCanvasProjects, enabled: hydrated });
     const aigcProjectsQuery = useQuery({ queryKey: ["aigc-projects", "available-tree"], queryFn: listAvailableAigcProjectTree });
 
     const mode = searchParams.get("mode");
@@ -66,6 +68,7 @@ export default function CanvasPage() {
         return values;
     }, [keyword, projectFilter, projects, sort]);
     const projectNames = useMemo(() => new Map((projectQuery.data?.projects || []).map(({ project }) => [project.id, project.name])), [projectQuery.data]);
+    const canvasOwnerMeta = useMemo(() => new Map((canvasSummaryQuery.data?.projects || []).map((project) => [project.id, project])), [canvasSummaryQuery.data]);
     const visibleProjects = filteredProjects.slice((page - 1) * pageSize, page * pageSize);
     const showCreateCard = !keyword.trim() && projectFilter === "all";
     const selectedProjects = projects.filter((project) => selectedIds.includes(project.id));
@@ -220,7 +223,7 @@ export default function CanvasPage() {
                     <CollectionGrid className="canvas-library-grid">
                         {showCreateCard ? <CanvasCreateCard disabled={!hydrated} onClick={createAndEnter} /> : null}
                         {visibleProjects.map((project) => (
-                            <CanvasProjectCard key={project.id} project={project} projectName={project.projectId ? projectNames.get(project.projectId) || "未同步项目" : undefined} />
+                            <CanvasProjectCard key={project.id} project={project} projectName={project.projectId ? projectNames.get(project.projectId) || "未同步项目" : undefined} ownerMeta={canvasOwnerMeta.get(project.id)} />
                         ))}
                     </CollectionGrid>
                 ) : (

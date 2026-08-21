@@ -183,6 +183,21 @@ func (r *Repository) Users() ([]model.User, error) {
 	return users, err
 }
 
+func (r *Repository) UsersByIDs(ids []string) (map[string]model.User, error) {
+	result := make(map[string]model.User, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var users []model.User
+	if err := r.db.Select("id", "username", "display_name", "dept_id").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		result[user.ID] = user
+	}
+	return result, nil
+}
+
 func (r *Repository) AdminUsers(keyword string, role model.UserRole, status model.UserStatus, deptID *int64, limit int, offset int) ([]model.User, int64, error) {
 	var users []model.User
 	var total int64
@@ -611,14 +626,14 @@ func (r *Repository) TasksForScope(scope UserDataScope, limit int, projectID str
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "user_id", "session_id", "project_id", "aigc_project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
+	query := r.db.Select("tasks.id", "tasks.user_id", "tasks.session_id", "tasks.project_id", "tasks.aigc_project_id", "tasks.type", "tasks.status", "tasks.stage", "tasks.progress", "tasks.prompt", "tasks.operation", "tasks.provider", "tasks.model", "tasks.input_json", "tasks.result_json", "tasks.billing_order_id", "tasks.provider_request_id", "tasks.provider_cancel_status", "tasks.provider_cancel_error", "tasks.provider_cancel_attempts", "tasks.provider_cancel_requested_at", "tasks.provider_cancelled_at", "tasks.provider_cancel_next_check_at", "tasks.attempts", "tasks.started_at", "tasks.completed_at", "tasks.created_at", "tasks.updated_at").
 		Model(&model.Task{})
 	query = scope.apply(query, "tasks")
 	if strings.TrimSpace(projectID) != "" {
-		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
+		query = query.Where("tasks.project_id = ?", strings.TrimSpace(projectID))
 	}
 	if activeOnly {
-		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
+		query = query.Where("tasks.status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
 	}
 	err := query.Order("tasks.created_at desc").Limit(limit).Find(&tasks).Error
 	return tasks, err

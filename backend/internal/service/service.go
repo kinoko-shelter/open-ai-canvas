@@ -86,6 +86,10 @@ type TaskSummary struct {
 	SessionID                 string                     `json:"sessionId,omitempty"`
 	ProjectID                 string                     `json:"projectId,omitempty"`
 	AigcProjectID             *int64                     `json:"aigcProjectId,omitempty"`
+	CreatorName               string                     `json:"creatorName,omitempty"`
+	CreatorUsername           string                     `json:"creatorUsername,omitempty"`
+	DeptID                    *int64                     `json:"deptId,omitempty"`
+	DeptName                  string                     `json:"deptName,omitempty"`
 	Type                      string                     `json:"type"`
 	Status                    model.TaskStatus           `json:"status"`
 	Stage                     string                     `json:"stage"`
@@ -591,7 +595,11 @@ func (s *Service) TasksForUserWithOptions(user *model.User, options TaskListOpti
 	if err != nil {
 		return nil, err
 	}
-	return taskSummariesForOutputWithBilling(tasks, orders), nil
+	summaries := taskSummariesForOutputWithBilling(tasks, orders)
+	if err := s.attachTaskSummaryOwners(summaries, tasks); err != nil {
+		return nil, err
+	}
+	return summaries, nil
 }
 
 func (s *Service) Task(userID string, id string) (*model.Task, error) {
@@ -844,6 +852,41 @@ func taskBillingTaskIDs(tasks []model.Task) []string {
 		ids = append(ids, task.ID)
 	}
 	return ids
+}
+
+func (s *Service) attachTaskSummaryOwners(items []TaskSummary, tasks []model.Task) error {
+	if len(items) == 0 || len(tasks) == 0 {
+		return nil
+	}
+	ownerIDs := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ownerIDs = append(ownerIDs, task.UserID)
+	}
+	users, err := s.repo.UsersByIDs(uniqueNonEmptyStrings(ownerIDs))
+	if err != nil {
+		return err
+	}
+	departmentNames, err := s.repo.AigcDepartmentNames(userDeptIDs(users))
+	if err != nil {
+		return err
+	}
+	for index, task := range tasks {
+		if index >= len(items) {
+			break
+		}
+		owner, ok := users[task.UserID]
+		if !ok {
+			continue
+		}
+		items[index].CreatorName = normalizeDisplayName(owner.DisplayName, owner.Username)
+		items[index].CreatorUsername = owner.Username
+		if owner.DeptID != nil {
+			deptID := *owner.DeptID
+			items[index].DeptID = &deptID
+			items[index].DeptName = departmentNames[deptID]
+		}
+	}
+	return nil
 }
 
 func taskSummaryForOutput(task model.Task) TaskSummary {

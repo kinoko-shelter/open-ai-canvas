@@ -37,6 +37,7 @@ export function TaskListRow({
     const context = getTaskCanvasContext(task, canvasById, projectNameById);
     const isActive = task.status === "queued" || task.status === "running";
     const isFailed = isTaskFailed(task);
+    const creator = task.creatorName || task.creatorUsername || "未知";
     return (
         <article className={`task-record-row group${isFailed ? " is-attention" : ""}`}>
             <TaskPreviewThumbnail task={task} onOpen={onPreview} />
@@ -74,6 +75,14 @@ export function TaskListRow({
                         {taskAttentionReason(task)}
                     </p>
                 ) : null}
+            </div>
+            <div className="task-record-owner" title={creator}>
+                <span>创建人</span>
+                <strong>{creator}</strong>
+            </div>
+            <div className="task-record-team" title={task.deptName || "未设置"}>
+                <span>所属团队</span>
+                <strong>{task.deptName || "未设置"}</strong>
             </div>
             <div className="task-record-date">
                 <TaskDate value={task.createdAt} />
