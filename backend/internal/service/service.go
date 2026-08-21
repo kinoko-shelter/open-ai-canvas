@@ -848,16 +848,18 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 	return s.CancelTaskForUser(ctx, &model.User{ID: userID}, id)
 }
 
-func (s *Service) CancelTaskForUser(ctx context.Context, actor *model.User, id string) (*model.Task, error) {
+func (s *Service) CancelTaskForUser(_ context.Context, actor *model.User, id string) (*model.Task, error) {
 	task, err := s.scopedTask(actor, id)
 	if err != nil {
 		return nil, err
+	}
+	if task.Status == model.TaskStatusRunning {
+		return nil, errors.New("任务已开始生成，无法取消")
 	}
 	if task.Status == model.TaskStatusSucceeded {
 		return nil, errors.New("completed task cannot be cancelled")
 	}
 	now := time.Now()
-	cancelledRunningTask := false
 	if task.Status == model.TaskStatusQueued {
 		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusQueued, now)
 		if err != nil {
@@ -878,46 +880,15 @@ func (s *Service) CancelTaskForUser(ctx context.Context, actor *model.User, id s
 			}
 		}
 	}
+	// 排队任务可能在条件更新前被 worker 抢占，重新读取后必须再次阻止取消。
 	if task.Status == model.TaskStatusRunning {
-		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusRunning, now)
-		if err != nil {
-			return nil, err
-		}
-		if !cancelled {
-			latest, latestErr := s.scopedTask(actor, id)
-			if latestErr != nil {
-				return nil, latestErr
-			}
-			if latest.Status == model.TaskStatusSucceeded {
-				return nil, errors.New("completed task cannot be cancelled")
-			}
-			task = latest
-		} else {
-			cancelledRunningTask = true
-			s.cancelActiveTask(task.ID)
-			if err := s.MarkBillingUncertain(task.BillingOrderID, "运行中的上游请求被用户取消，费用状态待核对"); err != nil {
-				return nil, err
-			}
-			task, err = s.repo.Task(task.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
+		return nil, errors.New("任务已开始生成，无法取消")
 	}
 	if task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("task cannot be cancelled in its current state")
 	}
 	if task.SessionID != "" {
 		_ = s.markSessionFailed(*task, "会话任务已取消。")
-	}
-	if cancelledRunningTask {
-		if err := s.requestProviderCancellation(ctx, task); err != nil {
-			return nil, err
-		}
-		task, err = s.repo.Task(task.ID)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if err := s.finalizeTaskTextReplay(task.ID, model.TaskStatusCancelled); err != nil {
 		_ = s.log(actor.ID, task.ID, "error", "文本回放草稿归并失败", err.Error())

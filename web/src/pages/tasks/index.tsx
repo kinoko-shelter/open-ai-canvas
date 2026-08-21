@@ -21,7 +21,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
+import { formatModelName, getTaskCanvasContext, isTaskCancellable, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
 import { TaskStatPills, type TaskStatusFilter } from "./task-stat-pills";
 
 type TaskKindFilter = "all" | "text" | "image" | "video";
@@ -321,6 +321,11 @@ export default function TasksPage() {
     }, [loadTasks]);
 
     const runAction = async (id: string, action: "retry" | "cancel") => {
+        const currentTask = tasksRef.current.find((task) => task.id === id);
+        if (action === "cancel" && currentTask && !isTaskCancellable(currentTask)) {
+            message.warning("任务已开始生成，无法取消");
+            return;
+        }
         setActingId(id);
         try {
             const next = action === "retry" ? await retryGenerationTask(id) : await cancelGenerationTask(id);
