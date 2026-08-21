@@ -192,6 +192,15 @@ func capabilitySpecWithRoutePresets(spec CapabilitySpec, routes []CapabilitySpec
 	return result
 }
 
+func isWildcardOptionConstraint(constraint OptionConstraint) bool {
+	for _, value := range constraint.Values {
+		if normalizedScalar(value) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // capabilityFingerprint 用规范化后的结构去重能力画像；不能直接依赖原始 JSON，
 // 因为同一组枚举能力的数组顺序不应造成重复展示。
 func capabilityFingerprint(spec CapabilitySpec) string {

@@ -46,11 +46,11 @@ func RegisterCustomRelayRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		defer release()
-		proxyCustomRelayRequest(c, policy.Request)
+		proxyCustomRelayRequest(c, svc, policy.Request)
 	})
 }
 
-func proxyCustomRelayRequest(c *gin.Context, policy service.RuntimeRequestPolicy) {
+func proxyCustomRelayRequest(c *gin.Context, svc *service.Service, policy service.RuntimeRequestPolicy) {
 	target, err := service.ValidateCustomRelayURL(c.GetHeader("X-Canvas-Upstream-URL"))
 	if err != nil {
 		failService(c, err)

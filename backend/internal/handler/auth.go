@@ -174,6 +174,11 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
+		channels, err := svc.PublicSystemChannels()
+		if err != nil {
+			failService(c, err)
+			return
+		}
 		logicalModels, logicalModelsErr := svc.PublicLogicalModels(nil)
 		if logicalModelsErr != nil {
 			failService(c, logicalModelsErr)

@@ -82,6 +82,7 @@ const (
 	ChannelInterfaceVolcengineJiMengVideo ChannelInterfaceType = "volcengine-jimeng-video"
 	ChannelInterfaceGeminiVeo             ChannelInterfaceType = "gemini-veo"
 	ChannelInterfaceNovitaVideo           ChannelInterfaceType = "novita-video"
+	ChannelInterfaceMiniMaxVideo          ChannelInterfaceType = "minimax-video"
 
 	ApiCallStatusSucceeded ApiCallStatus = "succeeded"
 	ApiCallStatusFailed    ApiCallStatus = "failed"
