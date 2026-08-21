@@ -5,6 +5,7 @@
 ## 0. 项目事实与边界
 
 - 项目是“故事创作”AI 影视创作工作台，当前仍在快速开发，数据结构和外部接口可能直接调整；除非用户明确要求，不为旧字段和旧数据编写迁移兼容层。
+- **品牌合同不可回退：** 对外运行时产品名称固定为“故事创作”。`web/index.html`、`web/src/` 的工作区/后台入口，以及 `canvas-agent/src/` 的提示词、控制台和 MCP client title 必须使用全称；不得因上游同步、cherry-pick、rebase 或视觉改版恢复“影策”等旧名称。历史原型和明确标注的旧文档可以保留原文，但不能作为运行时文案来源。
 - 前端位于 `web/`，技术栈是 Vite、React 19、TypeScript、React Router、Ant Design 6、Tailwind CSS 4、Zustand、TanStack Query。
 - 后端位于 `backend/`，技术栈是 Go、Gin、GORM、SQLite；生产/部署也支持 PostgreSQL、Redis、Docker Compose。
 - `canvas-agent/` 和 `plugins/` 是相对独立的运行单元，修改其代码时先读取各自 README 和局部规则，不把主应用约定臆测套过去。
@@ -183,6 +184,8 @@
 ## 11. Git、提交与发布
 
 - 不使用破坏性命令覆盖用户数据或工作区；禁止未经明确请求执行 `git reset --hard`、`git checkout --` 或大范围删除。
+- 上游同步以功能和合同为单位迁移，不以“与上游逐提交一致”为目标。合并前先确认团队、项目、权限、账务、资源归属和品牌合同；发生冲突时保留当前业务语义并逐块迁移上游能力，禁止整文件覆盖。
+- 合并含工作区、导航、后台或 Canvas Agent 改动的上游提交后，推送前必须执行 `rg -n '影策|Yingce|YingCe' web/src web/index.html canvas-agent/src`；运行时代码命中即为阻塞项，必须改回“故事创作”后才能提交。
 - 提交说明使用：`<type>(<scope>): <业务模块> - <变更摘要>`。`type` 使用 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`，`scope` 使用技术域英文，业务模块和结果用中文。
 - 不把纯文件名列表、纯英文句子或“修了 bug”作为提交 subject；发布使用 `chore(release): 版本发布 - publish vX.Y.Z`。
 - 发布前整理 `CHANGELOG.md` 的 `Unreleased`、更新 `VERSION`、提交当前改动并创建对应 tag；除非用户明确要求，发布流程不执行编译、测试或构建。
