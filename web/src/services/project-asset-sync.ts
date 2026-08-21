@@ -1,5 +1,5 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
-import { linkProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
+import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import { saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { useAssetStore, type AssetCategory, type AssetStatus } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -11,6 +11,7 @@ type EnsureCanvasNodeAssetOptions = {
     source: CanvasAssetSource;
     taskId?: string;
     category?: AssetCategory;
+    folderId?: string;
 };
 
 export type CanvasNodeAssetResult = {
@@ -49,23 +50,37 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
         asset = useAssetStore.getState().assets.find((item) => item.id === asset?.id) || asset;
     }
     if (!options.domainProjectId) return { assetId: asset.id, created, linkedToProject: false };
+    await syncAssetToProject(asset.id, options.domainProjectId, declaredCategory, options.folderId);
+    return { assetId: asset.id, created, linkedToProject: true };
+}
+
+async function syncAssetToProject(assetId: string, domainProjectId: string, category?: AssetCategory, folderId?: string) {
+    const asset = useAssetStore.getState().assets.find((candidate) => candidate.id === assetId);
+    if (!asset) throw new Error("素材写入本地失败");
     const linkedProjectIds = Array.isArray(asset.metadata?.projectIds) ? asset.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
+    if (linkedProjectIds.includes(domainProjectId)) {
+        if (folderId !== undefined) await moveProjectAsset(domainProjectId, asset.id, folderId);
+        return;
+    }
 
     // 项目关联依赖后端 assets 记录，先强制完成素材同步，不能依赖延迟自动同步的时序。
     await saveRemoteUserDataNow();
-    const { asset: linkedAsset } = await linkProjectAsset(options.domainProjectId, {
+    const { asset: linkedAsset } = await linkProjectAsset(domainProjectId, {
         assetId: asset.id,
-        category: declaredCategory || asset.category || "other",
+        category: category || asset.category || "other",
+        folderId,
     });
-    const linked = declaredCategory && linkedAsset.category !== declaredCategory
-        ? (await updateProjectAssetCategory(options.domainProjectId, asset.id, declaredCategory)).asset
+    let linked = category && linkedAsset.category !== category
+        ? (await updateProjectAssetCategory(domainProjectId, asset.id, category)).asset
         : linkedAsset;
+    if (folderId !== undefined && (linked.folderId || "") !== folderId) {
+        linked = (await moveProjectAsset(domainProjectId, asset.id, folderId)).asset;
+    }
     useAssetStore.getState().updateAsset(asset.id, {
         category: linked.category as AssetCategory,
         status: linked.status as AssetStatus,
         primaryVersionId: linked.primaryVersionId,
-        metadata: { ...asset.metadata, projectIds: [...new Set([...linkedProjectIds, options.domainProjectId])] },
+        metadata: { ...asset.metadata, projectIds: [...new Set([...linkedProjectIds, domainProjectId])] },
     });
     await saveRemoteUserDataNow();
-    return { assetId: asset.id, created, linkedToProject: true };
 }
