@@ -39,6 +39,7 @@ func Models() []any {
 		&model.Resource{},
 		&model.Asset{},
 		&model.ProjectAssetLink{},
+		&model.ProjectAssetFolder{},
 		&model.ProjectAssetCandidate{},
 		&model.AssetVersion{},
 		&model.AssetRepresentation{},
