@@ -645,7 +645,7 @@ func (r *Repository) TasksForScope(scope UserDataScope, limit int, projectID str
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "user_id", "session_id", "project_id", "aigc_project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
+	query := r.db.Select("tasks.id", "tasks.user_id", "tasks.session_id", "tasks.project_id", "tasks.aigc_project_id", "tasks.type", "tasks.status", "tasks.stage", "tasks.progress", "tasks.prompt", "tasks.operation", "tasks.provider", "tasks.model", "tasks.input_json", "tasks.result_json", "tasks.billing_order_id", "tasks.provider_request_id", "tasks.provider_cancel_status", "tasks.provider_cancel_error", "tasks.provider_cancel_attempts", "tasks.provider_cancel_requested_at", "tasks.provider_cancelled_at", "tasks.provider_cancel_next_check_at", "tasks.attempts", "tasks.started_at", "tasks.completed_at", "tasks.created_at", "tasks.updated_at").
 		Model(&model.Task{})
 	query = scope.apply(query, "tasks")
 	if strings.TrimSpace(projectID) != "" {
