@@ -91,7 +91,10 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, addedSkil
             try {
                 const promptOnly = retryMode === "video";
                 const baseContext = buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryContextPrompt, assets, promptOnly);
-                rawContext = hasSavedImageMetadata && !baseContext.characterReferences.length ? null : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly);
+                rawContext =
+                    hasSavedImageMetadata && !baseContext.characterReferences.length
+                        ? null
+                        : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly);
             } catch (error) {
                 const failure = generationFailureMetadata(error, retryPromptSource);
                 message.error(failure.errorDetails);

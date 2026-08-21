@@ -3,6 +3,7 @@ import type { GenerationTask, TaskStatus } from "@/services/api/task-center";
 export const statusLabel: Record<TaskStatus, string> = {
     queued: "排队中",
     running: "生成中",
+    text_replay: "文本生成中",
     succeeded: "已完成",
     failed: "失败",
     cancelled: "已取消",
@@ -45,4 +46,3 @@ export function formatTaskKind(task: GenerationTask) {
     if (task.type.startsWith("video_")) return "视频任务";
     return "生成任务";
 }
-

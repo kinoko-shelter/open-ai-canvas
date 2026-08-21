@@ -16,6 +16,12 @@ type Task struct {
 	Operation                 string               `json:"operation" gorm:"size:64"`
 	Provider                  string               `json:"provider" gorm:"size:64"`
 	Model                     string               `json:"model" gorm:"size:120"`
+	LogicalModelID         string     `json:"logicalModelId,omitempty" gorm:"size:36;index"`
+	LogicalModelRevisionID string     `json:"logicalModelRevisionId,omitempty" gorm:"size:36;index"`
+	RouteID                string     `json:"routeId,omitempty" gorm:"size:36;index"`
+	ChannelModelID         string     `json:"channelModelId,omitempty" gorm:"size:36;index"`
+	// RouteRun 只在用户主动重试时递增；worker 租约恢复不应创建新的路由选择世代。
+	RouteRun                  int                  `json:"-" gorm:"index"`
 	BillingOrderID            string               `json:"billingOrderId,omitempty" gorm:"index;size:36"`
 	ProviderRequestID         string               `json:"providerRequestId,omitempty" gorm:"index;size:160"`
 	ProviderCancelStatus      ProviderCancelStatus `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`

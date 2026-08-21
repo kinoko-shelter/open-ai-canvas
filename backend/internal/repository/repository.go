@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ var ErrTaskStateConflict = errors.New("task state changed concurrently")
 var ErrTextReplayQuotaExceeded = errors.New("text replay quota exceeded")
 
 var ErrTextReplayClosed = errors.New("text replay task is closed")
+
+var ErrProjectAssetFolderNotEmpty = errors.New("project asset folder is not empty")
 
 type Repository struct {
 	db *gorm.DB
@@ -46,6 +49,37 @@ func New(db *gorm.DB) *Repository {
 
 func (r *Repository) Dialect() string {
 	return r.db.Dialector.Name()
+}
+
+// NextPrefixedID 在数据库事务中递增序列，避免 UUID/父子字符串拼接导致的不可读和不可排序 ID。
+// prefix 只决定展示前缀，关联关系仍由独立外键维护。
+func (r *Repository) NextPrefixedID(prefix string) (string, error) {
+	return r.nextPrefixedID(r.db, prefix)
+}
+
+func (r *Repository) nextPrefixedID(db *gorm.DB, prefix string) (string, error) {
+	prefix = strings.ToUpper(strings.TrimSpace(prefix))
+	if prefix == "" || len(prefix) > 16 {
+		return "", errors.New("invalid id prefix")
+	}
+	sequence := "id:" + prefix
+	var item model.IDSequence
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.IDSequence{Name: sequence, UpdatedAt: time.Now()}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.IDSequence{}).Where("name = ?", sequence).Updates(map[string]any{
+			"value":      gorm.Expr("value + ?", 1),
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+		return tx.First(&item, "name = ?", sequence).Error
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s_%06d", prefix, item.Value), nil
 }
 
 func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
@@ -987,19 +1021,7 @@ func (r *Repository) UpsertAsset(asset *model.Asset) error {
 }
 
 func (r *Repository) DeleteAsset(userID string, id string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id = ?", id)
-		if err := tx.Where("asset_version_id IN (?)", versionIDs).Delete(&model.CharacterVoiceBinding{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("asset_version_id IN (?)", versionIDs).Delete(&model.AssetRepresentation{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("asset_id = ?", id).Delete(&model.AssetVersion{}).Error; err != nil {
-			return err
-		}
-		return tx.Delete(&model.Asset{}, "id = ? AND user_id = ?", id, userID).Error
-	})
+	return r.DeleteAssetAndResources(userID, id, nil)
 }
 
 func (r *Repository) ReplaceAssets(userID string, assets []model.Asset) error {
@@ -1186,6 +1208,9 @@ func (r *Repository) DeleteProject(userID string, id string) error {
 			return err
 		}
 		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectAssetLink{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectAssetFolder{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectAssetCandidate{}).Error; err != nil {
@@ -1389,6 +1414,110 @@ func (r *Repository) ProjectAssetsForScope(scope UserDataScope, projectID string
 	query := scope.apply(r.db.Table("assets").Select("assets.*").Joins("JOIN project_asset_links ON project_asset_links.asset_id = assets.id"), "assets")
 	err := query.Where("project_asset_links.project_id = ?", projectID).Order("assets.updated_at desc").Scan(&assets).Error
 	return assets, err
+}
+
+func (r *Repository) ProjectAssetLinks(projectID string) ([]model.ProjectAssetLink, error) {
+	var links []model.ProjectAssetLink
+	err := r.db.Where("project_id = ?", projectID).Order("folder_id asc, position asc, created_at asc").Find(&links).Error
+	return links, err
+}
+
+func (r *Repository) ProjectAssetLink(projectID string, assetID string) (*model.ProjectAssetLink, error) {
+	var link model.ProjectAssetLink
+	if err := r.db.First(&link, "project_id = ? AND asset_id = ?", projectID, assetID).Error; err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+func (r *Repository) NextProjectAssetPosition(projectID string, folderID string) (int, error) {
+	var result struct{ Maximum int }
+	err := r.db.Model(&model.ProjectAssetLink{}).
+		Select("COALESCE(MAX(position), -1) AS maximum").
+		Where("project_id = ? AND folder_id = ?", projectID, folderID).
+		Scan(&result).Error
+	return result.Maximum + 1, err
+}
+
+func (r *Repository) MoveProjectAsset(projectID string, assetID string, folderID string, position int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.ProjectAssetLink{}).
+			Where("project_id = ? AND asset_id = ?", projectID, assetID).
+			Updates(map[string]any{"folder_id": folderID, "position": position})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.Project{}).Where("id = ?", projectID).
+			Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
+	})
+}
+
+func (r *Repository) ProjectAssetFolders(projectID string) ([]model.ProjectAssetFolder, error) {
+	var folders []model.ProjectAssetFolder
+	err := r.db.Where("project_id = ?", projectID).Order("parent_id asc, position asc, created_at asc").Find(&folders).Error
+	return folders, err
+}
+
+func (r *Repository) ProjectAssetFolder(projectID string, folderID string) (*model.ProjectAssetFolder, error) {
+	var folder model.ProjectAssetFolder
+	if err := r.db.First(&folder, "id = ? AND project_id = ?", folderID, projectID).Error; err != nil {
+		return nil, err
+	}
+	return &folder, nil
+}
+
+func (r *Repository) CreateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(folder).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Project{}).Where("id = ?", folder.ProjectID).
+			Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": folder.UpdatedAt}).Error
+	})
+}
+
+func (r *Repository) UpdateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.ProjectAssetFolder{}).
+			Where("id = ? AND project_id = ?", folder.ID, folder.ProjectID).
+			Updates(map[string]any{"parent_id": folder.ParentID, "name": folder.Name, "name_key": folder.NameKey, "style": folder.Style, "theme": folder.Theme, "position": folder.Position, "updated_at": folder.UpdatedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.Project{}).Where("id = ?", folder.ProjectID).
+			Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": folder.UpdatedAt}).Error
+	})
+}
+
+func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var childCount int64
+		if err := tx.Model(&model.ProjectAssetFolder{}).Where("project_id = ? AND parent_id = ?", projectID, folderID).Count(&childCount).Error; err != nil {
+			return err
+		}
+		var assetCount int64
+		if err := tx.Model(&model.ProjectAssetLink{}).Where("project_id = ? AND folder_id = ?", projectID, folderID).Count(&assetCount).Error; err != nil {
+			return err
+		}
+		if childCount > 0 || assetCount > 0 {
+			return ErrProjectAssetFolderNotEmpty
+		}
+		result := tx.Delete(&model.ProjectAssetFolder{}, "id = ? AND project_id = ?", folderID, projectID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.Project{}).Where("id = ?", projectID).
+			Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
+	})
 }
 
 // LinkProjectAsset 将首版本、素材领域字段、项目引用和修订号原子提交，避免产生半关联资产。

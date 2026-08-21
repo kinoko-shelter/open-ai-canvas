@@ -156,14 +156,9 @@ func (s *Service) DeleteUserAssetForUser(user *model.User, id string) error {
 	if err != nil {
 		return err
 	}
-	references, err := s.repo.AssetReferenceCount(id)
-	if err != nil {
-		return err
-	}
-	if references > 0 {
-		return BadAuthRequest("素材仍被项目或镜头引用，请先解除引用")
-	}
-	return s.repo.DeleteAsset(asset.UserID, id)
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	return s.deleteUserAssetWithResources(asset.UserID, id)
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {

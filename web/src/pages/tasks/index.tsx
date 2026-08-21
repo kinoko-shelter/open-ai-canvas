@@ -3,11 +3,12 @@ import { FolderPlus, LayoutGrid, List, Plus, RefreshCw, Search } from "lucide-re
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { MediaPreview } from "@/components/media-preview";
 import { ListToolbar, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
 import { cancelGenerationTask, createAgentSession, createGenerationTask, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { canCollectGenerationTask, collectGenerationTaskMedia, isGenerationTaskMediaCollected } from "@/services/generation-media-collection";
@@ -20,7 +21,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
+import { formatModelName, getTaskCanvasContext, isTaskActive, isTaskCancellable, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
 import { TaskStatPills, type TaskStatusFilter } from "./task-stat-pills";
 
 type TaskKindFilter = "all" | "text" | "image" | "video";
@@ -101,7 +102,7 @@ export default function TasksPage() {
     const modelOptions = useMemo(() => Array.from(new Set(tasks.map((task) => formatModelName(effectiveConfig, task)).filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN")), [effectiveConfig, tasks]);
     const filteredTasks = useMemo(() => tasks.filter((task) => {
         if (statusFilter === "all") return true;
-        if (statusFilter === "active") return task.status === "queued" || task.status === "running";
+        if (statusFilter === "active") return isTaskActive(task);
         if (statusFilter === "failed") return task.status === "failed" || task.status === "cancelled";
         if (statusFilter === "succeeded") return task.status === "succeeded";
         return false;
@@ -125,7 +126,7 @@ export default function TasksPage() {
                 const created = new Date(task.createdAt);
                 if (!Number.isNaN(created.getTime()) && created.getFullYear() === now.getFullYear() && created.getMonth() === now.getMonth() && created.getDate() === now.getDate()) today += 1;
             }
-            if (task.status === "queued" || task.status === "running") active += 1;
+            if (isTaskActive(task)) active += 1;
             else if (task.status === "succeeded") succeeded += 1;
             else if (task.status === "failed" || task.status === "cancelled") failed += 1;
         }
@@ -302,7 +303,7 @@ export default function TasksPage() {
             const next = await loadTasks(initial);
             if (stopped) return;
             const items = next || tasksRef.current;
-            const hasActiveTasks = items.some((task) => task.status === "queued" || task.status === "running");
+            const hasActiveTasks = items.some(isTaskActive);
             timer = window.setTimeout(() => void poll(false), document.hidden ? 60_000 : hasActiveTasks ? 10_000 : 60_000);
         };
         const handleVisibility = () => {
@@ -320,6 +321,11 @@ export default function TasksPage() {
     }, [loadTasks]);
 
     const runAction = async (id: string, action: "retry" | "cancel") => {
+        const currentTask = tasksRef.current.find((task) => task.id === id);
+        if (action === "cancel" && currentTask && !isTaskCancellable(currentTask)) {
+            message.warning("任务已开始生成，无法取消");
+            return;
+        }
         setActingId(id);
         try {
             const next = action === "retry" ? await retryGenerationTask(id) : await cancelGenerationTask(id);
@@ -391,7 +397,7 @@ export default function TasksPage() {
                     return;
                 }
                 const requestConfig = resolveModelRequestConfig(effectiveConfig, textModel);
-                const detail = await createAgentSession({ projectId: values.projectId, prompt: values.prompt, config: backendProviderConfig(requestConfig) });
+                const detail = await createAgentSession({ projectId: values.projectId, prompt: values.prompt, config: backendProviderConfig(requestConfig), ...(logicalModelIDForConfig(requestConfig) ? { logicalModelId: logicalModelIDForConfig(requestConfig) } : {}) });
                 setTasks((items) => [...detail.tasks, ...items]);
             } else {
                 const videoModel = values.model?.trim() || effectiveConfig.videoModel || effectiveConfig.model;
@@ -407,6 +413,7 @@ export default function TasksPage() {
                     prompt: values.prompt,
                     provider: values.operation === "compare_versions" ? "internal-agent" : "openai-compatible",
                     model: values.operation === "compare_versions" ? "version-router" : requestConfig.model,
+					...(values.operation !== "compare_versions" && logicalModelIDForConfig(requestConfig) ? { logicalModelId: logicalModelIDForConfig(requestConfig) } : {}),
                     input: {
                         source: "tasks-page",
                         mode: values.operation === "compare_versions" ? "workflow" : "video",
@@ -574,9 +581,16 @@ export default function TasksPage() {
                 destroyOnHidden
                 className="library-modal task-media-preview-modal"
             >
-                {mediaPreview?.kind === "video"
-                    ? <video src={mediaPreview.url} className="max-h-[76vh] w-full bg-black object-contain" controls playsInline preload="metadata" />
-                    : mediaPreview ? <img src={mediaPreview.url} alt={mediaPreview.title} className="max-h-[76vh] w-full bg-black object-contain" /> : null}
+                {mediaPreview ? (
+                    <MediaPreview
+                        src={mediaPreview.url}
+                        kind={mediaPreview.kind}
+                        alt={mediaPreview.title}
+                        controls={mediaPreview.kind === "video"}
+                        className="max-h-[76vh] w-full bg-black object-contain"
+                        fallbackClassName="task-media-preview-unavailable"
+                    />
+                ) : null}
             </Modal>
         </>
     );
@@ -606,9 +620,20 @@ function TaskResultMedia({ value, taskType }: { value?: string; taskType: string
         <div>
             <Typography.Text strong>生成结果</Typography.Text>
             <div className="mt-2 grid max-h-[360px] grid-cols-2 gap-2 overflow-auto rounded-lg bg-stone-950 p-2 md:grid-cols-3">
-                {urls.map((url, index) => isVideoResult(url, taskType)
-                    ? <video key={`${url}-${index}`} src={url} className="aspect-video w-full rounded-md bg-black object-contain" controls preload="metadata" />
-                    : <img key={`${url}-${index}`} src={url} alt={`生成结果 ${index + 1}`} className="aspect-square w-full rounded-md bg-black object-contain" />)}
+                {urls.map((url, index) => {
+                    const isVideo = isVideoResult(url, taskType);
+                    return (
+                        <MediaPreview
+                            key={`${url}-${index}`}
+                            src={url}
+                            kind={isVideo ? "video" : "image"}
+                            alt={`生成结果 ${index + 1}`}
+                            controls={isVideo}
+                            className={isVideo ? "task-result-media is-video" : "task-result-media"}
+                            fallbackClassName={isVideo ? "task-result-media is-video" : "task-result-media"}
+                        />
+                    );
+                })}
             </div>
         </div>
     );
@@ -701,32 +726,6 @@ function formatTaskJson(value?: string) {
     } catch {
         return value;
     }
-}
-
-function backendProviderConfig(config: ReturnType<typeof resolveModelRequestConfig>) {
-    return {
-        channelId: config.channelId,
-        apiFormat: config.apiFormat,
-        interfaceType: config.interfaceType,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        secretKey: config.secretKey,
-        model: config.model,
-        size: config.size,
-        quality: config.quality,
-        transparentBackground: config.transparentBackground,
-        count: config.count,
-        videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        audioVoice: config.audioVoice,
-        audioFormat: config.audioFormat,
-        audioSpeed: config.audioSpeed,
-        audioInstructions: config.audioInstructions,
-        capabilityConfig: modelCapabilityConfigFor(config, config.model),
-        systemPrompt: config.systemPrompt,
-    };
 }
 
 function buildVideoOperationPrompt(operation: string, prompt: string) {

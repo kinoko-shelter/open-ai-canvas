@@ -25,26 +25,34 @@ import (
 )
 
 type Service struct {
-	repo            *repository.Repository
-	kolRepo         *repository.KOLRepository
-	dataDir         string
-	cancelMu        sync.Mutex
-	registrationMu  sync.Mutex
-	emailCodeMu     sync.Mutex
-	redeemBatchMu   sync.Mutex
-	storageMu       sync.Mutex
-	characterTaskMu sync.Mutex
-	activeCancels   map[string]context.CancelFunc
-	pendingStorage  map[string]int64
-	coordinator     *runtimeCoordinator
-	runtimeErr      error
-	workerID        string
-	workerStartOnce sync.Once
-	workerStopOnce  sync.Once
-	workerStop      chan struct{}
-	workerDone      chan struct{}
-	workerTasks     sync.WaitGroup
-	backgroundTasks sync.WaitGroup
+	repo                  *repository.Repository
+	kolRepo               *repository.KOLRepository
+	dataDir               string
+	cancelMu              sync.Mutex
+	registrationMu        sync.Mutex
+	emailCodeMu           sync.Mutex
+	redeemBatchMu         sync.Mutex
+	storageMu             sync.Mutex
+	characterTaskMu       sync.Mutex
+	activeCancels         map[string]context.CancelFunc
+	pendingStorage        map[string]int64
+	coordinator           *runtimeCoordinator
+	runtimeErr            error
+	workerID              string
+	routeCatalogMu        sync.RWMutex
+	routeCatalogRefreshMu sync.Mutex
+	routeCatalog          *routeCatalogSnapshot
+	routeCatalogTTL       time.Duration
+	routeCatalogMaxStale  time.Duration
+	routeCatalogVersion   int64
+	routeHealthMu         sync.Mutex
+	routeHealthBlocked    map[string]time.Time
+	workerStartOnce       sync.Once
+	workerStopOnce        sync.Once
+	workerStop            chan struct{}
+	workerDone            chan struct{}
+	workerTasks           sync.WaitGroup
+	backgroundTasks       sync.WaitGroup
 }
 
 const taskWorkerConcurrency = 3
@@ -60,18 +68,20 @@ type CreateSessionRequest struct {
 	ProjectStyle   storyboardProjectStyle    `json:"projectStyle"`
 	Characters     []storyboardCharacterCard `json:"characters"`
 	Config         providerConfig            `json:"config"`
+	LogicalModelID string                    `json:"logicalModelId"`
 }
 
 type CreateTaskRequest struct {
-	SessionID     string         `json:"sessionId"`
-	ProjectID     string         `json:"projectId"`
-	AigcProjectID *int64         `json:"aigcProjectId"`
-	Type          string         `json:"type"`
-	Operation     string         `json:"operation"`
-	Prompt        string         `json:"prompt"`
-	Provider      string         `json:"provider"`
-	Model         string         `json:"model"`
-	Input         map[string]any `json:"input"`
+	SessionID      string         `json:"sessionId"`
+	ProjectID      string         `json:"projectId"`
+	AigcProjectID  *int64         `json:"aigcProjectId"`
+	Type           string         `json:"type"`
+	Operation      string         `json:"operation"`
+	Prompt         string         `json:"prompt"`
+	Provider       string         `json:"provider"`
+	Model          string         `json:"model"`
+	LogicalModelID string         `json:"logicalModelId"`
+	Input          map[string]any `json:"input"`
 }
 
 type SessionDetail struct {
@@ -210,6 +220,7 @@ func New(repo *repository.Repository, dataDir string) *Service {
 	return &Service{
 		repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc),
 		coordinator: coordinator, runtimeErr: err, workerID: newID(),
+		routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time),
 		workerStop: make(chan struct{}), workerDone: make(chan struct{}),
 	}
 }
@@ -387,7 +398,7 @@ func (s *Service) CreateSession(userID string, req CreateSessionRequest) (*Sessi
 		return nil, err
 	}
 	s.storageMu.Unlock()
-	taskReq := CreateTaskRequest{SessionID: session.ID, ProjectID: req.ProjectID, Type: "agent_storyboard", Operation: "storyboard", Prompt: prompt, Provider: "openai-compatible", Model: req.Config.Model, Input: map[string]any{"references": req.References, "canvasSnapshot": compactedSnapshot, "requirements": req.Requirements, "canvasAssets": req.CanvasAssets, "projectStyle": req.ProjectStyle, "characters": req.Characters, "config": req.Config}}
+	taskReq := CreateTaskRequest{SessionID: session.ID, ProjectID: req.ProjectID, Type: "agent_storyboard", Operation: "storyboard", Prompt: prompt, Provider: "openai-compatible", Model: req.Config.Model, LogicalModelID: req.LogicalModelID, Input: map[string]any{"mode": "text", "references": req.References, "canvasSnapshot": compactedSnapshot, "requirements": req.Requirements, "canvasAssets": req.CanvasAssets, "projectStyle": req.ProjectStyle, "characters": req.Characters, "config": req.Config}}
 	if _, err := s.CreateTask(userID, taskReq); err != nil {
 		s.storageMu.Lock()
 		cleanupErr := s.repo.DeleteSessionDraft(userID, session.ID)
@@ -437,6 +448,20 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
+	var routed *RoutedModel
+	logicalModelID := strings.TrimSpace(req.LogicalModelID)
+	if logicalModelID != "" {
+		intent := ModelRequestIntentFromTaskInput(normalizedInput, req.Type, req.Operation)
+		routed, err = s.ResolveLogicalModel(logicalModelID, intent)
+		if err != nil {
+			return nil, err
+		}
+		normalizedInput = applyRoutedProviderSelection(normalizedInput, routed)
+	}
+	// 前端自管的文本持久化任务：直连模型生成、增量上报 text-deltas，不排入 worker 队列生成。
+	if isTextReplayTaskRequest(normalizedInput) {
+		return s.createTextReplayTask(userID, req, normalizedInput)
+	}
 	if err := s.requireCustomChannelsForTaskInput(normalizedInput); err != nil {
 		return nil, err
 	}
@@ -469,6 +494,15 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, err
 	}
 	task := model.Task{ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, AigcProjectID: aigcProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	if routed != nil {
+		task.LogicalModelID = routed.LogicalModel.ID
+		task.LogicalModelRevisionID = routed.Revision.ID
+		task.RouteID = routed.Route.ID
+		task.ChannelModelID = routed.ChannelModel.ID
+		task.RouteRun = 1
+		task.Model = routed.LogicalModel.Code
+		task.Provider = "managed"
+	}
 	billingOrder, err := s.taskBillingOrder(userID, &task, normalizedInput)
 	if err != nil {
 		return nil, err
@@ -487,6 +521,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+	}
+	if errors.Is(err, repository.ErrLogicalModelUnavailable) {
+		return nil, BadAuthRequest("所选模型已停用、归档或配置已更新，请重新选择")
 	}
 	if err != nil {
 		return nil, err
@@ -511,6 +548,49 @@ func (s *Service) resolveTaskAigcProject(userID string, projectID string, reques
 	return s.validateTaskAigcProject(userID, requested)
 }
 
+func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map[string]any {
+	config, _ := input["config"].(map[string]any)
+	nextConfig := make(map[string]any, len(config)+2)
+	for key, value := range config {
+		switch key {
+		case "channelId", "apiFormat", "interfaceType", "baseUrl", "allowLocalChannel", "apiKey", "secretKey", "headers", "model", "capabilityConfig":
+			continue
+		default:
+			nextConfig[key] = value
+		}
+	}
+	for key, value := range routed.Defaults {
+		canonical := canonicalCapabilityOptionName(key)
+		if existing, exists := nextConfig[canonical]; !exists || existing == nil || strings.TrimSpace(fmt.Sprint(existing)) == "" {
+			nextConfig[canonical] = providerConfigOptionValue(value)
+		}
+	}
+	// 路由匹配和真实请求必须使用同一组参数；逻辑能力参数覆盖空的页面配置，但不携带供应链字段。
+	if options, ok := input["capabilityOptions"].(map[string]any); ok {
+		for key, value := range options {
+			canonical := canonicalCapabilityOptionName(key)
+			if isProviderCapabilityOption(canonical) {
+				nextConfig[canonical] = providerConfigOptionValue(value)
+			}
+		}
+	}
+	nextConfig["channelId"] = routed.ChannelModel.ChannelID
+	nextConfig["model"] = routed.ChannelModel.ModelKey
+	input["config"] = nextConfig
+	return input
+}
+
+func providerConfigOptionValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
 // 所有任务输入先收敛为 JSON 对象，确保计费与密钥保护不会因 Go 结构体类型不同而被绕过。
 func normalizeTaskInput(input map[string]any) (map[string]any, error) {
 	if input == nil {
@@ -528,6 +608,48 @@ func normalizeTaskInput(input map[string]any) (map[string]any, error) {
 		normalized["canvasSnapshot"] = compactPersistedValue(snapshot)
 	}
 	return normalized, nil
+}
+
+// createTextReplayTask 创建前端自管的文本持久化任务：状态为 text_replay，
+// 不排队执行、不计 active 队列、不产生计费，仅作为正文增量（text-deltas）的存储容器。
+func (s *Service) createTextReplayTask(userID string, req CreateTaskRequest, normalizedInput map[string]any) (*model.Task, error) {
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(fmt.Sprint(normalizedInput["prompt"]))
+	}
+	if prompt == "" {
+		return nil, errors.New("prompt is required")
+	}
+	taskType := strings.TrimSpace(req.Type)
+	if taskType == "" {
+		taskType = "text"
+	}
+	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
+		return nil, err
+	}
+	aigcProjectID, err := s.resolveTaskAigcProject(userID, req.ProjectID, req.AigcProjectID)
+	if err != nil {
+		return nil, err
+	}
+	task := model.Task{
+		ID: newID(), UserID: userID, SessionID: req.SessionID, ProjectID: req.ProjectID, AigcProjectID: aigcProjectID,
+		Type: taskType, Status: model.TaskStatusTextReplay, Stage: "文本持久化（前端自管）", Progress: 5,
+		Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: strings.TrimSpace(req.Model),
+	}
+	if err := s.protectTaskSecrets(normalizedInput); err != nil {
+		return nil, err
+	}
+	inputJSON, _ := json.Marshal(normalizedInput)
+	task.InputJSON = string(inputJSON)
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.createTaskWithinStorageQuota(&task, nil, policy); err != nil {
+		return nil, err
+	}
+	_ = s.log(userID, task.ID, "info", "文本持久化任务已创建（前端自管）", "")
+	return taskForOutput(task), nil
 }
 
 func (s *Service) requireCustomChannelsForTaskInput(input map[string]any) error {
@@ -673,6 +795,11 @@ func (s *Service) RetryTaskForUser(actor *model.User, id string) (*model.Task, e
 	if task.ProviderCancelStatus == model.ProviderCancelStatusRequested {
 		return nil, BadAuthRequest("上游取消状态仍在确认中，请确认费用结果后再重试")
 	}
+	if task.BillingOrderID != "" {
+		if order, orderErr := s.repo.BillingOrder(task.BillingOrderID); orderErr == nil && order.Status == model.BillingStatusUncertain {
+			return nil, BadAuthRequest("上一次调用费用仍在核对中，处理完成前不能重复提交")
+		}
+	}
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
 	}
@@ -682,6 +809,9 @@ func (s *Service) RetryTaskForUser(actor *model.User, id string) (*model.Task, e
 	}
 	var billingInput map[string]any
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
+		return nil, err
+	}
+	if err := s.prepareLogicalTaskRetry(task, billingInput); err != nil {
 		return nil, err
 	}
 	if err := s.requireCustomChannelsForTaskInput(billingInput); err != nil {
@@ -698,7 +828,7 @@ func (s *Service) RetryTaskForUser(actor *model.User, id string) (*model.Task, e
 	if err := s.ensureTaskProjectActiveForUser(actor, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.repo.RetryTaskWithBilling(task.UserID, task.ID, billingOrder, policy.Task.ActiveTaskLimit)
+	task, err = s.repo.RetryTaskWithBilling(task.UserID, task, billingOrder, policy.Task.ActiveTaskLimit)
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
 	}
@@ -726,16 +856,18 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 	return s.CancelTaskForUser(ctx, &model.User{ID: userID}, id)
 }
 
-func (s *Service) CancelTaskForUser(ctx context.Context, actor *model.User, id string) (*model.Task, error) {
+func (s *Service) CancelTaskForUser(_ context.Context, actor *model.User, id string) (*model.Task, error) {
 	task, err := s.scopedTask(actor, id)
 	if err != nil {
 		return nil, err
+	}
+	if task.Status == model.TaskStatusRunning {
+		return nil, errors.New("任务已开始生成，无法取消")
 	}
 	if task.Status == model.TaskStatusSucceeded {
 		return nil, errors.New("completed task cannot be cancelled")
 	}
 	now := time.Now()
-	cancelledRunningTask := false
 	if task.Status == model.TaskStatusQueued {
 		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusQueued, now)
 		if err != nil {
@@ -756,46 +888,15 @@ func (s *Service) CancelTaskForUser(ctx context.Context, actor *model.User, id s
 			}
 		}
 	}
+	// 排队任务可能在条件更新前被 worker 抢占，重新读取后必须再次阻止取消。
 	if task.Status == model.TaskStatusRunning {
-		cancelled, err := s.repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusRunning, now)
-		if err != nil {
-			return nil, err
-		}
-		if !cancelled {
-			latest, latestErr := s.scopedTask(actor, id)
-			if latestErr != nil {
-				return nil, latestErr
-			}
-			if latest.Status == model.TaskStatusSucceeded {
-				return nil, errors.New("completed task cannot be cancelled")
-			}
-			task = latest
-		} else {
-			cancelledRunningTask = true
-			s.cancelActiveTask(task.ID)
-			if err := s.MarkBillingUncertain(task.BillingOrderID, "运行中的上游请求被用户取消，费用状态待核对"); err != nil {
-				return nil, err
-			}
-			task, err = s.repo.Task(task.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
+		return nil, errors.New("任务已开始生成，无法取消")
 	}
 	if task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("task cannot be cancelled in its current state")
 	}
 	if task.SessionID != "" {
 		_ = s.markSessionFailed(*task, "会话任务已取消。")
-	}
-	if cancelledRunningTask {
-		if err := s.requestProviderCancellation(ctx, task); err != nil {
-			return nil, err
-		}
-		task, err = s.repo.Task(task.ID)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if err := s.finalizeTaskTextReplay(task.ID, model.TaskStatusCancelled); err != nil {
 		_ = s.log(actor.ID, task.ID, "error", "文本回放草稿归并失败", err.Error())
@@ -1015,6 +1116,10 @@ func truncateRunes(value string, limit int) string {
 
 func taskForOutput(task model.Task) *model.Task {
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
+	// 普通任务接口只暴露前台模型身份；渠道模型和供应线路属于管理员内部信息。
+	task.LogicalModelRevisionID = ""
+	task.RouteID = ""
+	task.ChannelModelID = ""
 	return &task
 }
 
@@ -1144,18 +1249,54 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	task.Stage = "调用生成模型"
 	task.Progress = 35
 	_ = s.repo.UpdateTaskProgress(task.ID, task.Stage, task.Progress)
+	routeAttempt, err := s.beginTaskRouteAttempt(task)
+	if err != nil {
+		task.Status = model.TaskStatusFailed
+		task.Stage = "路由准备失败"
+		task.Error = s.UserFacingErrorMessage(err)
+		task.CompletedAt = ptr(time.Now())
+		_, _ = s.repo.UpdateTaskTerminalState(task.ID, model.TaskStatusRunning, task.Status, task.Stage, task.Error, *task.CompletedAt)
+		if isRouteDispatchUncertain(err) {
+			_ = s.MarkBillingUncertain(task.BillingOrderID, task.Error)
+		} else {
+			_ = s.RefundBilling(task.BillingOrderID, "路由准备失败，上游请求未发出")
+		}
+		return err
+	}
 	if err := s.MarkBillingRunning(task.BillingOrderID); err != nil {
 		task.Status = model.TaskStatusFailed
 		task.Stage = "计费准备失败"
-		task.Error = taskFailureMessage(err)
+		task.Error = s.UserFacingErrorMessage(err)
 		task.CompletedAt = ptr(time.Now())
 		_, _ = s.repo.UpdateTaskTerminalState(task.ID, model.TaskStatusRunning, task.Status, task.Stage, task.Error, *task.CompletedAt)
 		_ = s.RefundBilling(task.BillingOrderID, "计费准备失败，上游请求未发出")
 		return err
 	}
-	result, canvasOps, err := s.processTask(ctx, *task)
-	if stateErr := s.refreshTaskProviderState(task); stateErr != nil {
-		return stateErr
+	var result map[string]interface{}
+	var canvasOps []map[string]interface{}
+	for {
+		if dispatchErr := s.markRouteAttemptDispatching(routeAttempt); dispatchErr != nil {
+			err = dispatchErr
+			break
+		}
+		result, canvasOps, err = s.processTask(ctx, *task)
+		if stateErr := s.refreshTaskProviderState(task); stateErr != nil {
+			return stateErr
+		}
+		s.finishTaskRouteAttempt(routeAttempt, task, err)
+		if err == nil {
+			break
+		}
+		nextAttempt, routeErr := s.nextRouteAttemptAfterFailure(task, routeAttempt, err)
+		if routeErr != nil {
+			_ = s.log(task.UserID, task.ID, "warn", "备用路由不可用，保留原始失败", routeErr.Error())
+			break
+		}
+		if nextAttempt == nil {
+			break
+		}
+		routeAttempt = nextAttempt
+		_ = s.log(task.UserID, task.ID, "warn", "上游未创建任务，切换备用能力路由", nextAttempt.RouteID)
 	}
 	providerSucceeded := err == nil
 	if err == nil {
@@ -1198,7 +1339,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		}
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务失败"
-		task.Error = taskFailureMessage(err)
+		task.Error = s.UserFacingErrorMessage(err)
 		task.CompletedAt = ptr(time.Now())
 		_, _ = s.repo.UpdateTaskTerminalState(task.ID, model.TaskStatusRunning, task.Status, task.Stage, task.Error, *task.CompletedAt)
 		if compactErr := s.finalizeTaskTextReplay(task.ID, model.TaskStatusFailed); compactErr != nil {
@@ -1243,7 +1384,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		}
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务结果保存失败"
-		task.Error = taskFailureMessage(err)
+		task.Error = s.UserFacingErrorMessage(err)
 		task.CompletedAt = ptr(time.Now())
 		_, _ = s.repo.UpdateTaskTerminalState(task.ID, model.TaskStatusRunning, task.Status, task.Stage, task.Error, *task.CompletedAt)
 		if compactErr := s.finalizeTaskTextReplay(task.ID, model.TaskStatusFailed); compactErr != nil {

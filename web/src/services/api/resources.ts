@@ -25,9 +25,10 @@ export type RemoteResource = {
 
 export type UserOSSSetting = {
     enabled: boolean;
-    provider: "aliyun" | "tencent";
+    provider: "aliyun" | "tencent" | "qiniu";
     region: string;
     endpoint: string;
+    cdnBaseUrl: string;
     bucket: string;
     accessKeyId: string;
     hasAccessKeySecret: boolean;
@@ -36,7 +37,7 @@ export type UserOSSSetting = {
     updatedAt?: string;
 };
 
-export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | "region" | "endpoint" | "bucket" | "accessKeyId" | "pathPrefix"> & {
+export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | "region" | "endpoint" | "cdnBaseUrl" | "bucket" | "accessKeyId" | "pathPrefix"> & {
     accessKeySecret?: string;
 };
 
@@ -141,7 +142,7 @@ export function resourceFileUrl(id: string) {
 
 function resourceProxyFileUrl(id: string) {
     const base = String(apiBaseURL).replace(/\/+$/, "");
-    return `${base}/resources/${encodeURIComponent(id)}/file`;
+    return `${base}/resources/${encodeURIComponent(id)}/file?proxy=1`;
 }
 
 export async function resolveResourceUrl(storageKey?: string, fallback = "") {

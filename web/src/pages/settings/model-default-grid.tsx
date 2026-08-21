@@ -66,15 +66,15 @@ export function ModelDefaultGrid({ config, onChange }: { config: AiConfig; onCha
                                             onClick={() => onChange(group.modelKey, model)}
                                         >
                                             <span className="flex min-w-0 items-start gap-2.5">
-                                                <span className={cn("grid size-8 shrink-0 place-items-center rounded-md border", selected ? "border-[color-mix(in_srgb,var(--workspace-accent)_28%,transparent)] bg-background/70" : "border-border/70 bg-muted/35")}>
-                                                    <ModelIcon model={model} />
+                                                <span className="model-default-option-icon grid size-8 shrink-0 place-items-center rounded-md">
+                                                    <ModelIcon config={config} model={model} />
                                                 </span>
                                                 <span className="min-w-0 flex-1">
                                                     <span className="block truncate text-xs font-semibold">{modelDisplayName(config, model)}</span>
                                                     <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[var(--fs-tiny)] text-foreground/45">
                                                         <span className="max-w-full truncate">{channel.name || "未命名渠道"}</span>
                                                         <span className="rounded border border-border/70 px-1 py-px text-[var(--fs-micro)]">{channel.scope === "system" ? "系统" : "自定义"}</span>
-                                                        {creditsEnabled && cost ? <Tag color="gold" className="!m-0 !px-1.5 !text-[var(--fs-micro)] !font-medium !leading-[18px] tabular-nums">{formatPrice(cost.unitPriceMicrocredits)} 积分/{cost.billingMode === "per_second" ? "秒" : "次"}</Tag> : null}
+                                                        {creditsEnabled && cost ? <Tag color="gold" className="!m-0 !px-1.5 !text-[var(--fs-micro)] !font-medium !leading-[18px] tabular-nums">{formatPrice(cost.billingMode === "token" ? (cost.outputTokenPriceMicrocredits || 0) : cost.unitPriceMicrocredits)} 积分/{cost.billingMode === "token" ? "百万 Token" : cost.billingMode === "per_second" ? "秒" : "次"}</Tag> : null}
                                                     </span>
                                                 </span>
                                                 <span className={cn("grid size-5 shrink-0 place-items-center rounded-full border", selected ? "border-[var(--workspace-accent)] bg-[var(--workspace-accent)] text-white" : "border-border text-transparent group-hover:border-foreground/30")}>

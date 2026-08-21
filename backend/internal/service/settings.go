@@ -26,6 +26,7 @@ const encryptedSettingPrefix = "enc:v1:"
 const (
 	aliyunOSSProvider  = "aliyun"
 	tencentCOSProvider = "tencent"
+	qiniuKodoProvider  = "qiniu"
 )
 
 type OSSSettingRequest struct {
@@ -33,10 +34,10 @@ type OSSSettingRequest struct {
 	Provider        string `json:"provider"`
 	Region          string `json:"region"`
 	Endpoint        string `json:"endpoint"`
+	CDNBaseURL      string `json:"cdnBaseUrl"`
 	Bucket          string `json:"bucket"`
 	AccessKeyID     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
-	CDNBaseURL      string `json:"cdnBaseUrl"`
 	CDNAuthKey      string `json:"cdnAuthKey"`
 	PublicBaseURL   string `json:"publicBaseUrl"`
 	PathPrefix      string `json:"pathPrefix"`
@@ -47,10 +48,10 @@ type PublicOSSSetting struct {
 	Provider           string    `json:"provider"`
 	Region             string    `json:"region"`
 	Endpoint           string    `json:"endpoint"`
+	CDNBaseURL         string    `json:"cdnBaseUrl"`
 	Bucket             string    `json:"bucket"`
 	AccessKeyID        string    `json:"accessKeyId"`
 	HasAccessKeySecret bool      `json:"hasAccessKeySecret"`
-	CDNBaseURL         string    `json:"cdnBaseUrl"`
 	HasCDNAuthKey      bool      `json:"hasCdnAuthKey"`
 	PublicBaseURL      string    `json:"publicBaseUrl"`
 	PathPrefix         string    `json:"pathPrefix"`
@@ -64,10 +65,10 @@ type ossSettingValue struct {
 	Provider        string `json:"provider"`
 	Region          string `json:"region"`
 	Endpoint        string `json:"endpoint"`
+	CDNBaseURL      string `json:"cdnBaseUrl"`
 	Bucket          string `json:"bucket"`
 	AccessKeyID     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
-	CDNBaseURL      string `json:"cdnBaseUrl"`
 	CDNAuthKey      string `json:"cdnAuthKey"`
 	PublicBaseURL   string `json:"publicBaseUrl"`
 	PathPrefix      string `json:"pathPrefix"`
@@ -151,9 +152,6 @@ func (s *Service) UserOSSSetting(actor *model.User) (*PublicOSSSetting, error) {
 func (s *Service) UpdateUserOSSSetting(actor *model.User, req OSSSettingRequest) (*PublicOSSSetting, error) {
 	if actor == nil {
 		return nil, Unauthorized("请先登录")
-	}
-	if strings.TrimSpace(req.CDNBaseURL) != "" || strings.TrimSpace(req.CDNAuthKey) != "" {
-		return nil, BadAuthRequest("媒体 CDN 仅支持管理员配置平台存储")
 	}
 	_, currentValue, err := s.readUserOSSSetting(actor.ID)
 	if err != nil {
@@ -504,29 +502,26 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 		Provider:        strings.TrimSpace(req.Provider),
 		Region:          strings.TrimSpace(req.Region),
 		Endpoint:        strings.TrimRight(strings.TrimSpace(req.Endpoint), "/"),
+		CDNBaseURL:      strings.TrimRight(strings.TrimSpace(req.CDNBaseURL), "/"),
 		Bucket:          strings.TrimSpace(req.Bucket),
 		AccessKeyID:     strings.TrimSpace(req.AccessKeyID),
 		AccessKeySecret: strings.TrimSpace(req.AccessKeySecret),
-		CDNBaseURL:      strings.TrimRight(strings.TrimSpace(req.CDNBaseURL), "/"),
 		CDNAuthKey:      strings.TrimSpace(req.CDNAuthKey),
 		PublicBaseURL:   strings.TrimRight(strings.TrimSpace(req.PublicBaseURL), "/"),
 		PathPrefix:      strings.Trim(strings.TrimSpace(req.PathPrefix), "/"),
 	})
-	if next.Provider != aliyunOSSProvider && next.Provider != tencentCOSProvider {
-		return next, BadAuthRequest("仅支持阿里云 OSS 和腾讯云 COS")
-	}
-	if next.Provider != aliyunOSSProvider && (next.CDNBaseURL != "" || next.CDNAuthKey != "") {
-		return next, BadAuthRequest("媒体 CDN 仅支持阿里云 OSS")
+	if next.Provider != aliyunOSSProvider && next.Provider != tencentCOSProvider && next.Provider != qiniuKodoProvider {
+		return next, BadAuthRequest("仅支持阿里云 OSS、腾讯云 COS 和七牛云 Kodo")
 	}
 	current = normalizeOSSSetting(current)
 	// 不同云厂商的密钥不能复用；只有继续使用同一厂商时，留空才表示保留原密钥。
 	if next.AccessKeySecret == "" && next.Provider == current.Provider {
 		next.AccessKeySecret = current.AccessKeySecret
 	}
-	if next.CDNAuthKey == "" && next.CDNBaseURL != "" {
+	if next.Provider == aliyunOSSProvider && next.CDNAuthKey == "" && next.CDNBaseURL != "" && next.Provider == current.Provider {
 		next.CDNAuthKey = current.CDNAuthKey
 	}
-	if next.CDNBaseURL == "" {
+	if next.CDNBaseURL == "" || next.Provider != aliyunOSSProvider {
 		next.CDNAuthKey = ""
 	}
 	if next.Enabled {
@@ -537,24 +532,33 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 			if next.Provider == tencentCOSProvider {
 				return next, BadAuthRequest("请填写腾讯云 COS Region 或 Endpoint")
 			}
+			if next.Provider == qiniuKodoProvider {
+				return next, BadAuthRequest("请填写七牛云 Kodo 上传 Endpoint")
+			}
 			return next, BadAuthRequest("请填写阿里云 OSS Endpoint")
 		}
 		if _, err := ValidateOutboundURL(next.Endpoint); err != nil {
 			return next, err
 		}
+		if next.CDNBaseURL != "" {
+			if _, err := ossCDNBaseURL(next.CDNBaseURL); err != nil {
+				return next, BadAuthRequest(err.Error())
+			}
+			if _, err := ValidateOutboundURL(next.CDNBaseURL); err != nil {
+				return next, err
+			}
+		}
+		if next.Provider == qiniuKodoProvider && next.CDNBaseURL == "" {
+			return next, BadAuthRequest("请填写七牛云 Kodo 绑定域名")
+		}
 		if next.AccessKeyID == "" {
-			return next, BadAuthRequest("请填写 AccessKey ID")
+			return next, BadAuthRequest("请填写访问密钥 AccessKey")
 		}
 		if next.AccessKeySecret == "" {
-			return next, BadAuthRequest("请填写 AccessKey Secret")
+			return next, BadAuthRequest("请填写访问密钥 SecretKey")
 		}
 	}
-	if next.CDNBaseURL != "" {
-		if _, err := validateCDNBaseURL(next.CDNBaseURL); err != nil {
-			return next, fmt.Errorf("媒体 CDN 地址无效：%w", err)
-		}
-	}
-	if (next.CDNBaseURL == "") != (next.CDNAuthKey == "") {
+	if next.Provider == aliyunOSSProvider && (next.CDNBaseURL == "") != (next.CDNAuthKey == "") {
 		return next, BadAuthRequest("媒体 CDN 地址和 URL 鉴权密钥必须同时填写")
 	}
 	return next, nil
@@ -617,10 +621,10 @@ func publicOSSSetting(setting *model.SystemSetting, value ossSettingValue) Publi
 		Provider:           value.Provider,
 		Region:             value.Region,
 		Endpoint:           value.Endpoint,
+		CDNBaseURL:         value.CDNBaseURL,
 		Bucket:             value.Bucket,
 		AccessKeyID:        value.AccessKeyID,
 		HasAccessKeySecret: strings.TrimSpace(value.AccessKeySecret) != "",
-		CDNBaseURL:         value.CDNBaseURL,
 		HasCDNAuthKey:      strings.TrimSpace(value.CDNAuthKey) != "",
 		PublicBaseURL:      value.PublicBaseURL,
 		PathPrefix:         value.PathPrefix,
@@ -639,9 +643,11 @@ func publicUserOSSSetting(setting *model.UserOSSSetting, value ossSettingValue) 
 		Provider:           value.Provider,
 		Region:             value.Region,
 		Endpoint:           value.Endpoint,
+		CDNBaseURL:         value.CDNBaseURL,
 		Bucket:             value.Bucket,
 		AccessKeyID:        value.AccessKeyID,
 		HasAccessKeySecret: strings.TrimSpace(value.AccessKeySecret) != "",
+		HasCDNAuthKey:      strings.TrimSpace(value.CDNAuthKey) != "",
 		PublicBaseURL:      value.PublicBaseURL,
 		PathPrefix:         value.PathPrefix,
 	}

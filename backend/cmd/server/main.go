@@ -86,6 +86,7 @@ func main() {
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterAuthRoutes(api, svc)
 	handler.RegisterFeatureAvailabilityRoutes(api, svc)
+	handler.RegisterResponseInterceptionRoutes(api, svc)
 	handler.RegisterAdminRoutes(api, svc)
 	handler.RegisterAigcRoutes(api, svc)
 	handler.RegisterAdminAnalyticsRoutes(api, svc)
@@ -95,6 +96,7 @@ func main() {
 	handler.RegisterTapNowRoutes(api, svc)
 	// 登录态模型目录代理：避免浏览器直连各上游时分别处理 CORS。
 	handler.RegisterChannelModelRoutes(api, svc)
+	handler.RegisterLogicalModelRoutes(api, svc)
 	handler.RegisterSystemProxyRoutes(api, svc)
 	handler.RegisterCustomRelayRoutes(api, svc)
 	handler.RegisterTaskRoutes(api, svc)

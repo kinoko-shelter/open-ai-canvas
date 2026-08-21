@@ -281,33 +281,58 @@ func (s *Service) decorateAPICallLogs(logs []model.ApiCallLog) error {
 
 // 管理员媒体读取必须同时校验日志、任务和资源归属，不能绕过用户资源边界按资源 ID 任意读取。
 func (s *Service) OpenAdminAPICallLogMediaRange(actor *model.User, logID string, rangeHeader string) (*ResourceStream, error) {
-	if err := s.RequireAdmin(actor); err != nil {
+	userID, resource, err := s.adminAPICallLogMediaResource(actor, logID)
+	if err != nil {
 		return nil, err
+	}
+	return s.openResourceRange(userID, resource, rangeHeader)
+}
+
+func (s *Service) PrepareAdminAPICallLogMediaDelivery(actor *model.User, logID string, rangeHeader string) (*ResourceDelivery, error) {
+	userID, resource, err := s.adminAPICallLogMediaResource(actor, logID)
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := s.prepareResourceDelivery(userID, resource, ResourceDeliveryOptions{})
+	if err != nil || delivery.RedirectURL != "" {
+		return delivery, err
+	}
+	stream, err := s.openResourceRange(userID, resource, rangeHeader)
+	if err != nil {
+		return nil, err
+	}
+	delivery.Stream = stream
+	return delivery, nil
+}
+
+func (s *Service) adminAPICallLogMediaResource(actor *model.User, logID string) (string, *model.Resource, error) {
+	if err := s.RequireAdmin(actor); err != nil {
+		return "", nil, err
 	}
 	log, err := s.repo.APICallLog(strings.TrimSpace(logID))
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if log.TaskID == "" || (log.Capability != "image" && log.Capability != "video") {
-		return nil, BadAuthRequest("该请求没有可预览媒体")
+		return "", nil, BadAuthRequest("该请求没有可预览媒体")
 	}
 	task, err := s.repo.Task(log.TaskID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if task.UserID != log.UserID {
-		return nil, BadAuthRequest("请求与媒体归属不一致")
+		return "", nil, BadAuthRequest("请求与媒体归属不一致")
 	}
 	previewURL, _ := taskMediaPreview(task.ResultJSON, task.Type)
 	resourceID := canvasResourceID(previewURL)
 	if resourceID == "" {
-		return nil, BadAuthRequest("该请求没有已持久化媒体")
+		return "", nil, BadAuthRequest("该请求没有已持久化媒体")
 	}
 	resource, err := s.repo.ResourceForUser(log.UserID, resourceID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return s.openResourceRange(log.UserID, resource, rangeHeader)
+	return log.UserID, resource, nil
 }
 
 func (s *Service) AdminAPICallLog(actor *model.User, id string) (*model.ApiCallLog, error) {
@@ -962,11 +987,11 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		}
 		// 火山方舟视频的输入 Token 恒为 0；轮询响应以 completion_tokens 为实际用量，
 		// 兼容只返回 total_tokens 的同协议中转实现。
-		if log.Capability == "video" && strings.Contains(log.Path, "/contents/generations/tasks") && log.OutputTokens == 0 {
-			log.OutputTokens = firstInt64(usage, "total_tokens")
-		}
-		if log.Capability == "video" && strings.Contains(log.Path, "/contents/generations/tasks") && log.OutputTokens <= 0 {
-			log.UsageAvailable = false
+		if log.Capability == "video" && strings.Contains(log.Path, "/contents/generations/tasks") {
+			if log.OutputTokens == 0 {
+				log.OutputTokens = firstInt64(usage, "total_tokens")
+			}
+			log.UsageAvailable = log.OutputTokens > 0
 		}
 		if details, ok := usage["input_tokens_details"].(map[string]any); ok {
 			log.CachedTokens = firstInt64(details, "cached_tokens")

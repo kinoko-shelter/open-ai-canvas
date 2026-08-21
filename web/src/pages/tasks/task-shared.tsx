@@ -17,6 +17,14 @@ export function isTaskFailed(task: GenerationTask) {
     return task.status === "failed" || task.status === "cancelled";
 }
 
+export function isTaskCancellable(task: GenerationTask) {
+    return task.status === "queued";
+}
+
+export function isTaskActive(task: GenerationTask) {
+    return task.status === "queued" || task.status === "running" || task.status === "text_replay";
+}
+
 export function taskAttentionReason(task: GenerationTask) {
     if (task.status === "cancelled") return providerCancelStatusLabel(task);
     if (task.errorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(task.error)) return "内容审核未通过，请修改输入后新建任务";
@@ -37,7 +45,7 @@ export function providerCancelStatusLabel(task: GenerationTask) {
 
 export function statusDotClassName(status: TaskStatus) {
     if (status === "succeeded") return "task-record-dot is-success";
-    if (status === "running") return "task-record-dot is-active is-pulsing";
+    if (status === "running" || status === "text_replay") return "task-record-dot is-active is-pulsing";
     if (status === "queued") return "task-record-dot is-queued";
     if (status === "failed") return "task-record-dot is-failed";
     return "task-record-dot is-idle";

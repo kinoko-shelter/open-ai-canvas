@@ -3,9 +3,12 @@ import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveVideoOperation } from "@/lib/model-selection";
+import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+
+export { logicalModelIDForConfig };
 
 export type BackendGenerationMode = "text" | "image" | "video" | "audio";
 
@@ -26,6 +29,7 @@ type BackendGenerationTaskOptions = {
     referenceImages?: ReferenceImage[];
     referenceVideos?: ReferenceVideo[];
     referenceAudios?: ReferenceAudio[];
+    textHistory?: Array<{ role: "user" | "assistant"; content: string }>;
     mask?: ReferenceImage;
     signal?: AbortSignal;
     metadata?: Record<string, unknown>;
@@ -49,6 +53,7 @@ export async function runBackendGenerationTask({
     referenceImages = [],
     referenceVideos = [],
     referenceAudios = [],
+    textHistory = [],
     mask,
     signal,
     metadata,
@@ -57,7 +62,7 @@ export async function runBackendGenerationTask({
     throwIfAborted(signal);
     const prepared = await prepareGenerationReferences({ referenceImages, referenceVideos, referenceAudios, mask });
     throwIfAborted(signal);
-    return createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages, referenceVideos, signal, metadata, onTaskUpdate }, prepared);
+    return createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate }, prepared);
 }
 
 export async function runBackendGenerationTaskBatch(options: BackendGenerationTaskOptions & { count: number }) {
@@ -83,8 +88,12 @@ async function prepareGenerationReferences({ referenceImages = [], referenceVide
     return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask };
 }
 
-async function createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages = [], signal, metadata, onTaskUpdate }: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
-    const videoOperation = String(metadata?.videoEditOperation || (referenceImages.length ? "image_to_video" : "text_to_video"));
+async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
+    const { projectId, aigcProjectId, mode, prompt, config, referenceImages = [], referenceVideos = [], referenceAudios = [], signal, metadata, onTaskUpdate } = options;
+    const inferredVideoOperation = resolveVideoOperation({ textCount: 0, imageCount: referenceImages.length, videoCount: referenceVideos.length, audioCount: referenceAudios.length, characterCount: 0 });
+    const hasReferenceMedia = referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0;
+    const videoOperation = String(metadata?.videoEditOperation || (mode === "video" && hasReferenceMedia && resolveModelRequestConfig(config, config.model).interfaceType === "minimax-video" ? "reference_to_video" : inferredVideoOperation));
+    const logicalModelId = logicalModelIDForConfig(config);
     const task = await createGenerationTask({
         ...(projectId ? { projectId } : {}),
         ...(aigcProjectId ? { aigcProjectId } : {}),
@@ -92,10 +101,13 @@ async function createAndWaitGenerationTask({ projectId, aigcProjectId, mode, pro
         operation: mode === "video" ? videoOperation : mode,
         prompt,
         model: config.model,
+        ...(logicalModelId ? { logicalModelId } : {}),
         input: {
             mode,
             prompt,
             config: backendProviderConfig(config),
+            capabilityOptions: logicalModelId ? logicalCapabilityOptions(config, mode) : undefined,
+            textHistory: options.textHistory,
             referenceImages: prepared.referenceImages,
             referenceVideos: prepared.referenceVideos,
             referenceAudios: prepared.referenceAudios,
@@ -170,14 +182,7 @@ function backendMediaReference<T extends ReferenceVideo | ReferenceAudio>(media:
 
 export function backendProviderConfig(config: AiConfig) {
     const requestConfig = resolveModelRequestConfig(config, config.model);
-    return {
-        channelId: requestConfig.channelId,
-        apiFormat: requestConfig.apiFormat,
-        interfaceType: requestConfig.interfaceType,
-        baseUrl: requestConfig.baseUrl,
-        apiKey: requestConfig.apiKey,
-        secretKey: requestConfig.secretKey,
-        model: requestConfig.model,
+    const generationOptions = {
         size: config.size,
         quality: config.quality,
         transparentBackground: config.transparentBackground,
@@ -190,9 +195,34 @@ export function backendProviderConfig(config: AiConfig) {
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
         audioInstructions: config.audioInstructions,
+    };
+    if (logicalModelIDForConfig(config)) return generationOptions;
+    return {
+        channelId: requestConfig.channelId,
+        apiFormat: requestConfig.apiFormat,
+        interfaceType: requestConfig.interfaceType,
+        baseUrl: requestConfig.baseUrl,
+        allowLocalChannel: requestConfig.allowLocalChannel === true,
+        apiKey: requestConfig.apiKey,
+        secretKey: requestConfig.secretKey,
+        model: requestConfig.model,
+        ...generationOptions,
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
         systemPrompt: "",
     };
+}
+
+function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode) {
+    const channel = resolveModelChannel(config, config.model);
+    const spec = channel.modelCosts?.find((item) => item.model === modelOptionName(config.model))?.logicalCapabilitySpec;
+    const candidates: Record<string, unknown> = mode === "image"
+        ? { size: config.size, quality: config.quality, transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
+        : mode === "video"
+            ? { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
+            : mode === "audio"
+                ? { audioVoice: config.audioVoice, audioFormat: config.audioFormat, audioSpeed: Number(config.audioSpeed) }
+                : {};
+    return Object.fromEntries(Object.entries(candidates).filter(([key]) => Boolean(spec?.options?.[key])));
 }
 
 export function parseBackendGenerationResult(task: GenerationTask): BackendGenerationResult {

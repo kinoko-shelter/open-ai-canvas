@@ -7,10 +7,14 @@ import { scopedLocalStorage } from "@/lib/user-scope";
 import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import type { ModelCapabilityConfig } from "@/lib/model-capabilities";
+import type { CapabilitySpec } from "@/services/api/logical-models";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ChannelInterfaceType = ModelProtocol;
 export type ChannelHeader = { name: string; value: string };
+
+// 这是只读目录适配器的内部键，不是供应渠道或数据库实体 ID。
+export const PUBLIC_MODEL_CATALOG_ID = "managed";
 
 export type ModelChannel = {
     id: string;
@@ -21,6 +25,7 @@ export type ModelChannel = {
     headers?: ChannelHeader[];
     apiFormat: ApiCallFormat;
     interfaceType?: ChannelInterfaceType;
+    allowLocalChannel?: boolean;
     models: string[];
     scope?: "system" | "user";
     enabled?: boolean;
@@ -30,14 +35,21 @@ export type ModelChannel = {
     modelCosts?: Array<{
         model: string;
         displayName?: string;
+        description?: string;
+        icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        pricePolicy?: "channel" | "unified";
         billingMode: "fixed_request" | "per_second" | "token";
         unitPriceMicrocredits: number;
         inputTokenPriceMicrocredits?: number;
         outputTokenPriceMicrocredits?: number;
         cachedTokenPriceMicrocredits?: number;
         capabilityConfig?: ModelCapabilityConfig;
+        logicalModelId?: string;
+        logicalCapabilitySpec?: CapabilitySpec;
+        logicalCapabilityProfiles?: CapabilitySpec[];
+        defaultOptions?: Record<string, unknown>;
     }>;
 };
 
@@ -384,12 +396,19 @@ export function modelDisplayName(config: AiConfig, value: string) {
     return channel.scope === "system" ? "系统模型" : model;
 }
 
+export function modelIcon(config: AiConfig, value: string) {
+    const model = modelOptionName(value);
+    return resolveModelChannel(config, value).modelCosts?.find((item) => item.model === model)?.icon || "";
+}
+
 export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return modelDisplayName(config, value);
     const channel = config.channels.find((item) => item.id === decoded.channelId);
     const displayName = modelDisplayName(config, value);
-    return channel ? `${displayName}（${channel.name}）` : displayName;
+    // 平台前台模型只展示公开名称；供应来源和内部目录适配器不属于创作端信息。
+    if (!channel || channel.scope === "system") return displayName;
+    return `${displayName}（${channel.name}）`;
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
@@ -428,6 +447,15 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
 }
 
+export function logicalModelIDForConfig(config: AiConfig) {
+    const channel = resolveModelChannel(config, config.model);
+    return channel.modelCosts?.find((item) => item.model === modelOptionName(config.model))?.logicalModelId || "";
+}
+
+export function channelConnectionSignature(channel: ModelChannel) {
+    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", channel.allowLocalChannel === true ? "local:1" : "local:0", JSON.stringify(channel.headers || [])].join("\n");
+}
+
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
@@ -445,6 +473,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" ? "gemini" as const : "openai" as const) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",
+        allowLocalChannel: channel.allowLocalChannel === true,
     };
 }
 

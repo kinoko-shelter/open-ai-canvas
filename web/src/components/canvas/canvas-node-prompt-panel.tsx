@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowUp, AtSign, Boxes, ChevronDown, FileText, ImageIcon, ImagePlus, Maximize2, Music2, Pencil, SlidersHorizontal, Square, UserRound, Video } from "lucide-react";
-import { Button, Image as AntImage, Modal, Tooltip } from "antd";
+import { Button, Image as AntImage, InputNumber, Modal, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { buildGenerationConfig, generationModelSelectionPatch } from "@/lib/canvas/canvas-project-generation";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
+import { modelRequestOptions, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -69,6 +69,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         },
         videoOperation: node.metadata?.videoEditOperation,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds,
+		options: modelRequestOptions({ ...globalConfig, size: node.metadata?.size || globalConfig.size, quality: node.metadata?.quality || globalConfig.quality, count: String(node.metadata?.count || globalConfig.count), videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds, vquality: node.metadata?.vquality || globalConfig.vquality, videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio, videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark, audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice, audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat, audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed }, mode),
     };
     const config = buildGenerationConfig(globalConfig, node, mode, requirements);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -231,7 +232,19 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     />
                 </div>
                 <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
-                    {mode === "image" ? (
+                    {mode === "text" ? (
+                        <Tooltip title={`文本生成份数（默认 1，可在生成配置中调整）`}>
+                            <InputNumber
+                                size="small"
+                                min={1}
+                                max={15}
+                                value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
+                                onChange={(value) => onConfigChange(node.id, { textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 1))) })}
+                                aria-label="文本生成份数"
+                                className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[var(--fs-tiny)]"
+                            />
+                        </Tooltip>
+                    ) : mode === "image" ? (
                         <CanvasImageSettingsPopover
                             config={config}
                             placement={expanded ? "topRight" : "topLeft"}

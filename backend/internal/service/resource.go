@@ -30,7 +30,10 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 
+	qiniuAuth "github.com/qiniu/go-sdk/v7/auth"
+	qiniuStorage "github.com/qiniu/go-sdk/v7/storage"
 	cos "github.com/tencentyun/cos-go-sdk-v5"
+	"gorm.io/gorm"
 )
 
 const providerResourceURLTTL = 4 * time.Hour
@@ -48,6 +51,17 @@ type ResourceStream struct {
 	ContentLength int64
 	ContentRange  string
 	AcceptRanges  string
+}
+
+type ResourceDeliveryOptions struct {
+	ForceDirect bool
+	ForceProxy  bool
+}
+
+type ResourceDelivery struct {
+	Resource    *model.Resource
+	Stream      *ResourceStream
+	RedirectURL string
 }
 
 func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) {
@@ -118,17 +132,61 @@ func (s *Service) resourceURL(resource *model.Resource, expiresAt time.Time, pre
 	setting.Provider = firstNonEmpty(resource.Provider, setting.Provider)
 	setting.Endpoint = firstNonEmpty(resource.Endpoint, setting.Endpoint)
 	setting.Bucket = firstNonEmpty(resource.Bucket, setting.Bucket)
-	if preferCDN && setting.Provider == aliyunOSSProvider {
-		cdnSetting := setting
-		cdnAuthKey, err := s.decryptSettingSecret(cdnSetting.CDNAuthKey)
-		if err == nil {
-			cdnSetting.CDNAuthKey = cdnAuthKey
-			if cdnURL, ok := signedCDNResourceURL(cdnSetting, resource.ObjectKey, expiresAt); ok {
-				return cdnURL, nil
+	if preferCDN && setting.CDNBaseURL != "" {
+		if setting.Provider == aliyunOSSProvider {
+			cdnSetting := setting
+			cdnAuthKey, err := s.decryptSettingSecret(cdnSetting.CDNAuthKey)
+			if err == nil {
+				cdnSetting.CDNAuthKey = cdnAuthKey
+				if cdnURL, ok := signedCDNResourceURL(cdnSetting, resource.ObjectKey, expiresAt); ok {
+					return cdnURL, nil
+				}
 			}
+		}
+		if setting.Provider == tencentCOSProvider {
+			return ossCDNObjectURL(setting.CDNBaseURL, resource.ObjectKey)
 		}
 	}
 	return signedOSSObjectURL(setting, resource.ObjectKey, expiresAt)
+}
+
+// PrepareResourceDelivery 统一决定浏览器资源出口：配置 CDN 时默认直连 CDN，显式代理仅用于需要同源 Blob 的内部读取。
+func (s *Service) PrepareResourceDelivery(userID string, id string, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
+	return s.PrepareResourceDeliveryForUser(&model.User{ID: userID}, id, options)
+}
+
+func (s *Service) PrepareResourceDeliveryForUser(user *model.User, id string, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
+	resource, err := s.ResourceForUser(user, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFound("资源不存在")
+		}
+		return nil, err
+	}
+	return s.prepareResourceDelivery(resource.UserID, resource, options)
+}
+
+func (s *Service) prepareResourceDelivery(userID string, resource *model.Resource, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
+	if resource == nil {
+		return nil, errors.New("资源不存在")
+	}
+	if resource.Status != model.ResourceStatusReady {
+		return nil, BadAuthRequest("资源尚未上传完成")
+	}
+	if resource.Provider != "local" && !options.ForceProxy {
+		setting, err := s.ossSettingForResource(userID, resource)
+		if err != nil {
+			return nil, err
+		}
+		if setting.CDNBaseURL != "" || options.ForceDirect {
+			redirectURL, err := s.resourceURL(resource, time.Now().Add(directResourceURLTTL), !options.ForceDirect)
+			if err != nil {
+				return nil, err
+			}
+			return &ResourceDelivery{Resource: resource, RedirectURL: redirectURL}, nil
+		}
+	}
+	return &ResourceDelivery{Resource: resource}, nil
 }
 
 func (s *Service) signedPublicResourceURL(resourceID string, expiresAt time.Time) (string, error) {
@@ -675,6 +733,16 @@ func (s *Service) ossSettingForResource(userID string, resource *model.Resource)
 	var err error
 	if resource.StorageSettingID != "" {
 		_, setting, err = s.readUserOSSSettingByID(userID, resource.StorageSettingID)
+		if err == nil {
+			_, current, currentErr := s.readUserOSSSetting(userID)
+			if currentErr != nil {
+				return ossSettingValue{}, currentErr
+			}
+			// 密钥继续固定在历史版本；同一存储位置的 CDN 域名跟随当前配置，使已有资源也立即切换。
+			if resourceStorageMatches(current, resource) {
+				setting.CDNBaseURL = current.CDNBaseURL
+			}
+		}
 	} else {
 		_, setting, err = s.readOSSStorageSetting()
 	}
@@ -691,6 +759,16 @@ func (s *Service) ossSettingForResource(userID string, resource *model.Resource)
 		return ossSettingValue{}, errors.New("对象存储访问密钥不可用")
 	}
 	return setting, nil
+}
+
+func resourceStorageMatches(setting ossSettingValue, resource *model.Resource) bool {
+	if resource == nil {
+		return false
+	}
+	setting = normalizeOSSSetting(setting)
+	return setting.Provider == strings.ToLower(strings.TrimSpace(resource.Provider)) &&
+		setting.Endpoint == strings.TrimRight(strings.TrimSpace(resource.Endpoint), "/") &&
+		setting.Bucket == strings.TrimSpace(resource.Bucket)
 }
 
 func ossSettingForProvider(setting ossSettingValue, provider string) (ossSettingValue, error) {
@@ -714,8 +792,8 @@ func validateActiveOSSSetting(setting ossSettingValue, disabledMessage string, i
 	if !setting.Enabled {
 		return ossSettingValue{}, BadAuthRequest(disabledMessage)
 	}
-	if setting.Provider != aliyunOSSProvider && setting.Provider != tencentCOSProvider {
-		return ossSettingValue{}, BadAuthRequest("仅支持阿里云 OSS 和腾讯云 COS")
+	if setting.Provider != aliyunOSSProvider && setting.Provider != tencentCOSProvider && setting.Provider != qiniuKodoProvider {
+		return ossSettingValue{}, BadAuthRequest("仅支持阿里云 OSS、腾讯云 COS 和七牛云 Kodo")
 	}
 	if setting.Bucket == "" || setting.Endpoint == "" || setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
 		return ossSettingValue{}, BadAuthRequest(incompleteMessage)
@@ -749,8 +827,12 @@ func ossObjectKey(setting ossSettingValue, userID string, kind string, fileName 
 }
 
 func putOSSObject(setting ossSettingValue, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
-	if normalizeOSSSetting(setting).Provider == tencentCOSProvider {
+	setting = normalizeOSSSetting(setting)
+	if setting.Provider == tencentCOSProvider {
 		return putCOSObject(setting, objectKey, mimeType, size, body)
+	}
+	if setting.Provider == qiniuKodoProvider {
+		return putQiniuObject(setting, objectKey, mimeType, size, body)
 	}
 	return putAliyunOSSObject(setting, objectKey, mimeType, size, body)
 }
@@ -830,8 +912,15 @@ type ossObjectStream struct {
 }
 
 func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
-	if normalizeOSSSetting(setting).Provider == tencentCOSProvider {
+	setting = normalizeOSSSetting(setting)
+	if setting.CDNBaseURL != "" {
+		return getOSSObjectRangeViaCDN(setting, objectKey, rangeHeader)
+	}
+	if setting.Provider == tencentCOSProvider {
 		return getCOSObjectRange(setting, objectKey, rangeHeader)
+	}
+	if setting.Provider == qiniuKodoProvider {
+		return getQiniuObjectRange(setting, objectKey, rangeHeader)
 	}
 	return getAliyunOSSObjectRange(setting, objectKey, rangeHeader)
 }
@@ -878,7 +967,8 @@ func decimalDigits(value string) bool {
 }
 
 func signedOSSObjectURL(setting ossSettingValue, objectKey string, expiresAt time.Time) (string, error) {
-	if normalizeOSSSetting(setting).Provider == tencentCOSProvider {
+	setting = normalizeOSSSetting(setting)
+	if setting.Provider == tencentCOSProvider {
 		return signedCOSObjectURL(setting, objectKey, expiresAt)
 	}
 	return signedAliyunOSSObjectURL(setting, objectKey, expiresAt)
@@ -953,6 +1043,30 @@ func putCOSObject(setting ossSettingValue, objectKey string, mimeType string, si
 	return strings.Trim(resp.Header.Get("ETag"), `"`), nil
 }
 
+func putQiniuObject(setting ossSettingValue, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	if setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
+		return "", errors.New("七牛云 Kodo 访问密钥不可用")
+	}
+	if setting.Bucket == "" || objectKey == "" {
+		return "", errors.New("七牛云 Kodo Bucket 或对象路径为空")
+	}
+	config := qiniuStorage.NewConfig()
+	config.Region = qiniuRegion(setting.Region)
+	config.UpHost = strings.TrimRight(setting.Endpoint, "/")
+	uploader := qiniuStorage.NewFormUploader(config)
+	policy := qiniuStorage.PutPolicy{Scope: setting.Bucket + ":" + strings.TrimLeft(objectKey, "/"), Expires: 3600}
+	token := policy.UploadToken(qiniuAuth.New(setting.AccessKeyID, setting.AccessKeySecret))
+	ret := qiniuStorage.PutRet{}
+	extra := &qiniuStorage.PutExtra{MimeType: mimeType}
+	if size < 0 {
+		size = 0
+	}
+	if err := uploader.Put(context.Background(), &ret, token, strings.TrimLeft(objectKey, "/"), body, size, extra); err != nil {
+		return "", fmt.Errorf("七牛云 Kodo 上传失败：%w", err)
+	}
+	return ret.Hash, nil
+}
+
 func getCOSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
 	client, err := newCOSClient(setting, 2*time.Minute)
 	if err != nil {
@@ -965,6 +1079,56 @@ func getCOSObjectRange(setting ossSettingValue, objectKey string, rangeHeader st
 			return &ossObjectStream{body: io.NopCloser(bytes.NewReader(nil)), statusCode: resp.StatusCode, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
 		}
 		return nil, fmt.Errorf("COS 读取失败：%w", err)
+	}
+	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
+}
+
+func getQiniuObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
+	signedURL, err := signedQiniuObjectURL(setting, objectKey, time.Now().Add(directResourceURLTTL))
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, signedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	ApplyDefaultOutboundHeaders(req)
+	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("七牛云 Kodo 读取失败：%w", err)
+	}
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		defer resp.Body.Close()
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("七牛云 Kodo 读取失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+	}
+	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
+}
+
+func getOSSObjectRangeViaCDN(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
+	signedURL, err := ossCDNObjectURL(setting.CDNBaseURL, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, signedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	ApplyDefaultOutboundHeaders(req)
+	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("对象存储 CDN 读取失败：%w", err)
+	}
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		defer resp.Body.Close()
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("对象存储 CDN 读取失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
 	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
 }
@@ -990,6 +1154,42 @@ func signedCOSObjectURL(setting ossSettingValue, objectKey string, expiresAt tim
 		return "", err
 	}
 	return signedURL.String(), nil
+}
+
+func signedQiniuObjectURL(setting ossSettingValue, objectKey string, expiresAt time.Time) (string, error) {
+	if setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
+		return "", errors.New("七牛云 Kodo 访问密钥不可用")
+	}
+	if setting.CDNBaseURL == "" {
+		return "", errors.New("七牛云 Kodo 绑定域名为空")
+	}
+	objectKey = strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if objectKey == "" {
+		return "", errors.New("七牛云 Kodo 对象路径为空")
+	}
+	deadline := expiresAt.Unix()
+	if deadline <= time.Now().Unix() {
+		return "", errors.New("七牛云 Kodo 签名有效期必须晚于当前时间")
+	}
+	mac := qiniuAuth.New(setting.AccessKeyID, setting.AccessKeySecret)
+	return qiniuStorage.MakePrivateURLv2(mac, strings.TrimRight(setting.CDNBaseURL, "/"), objectKey, deadline), nil
+}
+
+func qiniuRegion(region string) *qiniuStorage.Region {
+	switch strings.ToLower(strings.TrimSpace(region)) {
+	case "z1", "cn-north-1":
+		return &qiniuStorage.ZoneHuabei
+	case "z2", "cn-south-1":
+		return &qiniuStorage.ZoneHuanan
+	case "na0", "us-north-1":
+		return &qiniuStorage.ZoneBeimei
+	case "as0", "ap-southeast-1":
+		return &qiniuStorage.ZoneXinjiapo
+	case "cn-east-2", "zhejiang2":
+		return &qiniuStorage.ZoneHuadongZheJiang2
+	default:
+		return &qiniuStorage.ZoneHuadong
+	}
 }
 
 func newCOSClient(setting ossSettingValue, timeout time.Duration) (*cos.Client, error) {
@@ -1030,6 +1230,36 @@ func cosBucketBaseURL(setting ossSettingValue) (*url.URL, error) {
 		}
 	}
 	return parsed, nil
+}
+
+func ossCDNBaseURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return nil, errors.New("对象存储 CDN 加速域名格式不正确")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, errors.New("对象存储 CDN 加速域名只支持 http/https")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || strings.Trim(parsed.Path, "/") != "" {
+		return nil, errors.New("对象存储 CDN 加速域名不能包含认证信息、路径、查询参数或片段")
+	}
+	parsed.Path = ""
+	return parsed, nil
+}
+
+func ossCDNObjectURL(raw string, objectKey string) (string, error) {
+	baseURL, err := ossCDNBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	objectKey = strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if objectKey == "" {
+		return "", errors.New("对象存储对象路径为空")
+	}
+	// CDN 使用自己的访问鉴权与私有桶回源鉴权，不能携带 OSS/COS 的预签名参数。
+	// url.URL.String 会负责转义 Path；这里保留未转义值，避免把 %20 再编码为 %2520。
+	baseURL.Path = "/" + objectKey
+	return baseURL.String(), nil
 }
 
 func newOSSRequest(method string, setting ossSettingValue, objectKey string, contentType string, body io.Reader) (*http.Request, error) {

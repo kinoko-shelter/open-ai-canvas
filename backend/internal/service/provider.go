@@ -32,11 +32,23 @@ type canvasGenerationInput struct {
 	ReferenceImages []providerMedia        `json:"referenceImages"`
 	ReferenceVideos []providerMedia        `json:"referenceVideos"`
 	ReferenceAudios []providerMedia        `json:"referenceAudios"`
+	TextHistory     []providerTextMessage  `json:"textHistory"`
 	Mask            *providerMedia         `json:"mask"`
 	Metadata        map[string]interface{} `json:"metadata"`
+	AgentRequests   *agentToolRequests     `json:"agentRequests"`
 	ImageCapability *ImageCapabilityConfig `json:"-"`
 	StreamText      bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
 	VideoCapability *VideoCapabilityConfig `json:"-"`
+}
+
+type agentToolRequests struct {
+	Responses      map[string]interface{} `json:"responses"`
+	ChatCompletion map[string]interface{} `json:"chatCompletion"`
+}
+
+type providerTextMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type providerConfig struct {
@@ -99,6 +111,7 @@ type providerHTTPError struct {
 	StatusCode int
 	Status     string
 	Body       string
+	RetryAfter time.Duration
 }
 
 type providerAnalyticsKey struct{}
@@ -108,6 +121,7 @@ type providerAnalyticsContext struct {
 	UserID            string
 	TaskID            string
 	BillingOrderID    string
+	BillingMode       string
 	Capability        string
 	Operation         string
 	ChannelID         string
@@ -120,6 +134,12 @@ type providerAnalyticsContext struct {
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
 	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
+	// 账单模式随请求上下文传递，流式协议据此只为 Token 计费开启 usage 终态块。
+	if service != nil && task.BillingOrderID != "" {
+		if order, err := service.repo.BillingOrder(task.BillingOrderID); err == nil {
+			metadata.BillingMode = order.BillingMode
+		}
+	}
 	var input struct {
 		Mode   string         `json:"mode"`
 		Config providerConfig `json:"config"`
@@ -227,6 +247,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	case "image":
 		return runImageTask(ctx, input)
 	case "text":
+		if input.AgentRequests != nil {
+			return runAgentToolTask(ctx, input)
+		}
 		result, taskErr := runTextTask(ctx, input)
 		if taskErr == nil && promptTemplateOperation != "" {
 			taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
@@ -239,6 +262,128 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	default:
 		return nil, fmt.Errorf("不支持的生成模式：%s", input.Mode)
 	}
+}
+
+func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	request := input.AgentRequests.ChatCompletion
+	path := "/chat/completions"
+	protocol := "chat-completion"
+	if input.Config.InterfaceType == string(model.ChannelInterfaceOpenAIResponse) {
+		request = input.AgentRequests.Responses
+		path = "/responses"
+		protocol = "responses"
+	}
+	if request == nil {
+		return nil, errors.New("画布 Agent 工具请求缺少协议参数")
+	}
+	body := cloneStringAnyMap(request)
+	body["model"] = input.Config.Model
+	var payload map[string]interface{}
+	err := postJSON(ctx, input.Config, path, body, &payload)
+	if protocol == "chat-completion" && isAgentToolChoiceCompatibilityError(err) {
+		if !isAutoAgentToolChoice(body["tool_choice"]) {
+			autoBody := cloneStringAnyMap(body)
+			autoBody["tool_choice"] = "auto"
+			payload = nil
+			err = postJSON(ctx, input.Config, path, autoBody, &payload)
+		}
+		if isAgentToolChoiceCompatibilityError(err) {
+			withoutToolChoice := cloneStringAnyMap(body)
+			delete(withoutToolChoice, "tool_choice")
+			payload = nil
+			err = postJSON(ctx, input.Config, path, withoutToolChoice, &payload)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseAgentToolPayload(payload, protocol)
+}
+
+func isAgentToolChoiceCompatibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "tool_choice") || strings.Contains(message, "tool choice") || strings.Contains(message, "tool-choice") || strings.Contains(message, "thinking mode")
+}
+
+func isAutoAgentToolChoice(value interface{}) bool {
+	choice, ok := value.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(choice), "auto")
+}
+
+func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map[string]interface{}, error) {
+	if err := validateTextPayload(payload); err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{"mode": "text", "text": "", "toolCalls": []interface{}{}}
+	if protocol == "responses" {
+		result["text"] = firstNonEmptyString(stringField(payload, "output_text"), extractResponseText(payload))
+		if reasoning := extractResponseReasoning(payload); reasoning != "" {
+			result["reasoning"] = reasoning
+		}
+		calls := make([]interface{}, 0)
+		for _, value := range interfaceSlice(payload["output"]) {
+			item, _ := value.(map[string]interface{})
+			if stringField(item, "type") != "function_call" {
+				continue
+			}
+			calls = append(calls, map[string]interface{}{"id": firstNonEmptyString(stringField(item, "call_id"), stringField(item, "id")), "type": "function", "function": map[string]interface{}{"name": stringField(item, "name"), "arguments": stringField(item, "arguments")}})
+		}
+		result["toolCalls"] = calls
+		return result, nil
+	}
+	choices := interfaceSlice(payload["choices"])
+	if len(choices) == 0 {
+		return nil, errors.New("画布 Agent 接口没有返回 choices")
+	}
+	choice, _ := choices[0].(map[string]interface{})
+	message, _ := choice["message"].(map[string]interface{})
+	result["text"] = stringField(message, "content")
+	if reasoning := firstNonEmptyString(stringField(message, "reasoning_content"), stringField(message, "reasoning")); reasoning != "" {
+		result["reasoning"] = reasoning
+	}
+	calls := make([]interface{}, 0)
+	for _, value := range interfaceSlice(message["tool_calls"]) {
+		item, _ := value.(map[string]interface{})
+		function, _ := item["function"].(map[string]interface{})
+		calls = append(calls, map[string]interface{}{"id": stringField(item, "id"), "type": "function", "function": map[string]interface{}{"name": stringField(function, "name"), "arguments": stringField(function, "arguments")}})
+	}
+	result["toolCalls"] = calls
+	return result, nil
+}
+
+func extractResponseReasoning(payload map[string]interface{}) string {
+	var chunks []string
+	for _, value := range interfaceSlice(payload["output"]) {
+		item, _ := value.(map[string]interface{})
+		if stringField(item, "type") != "reasoning" {
+			continue
+		}
+		for _, key := range []string{"summary", "content"} {
+			for _, part := range interfaceSlice(item[key]) {
+				record, _ := part.(map[string]interface{})
+				if text := strings.TrimSpace(stringField(record, "text")); text != "" {
+					chunks = append(chunks, text)
+				}
+			}
+		}
+	}
+	return strings.Join(chunks, "\n")
+}
+
+func interfaceSlice(value interface{}) []interface{} {
+	items, _ := value.([]interface{})
+	return items
+}
+
+func cloneStringAnyMap(value map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(value)+1)
+	for key, item := range value {
+		cloned[key] = item
+	}
+	return cloned
 }
 
 type styleExecutionPlanDocument struct {
@@ -272,33 +417,47 @@ func (s *Service) applyGenerationStyleProfile(userID string, taskProjectID strin
 		if strings.TrimSpace(storedProfileJSON) == "" {
 			// 旧项目只有 preset ID，允许画布把该预设编译为结构化快照；仍需锁定同一预设，不能借降级路径换画风。
 			if strings.TrimSpace(storedPresetID) == "" || strings.TrimSpace(profile.PresetID) != strings.TrimSpace(storedPresetID) {
-				return errors.New("任务画风预设与项目当前设置不一致，请刷新画布后重试")
+				return errors.New("项目画风已发生变化，请返回项目列表后重新打开当前项目再生成")
 			}
 		} else {
 			matches, compareErr := equivalentStyleProfileJSON(styleProfileJSON, storedProfileJSON)
-			if compareErr != nil || !matches {
-				return errors.New("任务画风快照与项目当前设置不一致，请刷新画布后重试")
+			if compareErr != nil {
+				return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
+			}
+			if !matches {
+				// 项目画风可能在另一个页面更新；保存路径以服务端快照为准，生成时自动采用最新版本。
+				validatedStoredProfileJSON, validateErr := validateStyleProfileJSON(storedProfileJSON)
+				if validateErr != nil || json.Unmarshal([]byte(validatedStoredProfileJSON), &profile) != nil {
+					return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
+				}
 			}
 		}
 	}
-	plan, err := decodeStyleExecutionPlan(input.Metadata["styleExecutionPlan"])
-	if err != nil {
-		return err
-	}
+	// 执行计划是前端为即时预览生成的派生数据。平台模型入队后可能改选真实供应线路，
+	// 因此后端必须以最终模型重新编译，不能要求用户手动“刷新配置”来同步内部路由。
+	plan, _ := decodeStyleExecutionPlan(input.Metadata["styleExecutionPlan"])
 	stylePrompt, expectedStatus, warnings := resolveGenerationStyleExecution(profile, input.Config.Model, firstNonEmpty(input.Config.InterfaceType, input.Config.APIFormat))
-	if plan.SchemaVersion != 1 || plan.ProfilePresetID != profile.PresetID || plan.ProfileRevision != profile.Revision || plan.Mode != input.Mode || !strings.EqualFold(plan.Model, input.Config.Model) || plan.InterfaceType != firstNonEmpty(input.Config.InterfaceType, input.Config.APIFormat) {
-		return errors.New("项目画风执行计划与当前模型或快照不一致，请刷新配置后重试")
-	}
-	if plan.Status != expectedStatus || strings.TrimSpace(plan.Prompt) != stylePrompt {
-		return errors.New("项目画风执行计划已失效，请重新生成执行计划")
-	}
+	input.Prompt = reconcileGenerationStylePrompt(input.Prompt, plan.Prompt, stylePrompt)
 	if expectedStatus == "blocked" {
-		return fmt.Errorf("项目画风与当前生成模型不兼容：%s", strings.Join(warnings, "；"))
-	}
-	if stylePrompt != "" && !strings.Contains(input.Prompt, stylePrompt) {
-		input.Prompt = strings.TrimSpace(input.Prompt) + "\n\n【项目画风执行规范】\n" + stylePrompt
+		return fmt.Errorf("当前图片模型无法完整执行项目画风：%s。请切换图片模型，或在项目设置中停用对应画风资产", strings.Join(warnings, "；"))
 	}
 	return nil
+}
+
+func reconcileGenerationStylePrompt(prompt string, previousStylePrompt string, currentStylePrompt string) string {
+	content := strings.TrimSpace(prompt)
+	previous := strings.TrimSpace(previousStylePrompt)
+	if previous != "" {
+		previousBlock := "【项目画风执行规范】\n" + previous
+		if strings.HasSuffix(content, previousBlock) {
+			content = strings.TrimSpace(strings.TrimSuffix(content, previousBlock))
+		}
+	}
+	current := strings.TrimSpace(currentStylePrompt)
+	if current == "" || strings.HasSuffix(content, "【项目画风执行规范】\n"+current) {
+		return content
+	}
+	return strings.TrimSpace(content + "\n\n【项目画风执行规范】\n" + current)
 }
 
 func (s *Service) taskProjectStyleProfile(userID string, canvasOrProjectID string) (string, string, bool, error) {
@@ -1093,6 +1252,7 @@ func runChatCompletionsTextTask(ctx context.Context, input canvasGenerationInput
 	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
 	}
+	messages = append(messages, validatedTextHistory(input.TextHistory)...)
 	userContent, err := textChatContent(input)
 	if err != nil {
 		return nil, err
@@ -1108,19 +1268,33 @@ func runChatCompletionsTextTask(ctx context.Context, input canvasGenerationInput
 
 func textResponseInput(input canvasGenerationInput) (interface{}, error) {
 	systemPrompt := strings.TrimSpace(input.Config.SystemPrompt)
-	if len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
+	if len(input.TextHistory) == 0 && len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
 		return withSystemPrompt(input.Config, input.Prompt), nil
 	}
-	messages := make([]map[string]interface{}, 0, 2)
+	messages := make([]map[string]interface{}, 0, len(input.TextHistory)+2)
 	if systemPrompt != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
 	}
+	messages = append(messages, validatedTextHistory(input.TextHistory)...)
 	content, err := textResponseContent(input)
 	if err != nil {
 		return nil, err
 	}
 	messages = append(messages, map[string]interface{}{"role": "user", "content": content})
 	return messages, nil
+}
+
+func validatedTextHistory(history []providerTextMessage) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(history))
+	for _, message := range history {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		content := strings.TrimSpace(message.Content)
+		if (role != "user" && role != "assistant") || content == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{"role": role, "content": content})
+	}
+	return result
 }
 
 func textResponseContent(input canvasGenerationInput) ([]map[string]interface{}, error) {
@@ -2272,7 +2446,7 @@ func validateGenerationInterface(mode string, interfaceType string) error {
 	allowed := map[string]map[string]bool{
 		"text":  {"chat-completion": true, "openai-response": true},
 		"image": {"openai-image": true, "gemini-image": true, "grok-image": true, "volcengine-ark-image": true, "volcengine-jimeng-image": true},
-		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "volcengine-ark-video": true, "volcengine-jimeng-video": true, "gemini-veo": true, "novita-video": true},
+		"video": {"newapi": true, "newapi-channel-1": true, "newapi-channel-2": true, "xai-video": true, "volcengine-ark-video": true, "volcengine-jimeng-video": true, "gemini-veo": true, "novita-video": true, "minimax-video": true},
 		"audio": {"openai-audio": true, "async-audio": true},
 	}
 	if allowed[mode] != nil && !allowed[mode][interfaceType] {
@@ -2515,6 +2689,12 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 
 func requestTextProvider(ctx context.Context, config providerConfig, path string, body map[string]interface{}, protocol string, stream bool) (string, error) {
 	if stream {
+		metadata, _ := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+		if protocol == "chat-completion" && metadata.BillingMode == "token" {
+			if err := ensureChatCompletionStreamUsage(body); err != nil {
+				return "", err
+			}
+		}
 		return postStreamingText(ctx, config, path, body, protocol)
 	}
 	var payload map[string]interface{}
@@ -2929,7 +3109,7 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
-		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data)}
+		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
 		return nil, "", httpErr
 	}
@@ -2938,6 +3118,20 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		_ = runtimeService.RecordChannelResult(req.Context(), channelID, false)
 	}
 	return data, mimeType, nil
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
 }
 
 func providerPollingDeadline(ctx context.Context) time.Time {
