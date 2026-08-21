@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-policy";
-import { canvasImageReferenceLimitError, resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
+import { assertCanvasImageReferenceLimit, canvasImageReferenceLimitError, resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { groupModelsByDisplayName, modelCompatibilityError, modelGroupReferenceLimits, resolveCompatibleModel } from "../src/lib/model-selection";
 import { defaultConfig, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
@@ -157,13 +157,19 @@ describe("画布连线能力", () => {
     });
 });
 
-describe("画布图片参考上限", () => {
-    test("超过当前图片模型参考图上限时返回可操作错误", () => {
-        const config = imagePolicyConfig(1);
+describe("图片参考图上限", () => {
+    test("超出当前模型上限时保留全部输入并返回明确错误", () => {
+        const config = policyConfig();
+        const modelCost = config.channels[0]?.modelCosts?.[0];
+        if (!modelCost?.capabilityConfig?.image) throw new Error("缺少图片能力配置");
+        modelCost.capabilityConfig.image.references.maxImages = 1;
         const references = [
-            { id: "image-a", name: "a.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" },
-            { id: "image-b", name: "b.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" },
+            { id: "image-a", name: "image-a.png", type: "image/png", dataUrl: "data:image/png;base64,YQ==" },
+            { id: "image-b", name: "image-b.png", type: "image/png", dataUrl: "data:image/png;base64,Yg==" },
         ];
-        expect(canvasImageReferenceLimitError(config, references)).toContain("最多支持 1 张参考图");
+
+        expect(canvasImageReferenceLimitError(config, references)).toContain("最多支持 1 张参考图，当前已连接 2 张");
+        expect(() => assertCanvasImageReferenceLimit(config, references)).toThrow("请移除多余连线后重试");
+        expect(references).toHaveLength(2);
     });
 });

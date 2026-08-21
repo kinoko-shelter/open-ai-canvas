@@ -3,6 +3,7 @@ import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { resolveVideoOperation } from "@/lib/model-selection";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -57,7 +58,7 @@ export async function runBackendGenerationTask({
     throwIfAborted(signal);
     const prepared = await prepareGenerationReferences({ referenceImages, referenceVideos, referenceAudios, mask });
     throwIfAborted(signal);
-    return createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages, referenceVideos, signal, metadata, onTaskUpdate }, prepared);
+    return createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, signal, metadata, onTaskUpdate }, prepared);
 }
 
 export async function runBackendGenerationTaskBatch(options: BackendGenerationTaskOptions & { count: number }) {
@@ -83,8 +84,10 @@ async function prepareGenerationReferences({ referenceImages = [], referenceVide
     return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask };
 }
 
-async function createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages = [], signal, metadata, onTaskUpdate }: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
-    const videoOperation = String(metadata?.videoEditOperation || (referenceImages.length ? "image_to_video" : "text_to_video"));
+async function createAndWaitGenerationTask({ projectId, aigcProjectId, mode, prompt, config, referenceImages = [], referenceVideos = [], referenceAudios = [], signal, metadata, onTaskUpdate }: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences) {
+    const inferredVideoOperation = resolveVideoOperation({ textCount: 0, imageCount: referenceImages.length, videoCount: referenceVideos.length, audioCount: referenceAudios.length, characterCount: 0 });
+    const hasReferenceMedia = referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0;
+    const videoOperation = String(metadata?.videoEditOperation || (mode === "video" && hasReferenceMedia && resolveModelRequestConfig(config, config.model).interfaceType === "minimax-video" ? "reference_to_video" : inferredVideoOperation));
     const task = await createGenerationTask({
         ...(projectId ? { projectId } : {}),
         ...(aigcProjectId ? { aigcProjectId } : {}),
