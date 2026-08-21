@@ -7,7 +7,7 @@ import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerat
 import { formatTaskKind, statusLabel } from "@/lib/generation-task-display";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
-import { formatModelName, getTaskCanvasContext, isTaskCancellable, isTaskFailed, statusDotClassName, taskAttentionReason, TaskBilling, TaskDate } from "./task-shared";
+import { formatModelName, getTaskCanvasContext, isTaskActive, isTaskCancellable, isTaskFailed, statusDotClassName, taskAttentionReason, TaskBilling, TaskDate } from "./task-shared";
 
 export function TaskListRow({
     task,
@@ -37,7 +37,7 @@ export function TaskListRow({
     onPreview: () => void;
 }) {
     const context = getTaskCanvasContext(task, canvasById, projectNameById);
-    const isActive = task.status === "queued" || task.status === "running";
+    const isActive = isTaskActive(task);
     const isCancellable = isTaskCancellable(task);
     const isFailed = isTaskFailed(task);
     return (
