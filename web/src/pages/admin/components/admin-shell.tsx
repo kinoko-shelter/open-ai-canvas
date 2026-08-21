@@ -102,12 +102,12 @@ export function AdminShell() {
                 <aside className={cn("app-workspace-sidebar admin-sidebar hidden shrink-0 flex-col overflow-hidden lg:flex", collapsed ? "w-[60px]" : "w-[212px]")}>
                     <div className={cn("flex h-13 shrink-0 items-center", collapsed ? "justify-center" : "gap-2 px-3")}>
                         {!collapsed ? (
-                            <Link to="/" className="app-workspace-brand-link flex min-w-0 flex-1 items-center gap-2" title="故事">
+                            <Link to="/" className="app-workspace-brand-link flex min-w-0 flex-1 items-center gap-2" title="故事创作">
                                 <span className="grid size-7 shrink-0 place-items-center rounded-md bg-foreground text-background">
                                     <InfinityIcon className="size-4" />
                                 </span>
                                 <span className="min-w-0">
-                                    <span className="block truncate text-[var(--fs-body)] font-semibold">故事</span>
+                                    <span className="block truncate text-[var(--fs-body)] font-semibold">故事创作</span>
                                     <span className="block truncate text-[var(--fs-micro)] text-foreground/42">管理后台</span>
                                 </span>
                             </Link>
