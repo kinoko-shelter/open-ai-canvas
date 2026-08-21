@@ -102,6 +102,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     isRelated,
     isFocusRelated,
     isConnectionTarget,
+    forceInputVisible = false,
     showImageInfo,
     reduceMediaEffects = false,
     readOnly = false,
@@ -146,6 +147,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
     const hasMediaContent = hasImageContent || hasVideoContent || hasAudioContent;
+    const hasReplaceAction = Boolean(onReplaceMedia) && [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].includes(data.type);
     const isGeneratingNode = data.type !== CanvasNodeType.Frame && data.metadata?.status === "loading";
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
@@ -521,7 +523,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </> : null}
             </CometCard>
 
-            {!readOnly && data.type !== CanvasNodeType.Script && (hovered || forceInputVisible) ? <ConnectionSideRail side="left" scale={scale} visible={hovered || forceInputVisible} theme={theme} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "target", undefined, anchorRatio)} /> : null}
+            {!readOnly && data.type !== CanvasNodeType.Script && (hovered || forceInputVisible) ? <ConnectionSideRail side="left" scale={scale} theme={theme} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "target", undefined, anchorRatio)} /> : null}
             {!readOnly && data.type !== CanvasNodeType.Script && data.type !== CanvasNodeType.Config && hovered ? <ConnectionSideRail side="right" scale={scale} theme={theme} onPointerDown={(event, anchorRatio) => onConnectStart(event, data.id, "source", undefined, anchorRatio)} /> : null}
 
         </div>

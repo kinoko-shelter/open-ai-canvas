@@ -182,7 +182,7 @@ export default function CreatePage() {
             textCount: hasPrompt ? 1 : 0,
             imageCount: attachments.filter(isImageAttachment).length,
             videoCount: attachments.filter(isVideoAttachment).length,
-            audioCount: attachments.filter((attachment) => creationAttachmentKind(attachment) === "audio").length,
+            audioCount: 0,
             characterCount: 0,
         },
         videoSeconds: seconds,
@@ -596,6 +596,10 @@ export default function CreatePage() {
                     content: item.role === "user" ? buildTextMessageContent(item) : item.content,
                 }));
                 if (logicalModelIDForConfig(requestConfig)) {
+                    const textHistory = history.map((item) => ({
+                        ...item,
+                        content: typeof item.content === "string" ? item.content : item.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"),
+                    }));
                     const result = await runBackendGenerationTask({
                         mode: "text",
                         aigcProjectId: taskAigcProject.projectId,
@@ -603,7 +607,7 @@ export default function CreatePage() {
                         config: requestConfig,
                         referenceImages,
                         referenceVideos,
-                        textHistory: history,
+                        textHistory,
                         signal: controller.signal,
                         metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, ...aigcProjectMetadata, ...referenceMetadata },
                         onTaskUpdate: bindTask,

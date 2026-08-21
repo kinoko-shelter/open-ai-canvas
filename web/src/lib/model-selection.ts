@@ -54,7 +54,6 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     const input = requirements?.input;
     if (!capability || !input) return "";
     const visualInputCount = input.imageCount + input.characterCount;
-    const visualInputCount = input.imageCount + input.characterCount;
     const channel = resolveModelChannel(config, model);
     const logicalCost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     const logicalSpecs = logicalCost?.logicalCapabilityProfiles?.length ? logicalCost.logicalCapabilityProfiles : logicalCost?.logicalCapabilitySpec ? [logicalCost.logicalCapabilitySpec] : [];

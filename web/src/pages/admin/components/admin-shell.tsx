@@ -88,7 +88,6 @@ export function AdminShell() {
     const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(WORKSPACE_SIDEBAR_STORAGE_KEY) === "1");
     const canManageTeamCredits = useUserStore((state) => state.canImpersonateUsers);
     const dark = useThemeStore((state) => state.theme === "dark");
-    const canManageTeamCredits = useUserStore((state) => state.canImpersonateUsers);
     const toggleCollapsed = () => {
         setCollapsed((current) => {
             const next = !current;

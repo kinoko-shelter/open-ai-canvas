@@ -263,7 +263,6 @@ export type AdminOSSSetting = {
     provider: "aliyun" | "tencent" | "qiniu";
     region: string;
     endpoint: string;
-    cdnBaseUrl: string;
     bucket: string;
     accessKeyId: string;
     accessKeySecret?: string;

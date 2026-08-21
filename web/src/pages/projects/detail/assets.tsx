@@ -5,6 +5,7 @@ import { Box, Check, ChevronDown, Download, FileText, FolderOpen, FolderPlus, Im
 
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
+import { CachedResourceImage } from "@/components/cached-resource-image";
 import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/asset-library-card";
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { CanvasFolderPreview } from "@/components/canvas/canvas-folder-preview";

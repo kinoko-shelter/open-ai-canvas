@@ -13,7 +13,7 @@ import { modelCompatibilityError, modelGroupReferenceLimits, modelRequestOptions
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -283,7 +283,7 @@ function generationModelRequirements(
     mode: CanvasNodeGenerationMode,
     input: Pick<Awaited<ReturnType<typeof hydrateNodeGenerationContext>>, "textCount" | "imageCount" | "videoCount" | "audioCount" | "characterReferences">,
     sourceNode: CanvasNodeData | undefined,
-    config: ReturnType<typeof useEffectiveConfig>,
+    config: AiConfig,
     includeCharacterMinimum = false,
 ): ModelRequirements {
     return {

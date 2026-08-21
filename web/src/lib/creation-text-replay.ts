@@ -32,7 +32,7 @@ export function createTextReplayPublisher(config: AiConfig, prompt: string, opti
     const FLUSH_THRESHOLD = 2048;
     const enqueueDelta = (chunk: string) => {
         if (!taskId || !chunk.trim()) return;
-        writeChain = writeChain.then(() => appendTaskTextDelta(taskId!, chunk)).catch(() => undefined);
+        writeChain = writeChain.then(async () => { await appendTaskTextDelta(taskId!, chunk); }).catch(() => undefined);
     };
 
     const flush = (force = false) => {

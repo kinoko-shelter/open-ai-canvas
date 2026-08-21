@@ -25,6 +25,7 @@ export type ModelChannel = {
     headers?: ChannelHeader[];
     apiFormat: ApiCallFormat;
     interfaceType?: ChannelInterfaceType;
+    allowLocalChannel?: boolean;
     models: string[];
     scope?: "system" | "user";
     enabled?: boolean;
@@ -472,6 +473,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" ? "gemini" as const : "openai" as const) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",
+        allowLocalChannel: channel.allowLocalChannel === true,
     };
 }
 

@@ -115,6 +115,10 @@ export function useCanvasRenderModel({
         const viewTop = -viewport.y / viewport.k - padding;
         const viewRight = viewLeft + viewportSize.width / viewport.k + padding * 2;
         const viewBottom = viewTop + viewportSize.height / viewport.k + padding * 2;
+        return { left: viewLeft, top: viewTop, right: viewRight, bottom: viewBottom };
+    }, [reduceMediaEffects, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
+
+    const visibleNodes = useMemo(() => {
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
         nodes.forEach((node) => {

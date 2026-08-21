@@ -39,7 +39,6 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
     const updateDuration = (patch: Partial<VideoCapabilityConfig["duration"]>) => update({ duration: { ...profile.duration, ...patch } });
     const durationValues = (profile.duration.values || []).join(",");
     const resolutionOptions = Array.from(new Set([...VIDEO_RESOLUTION_CAPABILITY_OPTIONS, ...profile.resolutions]));
-    const resolutionOptions = Array.from(new Set([...VIDEO_RESOLUTION_CAPABILITY_OPTIONS, ...profile.resolutions]));
 
     return (
         <div className="admin-capability-editor space-y-3 rounded-md bg-muted/10 p-3">
