@@ -553,7 +553,7 @@ func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map
 	nextConfig := make(map[string]any, len(config)+2)
 	for key, value := range config {
 		switch key {
-		case "channelId", "apiFormat", "interfaceType", "baseUrl", "allowLocalChannel", "apiKey", "secretKey", "headers", "model", "capabilityConfig":
+		case "channelId", "channelModelKey", "apiFormat", "interfaceType", "baseUrl", "allowLocalChannel", "apiKey", "secretKey", "headers", "model", "capabilityConfig":
 			continue
 		default:
 			nextConfig[key] = value
@@ -576,6 +576,7 @@ func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map
 	}
 	nextConfig["channelId"] = routed.ChannelModel.ChannelID
 	nextConfig["model"] = routed.ChannelModel.ModelKey
+	nextConfig["channelModelKey"] = routed.ChannelModel.ModelKey
 	input["config"] = nextConfig
 	return input
 }

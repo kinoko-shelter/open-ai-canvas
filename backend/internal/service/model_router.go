@@ -64,7 +64,8 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 	if options, ok := input["capabilityOptions"].(map[string]any); ok {
 		explicitOptions = true
 		for key, value := range options {
-			intent.Options[canonicalCapabilityOptionName(key)] = value
+			name := canonicalCapabilityOptionName(key)
+			intent.Options[name] = normalizeModelRequestOption(name, value)
 		}
 	}
 	if config, ok := input["config"].(map[string]any); ok && !explicitOptions {
@@ -75,12 +76,36 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 			default:
 				canonical := canonicalCapabilityOptionName(key)
 				if isCapabilityOptionFor(capability, canonical) && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
-					intent.Options[canonical] = value
+					intent.Options[canonical] = normalizeModelRequestOption(canonical, value)
 				}
 			}
 		}
 	}
 	return intent
+}
+
+func normalizeModelRequestOption(name string, value any) any {
+	if canonicalCapabilityOptionName(name) != "vquality" {
+		return value
+	}
+	resolution, ok := value.(string)
+	if !ok {
+		return value
+	}
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	case "low", "480", "480p":
+		return "480p"
+	case "720", "720p":
+		return "720p"
+	case "1080", "1080p":
+		return "1080p"
+	case "2k", "1440", "1440p":
+		return "1440p"
+	case "4k", "2160", "2160p":
+		return "2160p"
+	default:
+		return value
+	}
 }
 
 type CapabilityMatch struct {

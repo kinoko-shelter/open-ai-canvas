@@ -16,6 +16,7 @@ import (
 
 type ChannelModelRequest struct {
 	ModelKey                     string                 `json:"modelKey"`
+	ProviderModelKey             string                 `json:"providerModelKey"`
 	DisplayName                  string                 `json:"displayName"`
 	Capability                   string                 `json:"capability"`
 	Protocol                     string                 `json:"protocol"`
@@ -78,7 +79,7 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 		if decodeErr != nil || config == nil {
 			continue
 		}
-		normalized, normalizeErr := NormalizeModelCapabilityConfig(items[index].Capability, string(items[index].Protocol), items[index].ModelKey, channel.APIFormat, config)
+		normalized, normalizeErr := NormalizeModelCapabilityConfig(items[index].Capability, string(items[index].Protocol), firstNonEmpty(items[index].ProviderModelKey, items[index].ModelKey), channel.APIFormat, config)
 		if normalizeErr != nil || normalized == nil {
 			continue
 		}
@@ -151,7 +152,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if err != nil {
 		return nil, err
 	}
-	modelKey, capability, protocol, err := normalizeChannelModelContract(channel, req)
+	modelKey, providerModelKey, capability, protocol, err := normalizeChannelModelContract(channel, req)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +165,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		return nil, BadAuthRequest("该渠道已存在模型 " + modelKey + "，请直接编辑已有模型")
 	}
 	if capability == "text" || capability == "image" || capability == "video" {
-		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
+		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), providerModelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
 			return nil, err
 		}
 	}
@@ -207,6 +208,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		item.PriceVersion++
 	}
 	item.ModelKey = modelKey
+	item.ProviderModelKey = providerModelKey
 	item.DisplayName = strings.TrimSpace(req.DisplayName)
 	if item.DisplayName == "" {
 		item.DisplayName = modelKey
@@ -220,7 +222,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	item.CachedTokenPriceMicrocredits = req.CachedTokenPriceMicrocredits
 	item.PriceConfigured = req.PriceConfigured
 	if capability == "text" || capability == "image" || capability == "video" {
-		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig)
+		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), providerModelKey, channel.APIFormat, req.CapabilityConfig)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
@@ -262,12 +264,12 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 	if err != nil {
 		return nil, err
 	}
-	modelKey, capability, protocol, err := normalizeChannelModelContract(channel, req)
+	modelKey, providerModelKey, capability, protocol, err := normalizeChannelModelContract(channel, req)
 	if err != nil {
 		return nil, err
 	}
 	if capability == "text" || capability == "image" || capability == "video" {
-		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
+		if _, err := NormalizeModelCapabilityConfig(capability, string(protocol), providerModelKey, channel.APIFormat, req.CapabilityConfig); err != nil {
 			return nil, err
 		}
 	}
@@ -294,7 +296,7 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 	imageSize, imageQuality := "", ""
 	var imageProfile *ImageCapabilityConfig
 	if capability == "image" {
-		profile, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), modelKey, channel.APIFormat, req.CapabilityConfig)
+		profile, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), providerModelKey, channel.APIFormat, req.CapabilityConfig)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
@@ -312,7 +314,8 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 			APIKey:             channel.APIKey,
 			SecretKey:          channel.SecretKey,
 			Headers:            headers,
-			Model:              modelKey,
+			Model:              providerModelKey,
+			ChannelModelKey:    modelKey,
 			Size:               map[string]string{"image": imageSize, "video": "16:9"}[capability],
 			Quality:            imageQuality,
 			Count:              "1",
@@ -374,26 +377,30 @@ func imageTestDefaults(profile *ImageCapabilityConfig) (string, string) {
 	return size, quality
 }
 
-func normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, model.ChannelInterfaceType, error) {
+func normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
 	modelKey := strings.TrimPrefix(strings.TrimSpace(req.ModelKey), "models/")
 	if modelKey == "" {
-		return "", "", "", BadAuthRequest("请填写模型标识")
+		return "", "", "", "", BadAuthRequest("请填写模型标识")
+	}
+	providerModelKey := strings.TrimPrefix(strings.TrimSpace(req.ProviderModelKey), "models/")
+	if providerModelKey == "" {
+		providerModelKey = modelKey
 	}
 	capability := normalizeCapability(req.Capability)
 	if capability == "" {
-		return "", "", "", BadAuthRequest("请选择模型能力")
+		return "", "", "", "", BadAuthRequest("请选择模型能力")
 	}
 	protocol := model.ChannelInterfaceType(strings.TrimSpace(req.Protocol))
 	if !validChannelInterfaceType(protocol) {
-		return "", "", "", BadAuthRequest("请选择有效的模型请求协议")
+		return "", "", "", "", BadAuthRequest("请选择有效的模型请求协议")
 	}
 	if expected := capabilityForProtocol(protocol); expected != "" && expected != capability {
-		return "", "", "", BadAuthRequest("模型能力与请求协议不匹配")
+		return "", "", "", "", BadAuthRequest("模型能力与请求协议不匹配")
 	}
 	if (protocol == model.ChannelInterfaceVolcengineJiMengImage || protocol == model.ChannelInterfaceVolcengineJiMengVideo) && (strings.TrimSpace(channel.APIKey) == "" || strings.TrimSpace(channel.SecretKey) == "") {
-		return "", "", "", BadAuthRequest("即梦官方协议需要先在渠道中配置 Access Key 和 Secret Key")
+		return "", "", "", "", BadAuthRequest("即梦官方协议需要先在渠道中配置 Access Key 和 Secret Key")
 	}
-	return modelKey, capability, protocol, nil
+	return modelKey, providerModelKey, capability, protocol, nil
 }
 
 func (s *Service) DeleteAdminChannelModel(actor *model.User, channelID string, id string) error {

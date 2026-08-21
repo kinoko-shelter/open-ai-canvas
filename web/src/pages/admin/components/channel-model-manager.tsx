@@ -18,6 +18,7 @@ type EditableCapability = ModelCapabilityChoice;
 
 type FormValues = {
     modelKey: string;
+    providerModelKey?: string;
     displayName?: string;
     capability: EditableCapability;
     protocol: ModelProtocol;
@@ -49,6 +50,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const modelCapability = Form.useWatch("capability", form);
     const modelProtocol = Form.useWatch("protocol", form);
     const modelKey = Form.useWatch("modelKey", form) || "";
+    const providerModelKey = Form.useWatch("providerModelKey", form) || "";
 
     const reload = async () => {
         if (!channel) return;
@@ -93,6 +95,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         setEditing(null);
         form.setFieldsValue({
             modelKey: "",
+            providerModelKey: "",
             displayName: "",
             capability: "text",
             protocol: "chat-completion",
@@ -111,6 +114,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         setEditing(item);
         form.setFieldsValue({
             modelKey: item.modelKey,
+            providerModelKey: item.providerModelKey || item.modelKey,
             displayName: item.displayName,
             capability: item.capability || undefined,
             protocol: item.protocol,
@@ -121,7 +125,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000,
             enabled: item.enabled,
             capabilityConfig: item.capability === "text" || item.capability === "image" || item.capability === "video"
-                ? normalizeModelCapabilityConfig(item.capabilityConfig, item.protocol, item.modelKey, channel.apiFormat)
+                ? normalizeModelCapabilityConfig(item.capabilityConfig, item.protocol, item.providerModelKey || item.modelKey, channel.apiFormat)
                 : undefined,
         });
         setEditorOpen(true);
@@ -129,13 +133,15 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const save = async () => {
         const values = await form.validateFields();
+        const upstreamModel = values.providerModelKey?.trim() || values.modelKey.trim();
         const capabilityConfig = values.capability === "text" || values.capability === "image" || values.capability === "video"
-            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, values.modelKey.trim(), channel.apiFormat)
+            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, upstreamModel, channel.apiFormat)
             : undefined;
         setSaving(true);
         try {
             const payload = {
                 modelKey: values.modelKey.trim(),
+                providerModelKey: upstreamModel,
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
                 capability: values.capability,
                 protocol: values.protocol,
@@ -163,14 +169,16 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     };
 
     const testModel = async () => {
-        const values = await form.validateFields(["modelKey", "capability", "protocol", ...(modelCapability === "text" || modelCapability === "image" || modelCapability === "video" ? ["capabilityConfig"] : [])]);
+        const values = await form.validateFields(["modelKey", "providerModelKey", "capability", "protocol", ...(modelCapability === "text" || modelCapability === "image" || modelCapability === "video" ? ["capabilityConfig"] : [])]);
+        const upstreamModel = values.providerModelKey?.trim() || values.modelKey.trim();
         const capabilityConfig = values.capability === "text" || values.capability === "image" || values.capability === "video"
-            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, values.modelKey.trim(), channel.apiFormat)
+            ? normalizeModelCapabilityConfig(values.capabilityConfig, values.protocol, upstreamModel, channel.apiFormat)
             : undefined;
         setTesting(true);
         try {
             const result = await testAdminChannelModel(channel.id, {
                 modelKey: values.modelKey.trim(),
+                providerModelKey: upstreamModel,
                 capability: values.capability,
                 protocol: values.protocol,
                 capabilityConfig,
@@ -228,6 +236,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <div className="min-w-0">
                         <div className="truncate font-medium">{item.displayName || item.modelKey}</div>
                         <div className="admin-monospace truncate text-xs text-foreground/45">{item.modelKey}</div>
+                        {item.providerModelKey && item.providerModelKey !== item.modelKey ? <div className="admin-monospace truncate text-xs text-foreground/35">上游：{item.providerModelKey}</div> : null}
                     </div>
                 </div>
             ),
@@ -268,7 +277,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
     const filteredItems = items.filter((item) => {
         const query = keyword.trim().toLowerCase();
-        if (query && !`${item.modelKey} ${item.displayName}`.toLowerCase().includes(query)) return false;
+        if (query && !`${item.modelKey} ${item.providerModelKey} ${item.displayName}`.toLowerCase().includes(query)) return false;
         if (capability !== "all" && item.capability !== capability) return false;
         if (status === "enabled" && !item.enabled) return false;
         if (status === "disabled" && item.enabled) return false;
@@ -373,16 +382,19 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                         <div className="mb-4">
                             <h2 className="text-sm font-semibold">模型身份</h2>
                         </div>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <Form.Item name="modelKey" label="模型标识" rules={[{ required: true, message: "请输入模型标识" }]}>
+                        <div className="grid gap-4 md:grid-cols-3">
+                            <Form.Item name="modelKey" label="产品模型标识" rules={[{ required: true, message: "请输入产品模型标识" }]}>
                                 <Input
                                     prefix={
                                         <span className="grid size-6 place-items-center">
                                             <ModelIcon model={modelKey} />
                                         </span>
                                     }
-                                    placeholder="例如：deepseek-chat、gpt-5、glm-4.5"
+                                    placeholder="例如：seedance-2-5-720p"
                                 />
+                            </Form.Item>
+                            <Form.Item name="providerModelKey" label="上游模型 ID">
+                                <Input placeholder="留空则使用产品模型标识" />
                             </Form.Item>
                             <Form.Item name="displayName" label="后台显示名称">
                                 <Input placeholder="不填则使用模型标识" />
@@ -404,7 +416,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                         </div>
                         {modelCapability === "text" || modelCapability === "image" || modelCapability === "video" ? (
                             <Form.Item name="capabilityConfig" rules={[{ required: true, message: `请配置${capabilityLabel(modelCapability)}能力参数` }]}>
-                                <ModelCapabilityEditor capability={modelCapability} model={modelKey} protocol={form.getFieldValue("protocol")} />
+                                <ModelCapabilityEditor capability={modelCapability} model={providerModelKey || modelKey} protocol={form.getFieldValue("protocol")} />
                             </Form.Item>
                         ) : null}
                     </section>
