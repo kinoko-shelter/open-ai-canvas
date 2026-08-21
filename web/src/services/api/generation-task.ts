@@ -4,9 +4,11 @@ import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from
 import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { resolveVideoOperation } from "@/lib/model-selection";
-import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+
+export { logicalModelIDForConfig };
 
 export type BackendGenerationMode = "text" | "image" | "video" | "audio";
 
@@ -208,11 +210,6 @@ export function backendProviderConfig(config: AiConfig) {
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
         systemPrompt: "",
     };
-}
-
-export function logicalModelIDForConfig(config: AiConfig) {
-    const channel = resolveModelChannel(config, config.model);
-    return channel.modelCosts?.find((item) => item.model === modelOptionName(config.model))?.logicalModelId || "";
 }
 
 function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode) {
