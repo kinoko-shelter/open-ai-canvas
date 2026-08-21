@@ -234,6 +234,20 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = ["1080p"];
         video.defaultResolution = "1080p";
     }
+    if (protocol === "minimax-video") {
+        video.references.maxVideos = 3;
+        video.references.maxAudios = 3;
+        video.references.maxVideoBytes = 50 * 1024 * 1024;
+        video.references.maxAudioBytes = 15 * 1024 * 1024;
+        video.references.maxVideoDurationSeconds = 15;
+        video.references.maxAudioDurationSeconds = 15;
+        video.duration = { selection: "enum", values: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], default: 5 };
+        video.ratios = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+        video.resolutions = ["768P", "2K"];
+        video.defaultResolution = "768P";
+        video.watermark = { supported: true, default: false };
+        video.operations.push("reference_to_video");
+    }
     const fixedGrokVideoResolution = grokVideoResolutionFromModel(model);
     if (fixedGrokVideoResolution) {
         video.resolutions = [fixedGrokVideoResolution];
