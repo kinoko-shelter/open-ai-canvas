@@ -74,6 +74,12 @@ func main() {
 	}
 	svc := service.New(repo, os.Getenv("CANVAS_BACKEND_DATA_DIR"))
 	for _, plan := range plans {
+		// 已规范化的家族只参与 dry-run 报告，不能在每次迁移时重发 revision，
+		// 否则会无意义地改动已经稳定的前台能力和路由快照。
+		if plan.alreadySynced && !plan.creatingLogical && len(plan.legacyLogicalModelIDs) == 0 && len(plan.legacyChannelModelIDs) == 0 {
+			log.Printf("跳过已规范化模型家族 %s", plan.logicalModel.Code)
+			continue
+		}
 		if !plan.alreadySynced {
 			if err := repo.SaveChannelModelWithPriceTiers(&plan.channelModel, plan.priceTiers); err != nil {
 				log.Fatalf("保存 %s 价格档失败：%v", plan.logicalModel.Code, err)
