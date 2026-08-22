@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { App, Button, Dropdown, Input, Modal, Segmented, Tag } from "antd";
-import { Ellipsis, Lock, Plus, Settings2, Unlock } from "lucide-react";
+import { CloudUpload, Ellipsis, LoaderCircle, Lock, Plus, Settings2, Unlock } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
@@ -30,6 +30,8 @@ type CanvasNodeToolbarProps = {
     onAnnotate: (node: CanvasNodeData) => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
+    onUploadToArkPrivateAsset: (node: CanvasNodeData) => void;
+    uploadingToArkPrivateAsset: boolean;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
@@ -97,6 +99,8 @@ export function CanvasNodeToolbar({
     onAnnotate,
     onGenerateImage,
     onUpload,
+    onUploadToArkPrivateAsset,
+    uploadingToArkPrivateAsset,
     onDownload,
     onSaveAsset,
     onMaskEdit,
@@ -315,6 +319,12 @@ export function CanvasNodeToolbar({
         tool.onClick();
     };
 
+    const uploadToArkPrivateAsset = () => {
+        imageToolMenuOpenRef.current = false;
+        setImageToolMenuOpen(false);
+        onUploadToArkPrivateAsset(activeNode);
+    };
+
     const handleImageToolMenuOpenChange = (open: boolean) => {
         imageToolMenuOpenRef.current = open;
         setImageToolMenuOpen(open);
@@ -377,6 +387,14 @@ export function CanvasNodeToolbar({
                                 items: [
                                     ...temporaryImageToolbarTools.map((tool) => ({ key: tool.id, icon: tool.icon, label: tool.label, danger: tool.danger, onClick: () => runTemporaryImageTool(tool) })),
                                     ...(temporaryImageToolbarTools.length ? [{ type: "divider" as const }] : []),
+                                    {
+                                        key: "upload-to-ark-private-asset",
+                                        icon: uploadingToArkPrivateAsset ? <LoaderCircle className="size-3.5 animate-spin" /> : <CloudUpload className="size-3.5" />,
+                                        label: uploadingToArkPrivateAsset ? "正在上传到方舟素材库" : "上传到方舟素材库",
+                                        disabled: uploadingToArkPrivateAsset,
+                                        onClick: uploadToArkPrivateAsset,
+                                    },
+                                    { type: "divider" as const },
                                     { key: "manage-image-quick-tools", icon: <Settings2 className="size-3.5" />, label: "管理快捷工具", onClick: openImageToolSettings },
                                 ],
                             }}
