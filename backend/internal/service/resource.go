@@ -913,9 +913,8 @@ type ossObjectStream struct {
 
 func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
 	setting = normalizeOSSSetting(setting)
-	if setting.CDNBaseURL != "" {
-		return getOSSObjectRangeViaCDN(setting, objectKey, rangeHeader)
-	}
+	// 服务端读取必须使用存储源站的凭据。CDN 仅用于浏览器分发，私有 CDN
+	// 会拒绝这里的无签名请求，从而让生成任务在调用模型前失败。
 	if setting.Provider == tencentCOSProvider {
 		return getCOSObjectRange(setting, objectKey, rangeHeader)
 	}
@@ -1104,31 +1103,6 @@ func getQiniuObjectRange(setting ossSettingValue, objectKey string, rangeHeader 
 		defer resp.Body.Close()
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("七牛云 Kodo 读取失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
-	}
-	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
-}
-
-func getOSSObjectRangeViaCDN(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
-	signedURL, err := ossCDNObjectURL(setting.CDNBaseURL, objectKey)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodGet, signedURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-	ApplyDefaultOutboundHeaders(req)
-	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("对象存储 CDN 读取失败：%w", err)
-	}
-	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
-		defer resp.Body.Close()
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("对象存储 CDN 读取失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
 	return &ossObjectStream{body: resp.Body, statusCode: resp.StatusCode, contentLength: resp.ContentLength, contentRange: resp.Header.Get("Content-Range"), acceptRanges: firstNonEmpty(resp.Header.Get("Accept-Ranges"), "bytes")}, nil
 }

@@ -183,14 +183,14 @@ func TestGetOSSObjectRangeSupportsTencentCOS(t *testing.T) {
 	}
 }
 
-func TestGetOSSObjectRangeUsesTencentCOSCDNBaseURL(t *testing.T) {
+func TestGetOSSObjectRangeUsesTencentCOSOriginWhenCDNIsConfigured(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Range") != "bytes=0-3" {
 			t.Errorf("Range = %q", r.Header.Get("Range"))
 		}
-		if r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
-			t.Errorf("Tencent CDN request should not carry COS authentication: header %q, query %q", r.Header.Get("Authorization"), r.URL.RawQuery)
+		if !strings.Contains(r.Header.Get("Authorization"), "q-sign-algorithm=sha1") {
+			t.Errorf("Tencent origin request is missing COS authentication: %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Accept-Ranges", "bytes")
 		w.Header().Set("Content-Range", "bytes 0-3/7")
@@ -200,7 +200,7 @@ func TestGetOSSObjectRangeUsesTencentCOSCDNBaseURL(t *testing.T) {
 	defer server.Close()
 
 	stream, err := getOSSObjectRange(ossSettingValue{
-		Provider: tencentCOSProvider, Endpoint: "https://cos.ap-guangzhou.myqcloud.com", CDNBaseURL: server.URL,
+		Provider: tencentCOSProvider, Endpoint: server.URL, CDNBaseURL: "https://media.example.com",
 		Bucket: "private-bucket-1250000000", AccessKeyID: "secret-id", AccessKeySecret: "secret-key",
 	}, "users/u-1/image/test.png", "bytes=0-3")
 	if err != nil {
@@ -216,14 +216,14 @@ func TestGetOSSObjectRangeUsesTencentCOSCDNBaseURL(t *testing.T) {
 	}
 }
 
-func TestGetOSSObjectRangeUsesAliyunCDNBaseURLWithoutOSSSignature(t *testing.T) {
+func TestGetOSSObjectRangeUsesAliyunOriginWhenCDNIsConfigured(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Range") != "bytes=0-3" {
 			t.Errorf("Range = %q", r.Header.Get("Range"))
 		}
-		if r.Header.Get("Authorization") != "" || r.URL.RawQuery != "" {
-			t.Errorf("Aliyun CDN request should not carry OSS authentication: header %q, query %q", r.Header.Get("Authorization"), r.URL.RawQuery)
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "OSS access-id:") {
+			t.Errorf("Aliyun origin request is missing OSS authentication: %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Accept-Ranges", "bytes")
 		w.Header().Set("Content-Range", "bytes 0-3/7")
@@ -233,7 +233,7 @@ func TestGetOSSObjectRangeUsesAliyunCDNBaseURLWithoutOSSSignature(t *testing.T) 
 	defer server.Close()
 
 	stream, err := getOSSObjectRange(ossSettingValue{
-		Provider: aliyunOSSProvider, Endpoint: "https://oss-cn-test.aliyuncs.com", CDNBaseURL: server.URL,
+		Provider: aliyunOSSProvider, Endpoint: server.URL, CDNBaseURL: "https://media.example.com",
 		Bucket: "private-bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value",
 	}, "users/u-1/image/test.png", "bytes=0-3")
 	if err != nil {

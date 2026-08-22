@@ -24,6 +24,7 @@ export function generationFailureMetadata(error: unknown, prompt: string): Gener
 export function generationErrorMessage(error: unknown) {
     const raw = rawGenerationError(error);
     if (isContentModerationError(raw)) return CONTENT_MODERATION_MESSAGE;
+    if (isReferenceResourceReadFailure(raw)) return "读取参考素材失败，请确认素材仍可访问后重试。";
 
     const providerMessage = extractStructuredProviderMessage(raw) || extractWrappedProviderMessage(raw);
     const displayMessage = providerMessage || raw;
@@ -107,6 +108,10 @@ function providerPayloadMessage(payload: unknown): string {
 
 function isNetworkFailure(value: string) {
     return /\b(?:dial tcp|connection refused|connection reset|no such host|i\/o timeout|context deadline exceeded|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout)\b/i.test(value);
+}
+
+function isReferenceResourceReadFailure(value: string) {
+    return /读取任务参考资源失败|对象存储 (?:CDN )?读取失败|OSS 读取失败|COS 读取失败|七牛云 Kodo 读取失败/.test(value);
 }
 
 function hasHttpStatus(value: string, ...statuses: number[]) {
