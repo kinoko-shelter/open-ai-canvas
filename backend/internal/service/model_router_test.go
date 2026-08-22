@@ -12,3 +12,13 @@ func TestModelRequestIntentNormalizesVideoResolution(t *testing.T) {
 		t.Fatalf("vquality = %#v, want 480p", got)
 	}
 }
+
+func TestNormalizeLogicalModelIntentNormalizesVideoResolution(t *testing.T) {
+	intent := normalizeLogicalModelIntent(ModelRequestIntent{
+		Capability: "video",
+		Options:    map[string]any{"vquality": "720", "videoSeconds": 6},
+	})
+	if got := intent.Options["vquality"]; got != "720p" {
+		t.Fatalf("vquality = %#v, want 720p", got)
+	}
+}

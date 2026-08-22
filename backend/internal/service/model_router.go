@@ -84,6 +84,24 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 	return intent
 }
 
+// 直接调用逻辑模型 API 也必须使用与任务创建相同的规范参数，避免 "720" 无法命中 "720p" 规格。
+func normalizeLogicalModelIntent(intent ModelRequestIntent) ModelRequestIntent {
+	normalized := ModelRequestIntent{
+		Capability: normalizeCapability(intent.Capability),
+		Operation:  normalizeCapabilityValue(intent.Operation),
+		Inputs:     make(map[string]int, len(intent.Inputs)),
+		Options:    make(map[string]any, len(intent.Options)),
+	}
+	for name, count := range intent.Inputs {
+		normalized.Inputs[normalizeCapabilityValue(name)] = count
+	}
+	for name, value := range intent.Options {
+		canonical := canonicalCapabilityOptionName(name)
+		normalized.Options[canonical] = normalizeModelRequestOption(canonical, value)
+	}
+	return normalized
+}
+
 func normalizeModelRequestOption(name string, value any) any {
 	if canonicalCapabilityOptionName(name) != "vquality" {
 		return value
@@ -585,6 +603,7 @@ func (s *Service) loadRouteCatalog() (*routeCatalogSnapshot, error) {
 }
 
 func (s *Service) ResolveLogicalModel(logicalModelID string, intent ModelRequestIntent) (*RoutedModel, error) {
+	intent = normalizeLogicalModelIntent(intent)
 	snapshot, err := s.routeCatalogSnapshot()
 	if err != nil {
 		return nil, err

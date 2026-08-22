@@ -140,8 +140,8 @@ func (s *Service) PublicLogicalModels(intent *ModelRequestIntent) ([]PublicLogic
 		coverageValid := logicalModelCapabilityCovered(cached.ProductSpec, structuralSpecs)
 		available := coverageValid && hasHealthyCachedRoute(s, cached.Routes)
 		if intent != nil {
-			resolvedIntent := *intent
-			resolvedIntent.Options = mergeIntentDefaults(intent.Options, cached.Defaults)
+			resolvedIntent := normalizeLogicalModelIntent(*intent)
+			resolvedIntent.Options = mergeIntentDefaults(resolvedIntent.Options, cached.Defaults)
 			productMatch := MatchCapability(cached.ProductSpec, resolvedIntent)
 			if !productMatch.Matched {
 				continue
@@ -873,6 +873,7 @@ func (s *Service) SimulateLogicalModelRoute(actor *model.User, id string, intent
 	if !ok {
 		return nil, BadAuthRequest("前台模型未启用或尚未发布")
 	}
+	intent = normalizeLogicalModelIntent(intent)
 	intent.Options = mergeIntentDefaults(intent.Options, cached.Defaults)
 	return &RouteSimulationResult{ProductMatch: MatchCapability(cached.ProductSpec, intent), Candidates: s.sortedRouteDiagnostics(cached.Routes, intent)}, nil
 }

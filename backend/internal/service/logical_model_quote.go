@@ -13,6 +13,7 @@ type LogicalModelQuote struct {
 }
 
 func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIntent) (*LogicalModelQuote, error) {
+	intent = normalizeLogicalModelIntent(intent)
 	routed, err := s.ResolveLogicalModel(logicalModelID, intent)
 	if err != nil {
 		return nil, err
