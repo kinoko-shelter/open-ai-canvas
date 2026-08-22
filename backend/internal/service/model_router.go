@@ -1116,6 +1116,9 @@ func (s *Service) blockLogicalRouteForFailure(attempt *model.RouteAttempt, taskE
 		if errors.As(taskErr, &upstream) && upstream.RetryAfter > 0 {
 			duration = upstream.RetryAfter
 		}
+	} else if attempt.FailureCode == "upstream_502" || attempt.FailureCode == "upstream_503" || attempt.FailureCode == "upstream_504" {
+		// 网关错误在未返回供应商任务 ID 时可安全改走备用线路；短暂屏蔽原线路，避免下一项任务立即再次命中。
+		key, duration = "channel-model:"+attempt.ChannelModelID, 30*time.Second
 	}
 	if key == "" || duration <= 0 {
 		return
@@ -1273,7 +1276,8 @@ func safeRouteRejection(err error) bool {
 	var upstream providerHTTPError
 	if errors.As(err, &upstream) {
 		switch upstream.StatusCode {
-		case 401, 403, 404, 429:
+		// 这些响应未返回供应商任务 ID，当前任务没有可恢复的远端作业，可切换到下一个逻辑线路。
+		case 401, 403, 404, 429, 502, 503, 504:
 			return true
 		}
 	}

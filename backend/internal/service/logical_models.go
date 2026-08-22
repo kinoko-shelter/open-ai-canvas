@@ -373,7 +373,19 @@ func (s *Service) buildAdminLogicalModel(item model.LogicalModel, graph *reposit
 	if err != nil {
 		return nil, err
 	}
-	admin.PublicLogicalModel = publicLogicalModel(cachedLogicalModel{Model: item, ProductSpec: productSpec, Defaults: defaults}, false)
+	priceRoutes := make([]cachedLogicalRoute, 0, len(graph.Routes))
+	for _, route := range graph.Routes {
+		channelModel, ok := channelModelByID[route.ChannelModelID]
+		if !ok {
+			continue
+		}
+		capabilitySpec, specErr := channelModelCapabilitySpec(channelModel)
+		if specErr != nil {
+			return nil, specErr
+		}
+		priceRoutes = append(priceRoutes, cachedLogicalRoute{Route: route, CapabilitySpec: capabilitySpec, ChannelModel: channelModel})
+	}
+	admin.PublicLogicalModel = publicLogicalModel(cachedLogicalModel{Model: item, ProductSpec: productSpec, Defaults: defaults, Routes: priceRoutes}, false)
 	admin.CapabilitySpec = productSpec
 	admin.DefaultOptions = defaults
 	structuralRouteSpecs := structuralAdminRouteSpecs(admin.Routes)

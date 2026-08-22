@@ -1,7 +1,7 @@
 import { Alert, App, Button, Drawer, Form, Input, InputNumber, Modal, Select, Switch, Table, Tag } from "antd";
 import type { FormInstance } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Archive, FlaskConical, GitBranch, Layers3, Pencil, Plus, Search } from "lucide-react";
+import { Archive, FlaskConical, GitBranch, Layers3, Pencil, Plus, Power, Search } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { PaginationBar } from "@/components/layout/workspace-page";
@@ -246,16 +246,46 @@ export default function LogicalModelsPage() {
         { title: "状态", width: 130, render: (_, item) => logicalModelStatusTag(item) },
         {
             title: "操作",
-            width: 230,
+            width: 250,
             align: "right",
-			render: (_, item) => <Button size="small" icon={<FlaskConical className="size-3.5" />} onClick={() => openSimulation(item)}>模拟规格匹配</Button>,
+            render: (_, item) => (
+                <AdminRowActions
+                    primary={{ label: "模拟规格匹配", icon: <FlaskConical className="size-3.5" />, onClick: () => openSimulation(item) }}
+                    actions={[
+                        { key: "edit", label: "编辑", icon: <Pencil className="size-3.5" />, onClick: () => openModel(item) },
+                        {
+                            key: "toggle",
+                            label: item.enabled ? "停用前台模型" : "启用前台模型",
+                            icon: <Power className="size-3.5" />,
+                            danger: item.enabled,
+                            confirm: {
+                                title: item.enabled ? "停用这个前台模型？" : "启用这个前台模型？",
+                                description: item.enabled ? "停用后创作端不再展示该模型，历史任务和供应线路不受影响。" : "启用前请确认至少一条供应线路和系统规格价格可用。",
+                                okText: item.enabled ? "确认停用" : "确认启用",
+                            },
+                            onClick: () => void toggleModel(item),
+                        },
+                        {
+                            key: "delete",
+                            label: "归档前台模型",
+                            icon: <Archive className="size-3.5" />,
+                            danger: true,
+                            disabled: deletingModelId === item.id,
+                            confirm: {
+                                title: "归档这个前台模型？",
+                                description: "创作端将不再展示该模型；历史任务、账单和调用记录会保留。",
+                                okText: "确认归档",
+                            },
+                            onClick: () => void removeModel(item),
+                        },
+                    ]}
+                />
+            ),
         },
     ];
 
     return (
-        <AdminPageFrame
-            title="前台模型目录"
-        >
+        <AdminPageFrame title="前台模型目录" actions={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => openModel()}>新增前台模型</Button>}>
             <AdminDataTable
                 toolbar={
                     <Input
