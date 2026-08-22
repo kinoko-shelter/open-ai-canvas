@@ -443,7 +443,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                         </div>
 						<Form.List name="priceTiers" rules={[{ validator: async (_, value) => { if (!value?.length) throw new Error("请至少配置一个价格档"); } }]}>
 							{(fields, { add, remove }, { errors }) => (
-								<div className="space-y-3">
+								<div className="space-y-2">
 									{fields.map((field, index) => (
 										<PriceTierFields
 											key={field.key}
@@ -502,72 +502,77 @@ function PriceTierFields({
     const video = capabilityConfig?.video;
     const resolutionOptions = video?.resolutions || [];
     const durationOptions = video?.duration.selection === "enum" ? video.duration.values || [] : [];
-    const tokenEnabled = Boolean(capability && protocol && modelProtocolSupportsTokenBilling(capability, protocol));
-    const isVideo = capability === "video";
+	const tokenEnabled = Boolean(capability && protocol && modelProtocolSupportsTokenBilling(capability, protocol));
+	const isVideo = capability === "video";
+	const isImage = capability === "image";
+	const selectorColumnClass = isVideo || isImage ? "lg:col-span-3" : "lg:col-span-6";
+	const controlsColumnClass = billingMode === "token" && !isVideo ? "lg:col-span-3" : "lg:col-span-5";
     return (
-        <div className="rounded-md border border-border bg-muted/10 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="rounded-md border border-border bg-muted/10 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="text-sm font-medium">价格档 {ordinal}</div>
                 <Button type="text" danger aria-label={`删除价格档 ${ordinal}`} title="删除价格档" icon={<X className="size-4" />} onClick={onRemove} />
             </div>
-            <div className="grid gap-3 md:grid-cols-3">
-				<Form.Item name={[index, "operation"]} label="生成方式" rules={[{ required: true, message: "请选择生成方式" }]}>
+			<div className="grid gap-3 lg:grid-cols-12">
+				<Form.Item className={`mb-0 ${selectorColumnClass}`} name={[index, "operation"]} label="生成方式" rules={[{ required: true, message: "请选择生成方式" }]}>
 					<Select options={operationOptions(capability)} />
 				</Form.Item>
                 {isVideo ? (
-                    <Form.Item name={[index, "resolution"]} label="分辨率" rules={[{ required: true, message: "请选择分辨率" }]}>
+                    <Form.Item className="mb-0 lg:col-span-3" name={[index, "resolution"]} label="分辨率" rules={[{ required: true, message: "请选择分辨率" }]}>
                         <Select options={[{ label: "任意分辨率", value: "*" }, ...resolutionOptions.map((value) => ({ label: value.toUpperCase(), value }))]} />
                     </Form.Item>
                 ) : null}
                 {isVideo ? (
-                    <Form.Item name={[index, "videoSeconds"]} label="时长" rules={[{ required: true, message: "请输入时长" }]} extra="0 表示任意时长">
+                    <Form.Item className="mb-0 lg:col-span-3" name={[index, "videoSeconds"]} label="时长" rules={[{ required: true, message: "请输入时长" }]}>
                         {durationOptions.length ? <Select options={[{ label: "任意时长", value: 0 }, ...durationOptions.map((value) => ({ label: `${value} 秒`, value }))]} /> : <InputNumber className="w-full" min={0} precision={0} />}
                     </Form.Item>
                 ) : null}
-				{capability === "image" ? (
-					<Form.Item name={[index, "quality"]} label="质量/分辨率" rules={[{ required: true, message: "请选择质量或分辨率" }]}>
+				{isImage ? (
+					<Form.Item className="mb-0 lg:col-span-3" name={[index, "quality"]} label="质量/分辨率" rules={[{ required: true, message: "请选择质量或分辨率" }]}>
 						<Select options={[{ label: "任意质量", value: "*" }, { label: "1K", value: "1k" }, { label: "2K", value: "2k" }, { label: "4K", value: "4k" }]} />
 					</Form.Item>
 				) : null}
-				{capability === "image" ? (
-					<Form.Item name={[index, "size"]} label="画幅/尺寸" extra="留空或任意表示不区分画幅">
-						<Input placeholder="例如：1:1、16:9 或 1024x1024" />
+				{isImage ? (
+					<Form.Item className="mb-0 lg:col-span-3" name={[index, "size"]} label="画幅/尺寸">
+						<Input placeholder="任意，或 1:1、16:9、1024x1024" />
 					</Form.Item>
 				) : null}
-                <Form.Item name={[index, "providerModelKey"]} label="上游模型 ID">
+                <Form.Item className={`mb-0 ${selectorColumnClass}`} name={[index, "providerModelKey"]} label="上游模型 ID">
                     <Input placeholder="留空则使用模型默认上游 ID" />
                 </Form.Item>
             </div>
-            <Form.Item name={[index, "billingMode"]} label="计费方式" rules={[{ required: true }]}>
-                <Segmented
-                    block
-                    options={[
-                        { label: "按次计费", value: "fixed_request" },
-                        { label: "按秒计费", value: "per_second", disabled: !isVideo },
-                        { label: "Token 计费", value: "token", disabled: !tokenEnabled },
-                    ]}
-                />
-            </Form.Item>
-            {billingMode === "token" ? (
-                isVideo ? (
-                    <Form.Item name={[index, "outputTokenPrice"]} label="视频 / 百万 Token" rules={[{ required: true, message: "请输入视频 Token 价格" }]}>
-                        <InputNumber className="w-full" min={0.000001} max={1_000_000} precision={6} step={0.1} />
-                    </Form.Item>
-                ) : (
-                    <div className="grid gap-3 sm:grid-cols-3">
-                        <Form.Item name={[index, "inputTokenPrice"]} label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
-                        <Form.Item name={[index, "outputTokenPrice"]} label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
-                        <Form.Item name={[index, "cachedTokenPrice"]} label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
-                    </div>
-                )
-            ) : (
-                <Form.Item name={[index, "unitPrice"]} label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
-                    <InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} />
+            <div className="grid items-end gap-3 lg:grid-cols-12">
+                <Form.Item className="mb-0 lg:col-span-4" name={[index, "billingMode"]} label="计费方式" rules={[{ required: true }]}>
+                    <Segmented
+                        className="w-full"
+                        options={[
+                            { label: "按次", value: "fixed_request" },
+                            { label: "按秒", value: "per_second", disabled: !isVideo },
+                            { label: "Token", value: "token", disabled: !tokenEnabled },
+                        ]}
+                    />
                 </Form.Item>
-            )}
-            <div className="flex items-center gap-8">
-                <Form.Item name={[index, "priceConfigured"]} label="价格已配置" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
-                <Form.Item name={[index, "enabled"]} label="启用此价格档" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
+                {billingMode === "token" ? (
+                    isVideo ? (
+                        <Form.Item className="mb-0 lg:col-span-3" name={[index, "outputTokenPrice"]} label="视频 / 百万 Token" rules={[{ required: true, message: "请输入视频 Token 价格" }]}>
+                            <InputNumber className="w-full" min={0.000001} max={1_000_000} precision={6} step={0.1} />
+                        </Form.Item>
+                    ) : (
+                        <div className="grid gap-3 sm:grid-cols-3 lg:col-span-5">
+                            <Form.Item className="mb-0" name={[index, "inputTokenPrice"]} label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                            <Form.Item className="mb-0" name={[index, "outputTokenPrice"]} label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                            <Form.Item className="mb-0" name={[index, "cachedTokenPrice"]} label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                        </div>
+                    )
+                ) : (
+                    <Form.Item className="mb-0 lg:col-span-3" name={[index, "unitPrice"]} label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
+                        <InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} />
+                    </Form.Item>
+                )}
+                <div className={`flex items-center gap-6 ${controlsColumnClass}`}>
+                    <Form.Item name={[index, "priceConfigured"]} label="价格已配置" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
+                    <Form.Item name={[index, "enabled"]} label="启用此价格档" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
+                </div>
             </div>
         </div>
     );
