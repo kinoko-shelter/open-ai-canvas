@@ -385,7 +385,11 @@ func normalizeBaseURL(raw string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return strings.TrimRight(strings.ToLower(strings.TrimSpace(raw)), "/")
 	}
-	return strings.ToLower(parsed.Scheme + "://" + parsed.Host + strings.TrimRight(parsed.Path, "/"))
+	path := strings.TrimRight(strings.ToLower(parsed.Path), "/")
+	if path == "/v1" || path == "/v1beta" {
+		path = ""
+	}
+	return strings.ToLower(parsed.Scheme + "://" + parsed.Host + path)
 }
 
 func targetLabel(target *model.ModelChannel) string {
