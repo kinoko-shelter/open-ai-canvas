@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ func Models() []any {
 		&model.EmailVerificationCode{},
 		&model.ModelChannel{},
 		&model.ChannelModel{},
+		&model.ChannelModelPriceTier{},
 		&model.IDSequence{},
 		&model.LogicalModel{},
 		&model.LogicalModelRevision{},
@@ -92,6 +94,9 @@ func MigrateSchema(db *gorm.DB) error {
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
+	if err := backfillChannelModelPriceTiers(db); err != nil {
+		return err
+	}
 	if err := dropLegacyPhysicalVariants(db); err != nil {
 		return err
 	}
@@ -109,7 +114,55 @@ func MigrateSchema(db *gorm.DB) error {
 	if err := db.Exec("DROP INDEX IF EXISTS idx_route_attempt_task_number").Error; err != nil {
 		return err
 	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_logical_model_source_active").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_logical_model_source_active ON logical_models(source_channel_model_id) WHERE source_channel_model_id <> '' AND archived_at IS NULL").Error; err != nil {
+		return err
+	}
 	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nonempty ON users(lower(email)) WHERE email <> ''").Error
+}
+
+// backfillChannelModelPriceTiers 将旧的单价模型无损映射为默认价格档。历史订单保存的是
+// 金额快照，不能也不需要回写；这里仅保证升级后现有渠道模型仍能按原价格继续结算。
+func backfillChannelModelPriceTiers(db *gorm.DB) error {
+	var channelModels []model.ChannelModel
+	if err := db.Find(&channelModels).Error; err != nil {
+		return fmt.Errorf("读取渠道模型价格档回填数据：%w", err)
+	}
+	for _, channelModel := range channelModels {
+		var count int64
+		if err := db.Model(&model.ChannelModelPriceTier{}).Where("channel_model_id = ?", channelModel.ID).Count(&count).Error; err != nil {
+			return fmt.Errorf("检查渠道模型 %s 价格档：%w", channelModel.ID, err)
+		}
+		if count > 0 {
+			continue
+		}
+		priceVersion := channelModel.PriceVersion
+		if priceVersion < 1 {
+			priceVersion = 1
+		}
+		digest := sha256.Sum256([]byte(channelModel.ID))
+		tier := model.ChannelModelPriceTier{
+			ID:                           fmt.Sprintf("PTIER-%x", digest[:15]),
+			ChannelModelID:               channelModel.ID,
+			Resolution:                   "*",
+			VideoSeconds:                 0,
+			ProviderModelKey:             channelModel.ProviderModelKey,
+			BillingMode:                  channelModel.BillingMode,
+			UnitPriceMicrocredits:        channelModel.UnitPriceMicrocredits,
+			InputTokenPriceMicrocredits:  channelModel.InputTokenPriceMicrocredits,
+			OutputTokenPriceMicrocredits: channelModel.OutputTokenPriceMicrocredits,
+			CachedTokenPriceMicrocredits: channelModel.CachedTokenPriceMicrocredits,
+			PriceConfigured:              channelModel.PriceConfigured,
+			Enabled:                      channelModel.Enabled,
+			PriceVersion:                 priceVersion,
+		}
+		if err := db.Create(&tier).Error; err != nil {
+			return fmt.Errorf("回填渠道模型 %s 默认价格档：%w", channelModel.ID, err)
+		}
+	}
+	return nil
 }
 
 // migrateLogicalRoutesToChannelModels 在模型结构切换前把历史 variant 外键转换为渠道模型外键。

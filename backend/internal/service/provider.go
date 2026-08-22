@@ -54,6 +54,8 @@ type providerTextMessage struct {
 type providerConfig struct {
 	ChannelID             string                 `json:"channelId"`
 	ChannelModelKey       string                 `json:"channelModelKey,omitempty"`
+	PriceTierID           string                 `json:"priceTierId,omitempty"`
+	ProviderModelKey      string                 `json:"providerModelKey,omitempty"`
 	APIFormat             string                 `json:"apiFormat"`
 	InterfaceType         string                 `json:"interfaceType"`
 	BaseURL               string                 `json:"baseUrl"`
@@ -741,11 +743,8 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	if err != nil {
 		return providerConfig{}, errors.New("系统渠道不存在或已停用")
 	}
-	requestedModel := strings.TrimPrefix(strings.TrimSpace(config.Model), "models/")
 	modelKey := strings.TrimPrefix(strings.TrimSpace(config.ChannelModelKey), "models/")
-	if modelKey != "" && requestedModel != "" && modelKey != requestedModel {
-		return providerConfig{}, errors.New("系统渠道模型标识不一致")
-	}
+	requestedModel := strings.TrimPrefix(strings.TrimSpace(config.Model), "models/")
 	if modelKey == "" {
 		modelKey = requestedModel
 	}
@@ -765,6 +764,22 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	if modelErr != nil || channelModel.Protocol == "" {
 		return providerConfig{}, errors.New("当前模型尚未配置请求协议")
 	}
+	providerModelKey := strings.TrimPrefix(strings.TrimSpace(config.ProviderModelKey), "models/")
+	if config.PriceTierID != "" {
+		matched := false
+		for _, tier := range channelModel.PriceTiers {
+			if tier.ID == config.PriceTierID && tier.Enabled && tier.PriceConfigured {
+				providerModelKey = firstNonEmpty(providerModelKey, tier.ProviderModelKey)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return providerConfig{}, errors.New("当前模型规格价格档已更新，请重新创建任务")
+		}
+	} else if modelKey != "" && requestedModel != "" && modelKey != requestedModel {
+		return providerConfig{}, errors.New("系统渠道模型标识不一致")
+	}
 	config.InterfaceType = string(channelModel.Protocol)
 	// 模型协议是实际请求契约；混合渠道中鉴权格式也必须随模型协议切换。
 	if config.InterfaceType == string(model.ChannelInterfaceGeminiVeo) || config.InterfaceType == string(model.ChannelInterfaceGeminiImage) {
@@ -780,7 +795,8 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		return providerConfig{}, err
 	}
 	config.ChannelModelKey = modelKey
-	config.Model = firstNonEmpty(channelModel.ProviderModelKey, modelKey)
+	config.ProviderModelKey = providerModelKey
+	config.Model = firstNonEmpty(providerModelKey, channelModel.ProviderModelKey, modelKey)
 	return config, nil
 }
 

@@ -31,11 +31,22 @@ export type PublicLogicalModel = {
     inputPriceMicrocredits: number;
     outputPriceMicrocredits: number;
     cachedPriceMicrocredits: number;
+	priceTiers: PublicLogicalModelPriceTier[];
     legacyModelIds: string[];
     capabilitySpec: CapabilitySpec;
     capabilityProfiles: CapabilitySpec[];
     defaultOptions: Record<string, unknown>;
     available: boolean;
+};
+
+export type PublicLogicalModelPriceTier = {
+	resolution: string;
+	videoSeconds: number;
+	billingMode: "fixed_request" | "per_second" | "token";
+	unitPriceMicrocredits: number;
+	inputTokenPriceMicrocredits: number;
+	outputTokenPriceMicrocredits: number;
+	cachedTokenPriceMicrocredits: number;
 };
 
 export type AdminLogicalRoute = {

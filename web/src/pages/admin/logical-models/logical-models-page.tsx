@@ -250,39 +250,13 @@ export default function LogicalModelsPage() {
             title: "操作",
             width: 230,
             align: "right",
-            render: (_, item) => (
-                <AdminRowActions
-                    primary={{ label: "编辑", icon: <Pencil className="size-3.5" />, onClick: () => openModel(item) }}
-                    actions={[
-                        { key: "simulate", label: "模拟供应线路匹配", icon: <FlaskConical className="size-3.5" />, onClick: () => openSimulation(item) },
-                        { key: "toggle", label: item.enabled ? "停用" : "启用", onClick: () => void toggleModel(item) },
-                        {
-                            key: "archive",
-                            label: "归档模型",
-                            icon: <Archive className="size-3.5" />,
-                            danger: true,
-                            disabled: deletingModelId === item.id,
-                            confirm: {
-                                title: `归档前台模型“${item.name}”？`,
-                                description: "归档后模型将从公开目录中移除，不能在页面恢复；历史任务和版本记录会保留。排队中或进行中的任务仍在使用时无法归档。",
-                                okText: "确认归档",
-                            },
-                            onClick: () => removeModel(item),
-                        },
-                    ]}
-                />
-            ),
+			render: (_, item) => <Button size="small" icon={<FlaskConical className="size-3.5" />} onClick={() => openSimulation(item)}>模拟规格匹配</Button>,
         },
     ];
 
     return (
         <AdminPageFrame
-            title="模型目录"
-            actions={
-                <Button type="primary" icon={<Plus className="size-4" />} onClick={() => openModel()}>
-                    新增模型
-                </Button>
-            }
+            title="前台模型目录"
         >
             <AdminDataTable
                 toolbar={

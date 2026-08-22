@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,19 +17,35 @@ import (
 )
 
 type ChannelModelRequest struct {
-	ModelKey                     string                 `json:"modelKey"`
-	ProviderModelKey             string                 `json:"providerModelKey"`
-	DisplayName                  string                 `json:"displayName"`
-	Capability                   string                 `json:"capability"`
-	Protocol                     string                 `json:"protocol"`
-	BillingMode                  string                 `json:"billingMode"`
-	UnitPriceMicrocredits        int64                  `json:"unitPriceMicrocredits"`
-	InputTokenPriceMicrocredits  int64                  `json:"inputTokenPriceMicrocredits"`
-	OutputTokenPriceMicrocredits int64                  `json:"outputTokenPriceMicrocredits"`
-	CachedTokenPriceMicrocredits int64                  `json:"cachedTokenPriceMicrocredits"`
-	PriceConfigured              bool                   `json:"priceConfigured"`
-	Enabled                      *bool                  `json:"enabled"`
-	CapabilityConfig             *ModelCapabilityConfig `json:"capabilityConfig"`
+	ModelKey                     string                         `json:"modelKey"`
+	ProviderModelKey             string                         `json:"providerModelKey"`
+	DisplayName                  string                         `json:"displayName"`
+	Capability                   string                         `json:"capability"`
+	Protocol                     string                         `json:"protocol"`
+	BillingMode                  string                         `json:"billingMode"`
+	UnitPriceMicrocredits        int64                          `json:"unitPriceMicrocredits"`
+	InputTokenPriceMicrocredits  int64                          `json:"inputTokenPriceMicrocredits"`
+	OutputTokenPriceMicrocredits int64                          `json:"outputTokenPriceMicrocredits"`
+	CachedTokenPriceMicrocredits int64                          `json:"cachedTokenPriceMicrocredits"`
+	PriceConfigured              bool                           `json:"priceConfigured"`
+	Enabled                      *bool                          `json:"enabled"`
+	CapabilityConfig             *ModelCapabilityConfig         `json:"capabilityConfig"`
+	PriceTiers                   []ChannelModelPriceTierRequest `json:"priceTiers"`
+}
+
+// ChannelModelPriceTierRequest 是系统渠道内某个规格的上游 SKU 与结算价格。
+// Resolution="*"、VideoSeconds=0 分别表示任意分辨率和任意时长。
+type ChannelModelPriceTierRequest struct {
+	Resolution                   string `json:"resolution"`
+	VideoSeconds                 int    `json:"videoSeconds"`
+	ProviderModelKey             string `json:"providerModelKey"`
+	BillingMode                  string `json:"billingMode"`
+	UnitPriceMicrocredits        int64  `json:"unitPriceMicrocredits"`
+	InputTokenPriceMicrocredits  int64  `json:"inputTokenPriceMicrocredits"`
+	OutputTokenPriceMicrocredits int64  `json:"outputTokenPriceMicrocredits"`
+	CachedTokenPriceMicrocredits int64  `json:"cachedTokenPriceMicrocredits"`
+	PriceConfigured              bool   `json:"priceConfigured"`
+	Enabled                      *bool  `json:"enabled"`
 }
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
@@ -169,31 +187,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 			return nil, err
 		}
 	}
-	billingMode := strings.TrimSpace(req.BillingMode)
-	if billingMode == "" {
-		billingMode = "fixed_request"
-	}
-	if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" {
-		return nil, BadAuthRequest("模型计费方式仅支持按次、按秒或 Token")
-	}
-	if billingMode == "per_second" && capability != "video" {
-		return nil, BadAuthRequest("只有视频模型可以按秒计费")
-	}
-	if billingMode == "token" && !supportsTokenBilling(capability, protocol) {
-		return nil, BadAuthRequest("Token 计费仅支持文本模型和火山方舟视频协议")
-	}
-	if req.UnitPriceMicrocredits < 0 || req.InputTokenPriceMicrocredits < 0 || req.OutputTokenPriceMicrocredits < 0 || req.CachedTokenPriceMicrocredits < 0 {
-		return nil, BadAuthRequest("模型积分价格不能小于 0")
-	}
-	if billingMode == "token" && req.InputTokenPriceMicrocredits == 0 && req.OutputTokenPriceMicrocredits == 0 && req.CachedTokenPriceMicrocredits == 0 {
-		return nil, BadAuthRequest("Token 计费至少需要配置一项价格")
-	}
-	if billingMode == "token" && capability == "video" && req.OutputTokenPriceMicrocredits == 0 {
-		return nil, BadAuthRequest("火山方舟视频 Token 计费需要配置每百万视频 Token 价格")
-	}
-	const maxTokenPriceMicrocredits = int64(1_000_000) * CreditScale
-	if req.InputTokenPriceMicrocredits > maxTokenPriceMicrocredits || req.OutputTokenPriceMicrocredits > maxTokenPriceMicrocredits || req.CachedTokenPriceMicrocredits > maxTokenPriceMicrocredits {
-		return nil, BadAuthRequest("Token 每百万用量价格不能超过 1,000,000 积分")
+	tiers, err := s.normalizeChannelModelPriceTiers(req, capability, protocol, providerModelKey)
+	if err != nil {
+		return nil, err
 	}
 	modelID, err := s.repo.NextPrefixedID("MODEL")
 	if err != nil {
@@ -215,12 +211,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	item.Capability = capability
 	item.Protocol = protocol
-	item.BillingMode = billingMode
-	item.UnitPriceMicrocredits = req.UnitPriceMicrocredits
-	item.InputTokenPriceMicrocredits = req.InputTokenPriceMicrocredits
-	item.OutputTokenPriceMicrocredits = req.OutputTokenPriceMicrocredits
-	item.CachedTokenPriceMicrocredits = req.CachedTokenPriceMicrocredits
-	item.PriceConfigured = req.PriceConfigured
+	s.applyChannelModelPriceTierSummary(item, tiers)
 	if capability == "text" || capability == "image" || capability == "video" {
 		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfig(capability, string(protocol), providerModelKey, channel.APIFormat, req.CapabilityConfig)
 		if normalizeErr != nil {
@@ -241,19 +232,223 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if req.Enabled != nil {
 		item.Enabled = *req.Enabled
 	}
-	// 供应线路直接引用渠道模型，修改能力参数后会从这一唯一事实来源实时生成线路能力。
-	if err := s.repo.SaveChannelModel(item); err != nil {
+	if err := validateChannelModelTierCapabilities(tiers, item.CapabilityConfigJSON, capability); err != nil {
 		return nil, err
 	}
+	// 渠道模型及所有价格档必须同时落库，不能出现“能力已开放但规格价格尚未更新”的窗口。
+	if err := s.repo.SaveChannelModelWithPriceTiers(item, tiers); err != nil {
+		return nil, err
+	}
+	item.PriceTiers = tiers
 	s.invalidateRouteCatalog()
 	if err := s.syncChannelModelNames(channel); err != nil {
+		return nil, err
+	}
+	if err := s.syncLogicalModelsFromChannelModel(actor, item); err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
+func validateChannelModelTierCapabilities(tiers []model.ChannelModelPriceTier, rawCapabilityConfig string, capability string) error {
+	if capability != "video" {
+		return nil
+	}
+	config, err := DecodeModelCapabilityConfig(rawCapabilityConfig)
+	if err != nil || config == nil || config.Video == nil {
+		return BadAuthRequest("视频模型能力配置无效，无法校验价格档规格")
+	}
+	resolutionSupported := make(map[string]bool, len(config.Video.Resolutions))
+	for _, resolution := range config.Video.Resolutions {
+		resolutionSupported[normalizeChannelModelTierResolution(resolution)] = true
+	}
+	durationSupported := make(map[int]bool, len(config.Video.Duration.Values))
+	for _, seconds := range config.Video.Duration.Values {
+		durationSupported[seconds] = true
+	}
+	for _, tier := range tiers {
+		if tier.Resolution != "*" && !resolutionSupported[normalizeChannelModelTierResolution(tier.Resolution)] {
+			return BadAuthRequest("价格档分辨率不在该视频模型支持范围内：" + tier.Resolution)
+		}
+		if tier.VideoSeconds == 0 {
+			continue
+		}
+		if config.Video.Duration.Selection == "enum" && !durationSupported[tier.VideoSeconds] {
+			return BadAuthRequest(fmt.Sprintf("价格档时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
+		}
+		if config.Video.Duration.Selection == "range" && (tier.VideoSeconds < config.Video.Duration.Min || tier.VideoSeconds > config.Video.Duration.Max || (config.Video.Duration.Step > 0 && (tier.VideoSeconds-config.Video.Duration.Min)%config.Video.Duration.Step != 0)) {
+			return BadAuthRequest(fmt.Sprintf("价格档时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
+		}
+	}
+	return nil
+}
+
+// syncLogicalModelsFromChannelModel 让前台目录成为系统渠道模型的投影。它只创建新的
+// logical revision 并切换 active revision，绝不改写任务、路由尝试和账单已有的快照。
+func (s *Service) syncLogicalModelsFromChannelModel(actor *model.User, channelModel *model.ChannelModel) error {
+	if channelModel == nil {
+		return nil
+	}
+	items, err := s.repo.LogicalModelsBySourceChannelModelID(channelModel.ID)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		items, err = s.repo.LogicalModelsByOnlyActiveChannelModelID(channelModel.ID)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			code := "system." + strings.ToLower(strings.TrimSpace(channelModel.ID))
+			name := strings.TrimSpace(channelModel.DisplayName)
+			if name == "" {
+				name = channelModel.ModelKey
+			}
+			_, err = s.SaveAdminLogicalModel(actor, "", LogicalModelRequest{
+				Code: code, Name: name, Description: "由系统渠道模型自动同步", Capability: channelModel.Capability,
+				Enabled: channelModel.Enabled, SortOrder: 0, SourceChannelModelID: channelModel.ID,
+			})
+			return err
+		}
+	}
+	for _, item := range items {
+		_, saveErr := s.SaveAdminLogicalModel(actor, item.ID, LogicalModelRequest{
+			Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: channelModel.Capability,
+			Enabled: item.Enabled, SortOrder: item.SortOrder, LegacyModelIDs: decodeLegacyModelIDs(item.LegacyModelIDsJSON), SourceChannelModelID: channelModel.ID,
+		})
+		if saveErr != nil {
+			return saveErr
+		}
+	}
+	return nil
+}
+
 func supportsTokenBilling(capability string, protocol model.ChannelInterfaceType) bool {
 	return capability == "text" || (capability == "video" && protocol == model.ChannelInterfaceVolcengineArkVideo)
+}
+
+func (s *Service) normalizeChannelModelPriceTiers(req ChannelModelRequest, capability string, protocol model.ChannelInterfaceType, fallbackProviderModelKey string) ([]model.ChannelModelPriceTier, error) {
+	inputs := req.PriceTiers
+	// 兼容旧管理 API：没有 priceTiers 的请求等价于一个默认价格档。
+	if len(inputs) == 0 {
+		enabled := true
+		inputs = []ChannelModelPriceTierRequest{{
+			Resolution: "*", VideoSeconds: 0, ProviderModelKey: fallbackProviderModelKey,
+			BillingMode: req.BillingMode, UnitPriceMicrocredits: req.UnitPriceMicrocredits,
+			InputTokenPriceMicrocredits: req.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: req.OutputTokenPriceMicrocredits,
+			CachedTokenPriceMicrocredits: req.CachedTokenPriceMicrocredits, PriceConfigured: req.PriceConfigured, Enabled: &enabled,
+		}}
+	}
+	result := make([]model.ChannelModelPriceTier, 0, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	for _, input := range inputs {
+		resolution := normalizeChannelModelTierResolution(input.Resolution)
+		videoSeconds := input.VideoSeconds
+		if capability != "video" {
+			if resolution != "*" || videoSeconds != 0 {
+				return nil, BadAuthRequest("只有视频模型可以按分辨率或时长配置价格档")
+			}
+		} else if videoSeconds < 0 {
+			return nil, BadAuthRequest("视频价格档时长不能小于 0")
+		}
+		key := resolution + ":" + strconv.Itoa(videoSeconds)
+		if seen[key] {
+			return nil, BadAuthRequest("同一分辨率和时长只能配置一个价格档")
+		}
+		seen[key] = true
+		billingMode := strings.TrimSpace(input.BillingMode)
+		if billingMode == "" {
+			billingMode = "fixed_request"
+		}
+		if err := validateChannelModelTierPricing(capability, protocol, billingMode, input); err != nil {
+			return nil, err
+		}
+		id, idErr := s.repo.NextPrefixedID("PTIER")
+		if idErr != nil {
+			return nil, idErr
+		}
+		enabled := input.Enabled == nil || *input.Enabled
+		result = append(result, model.ChannelModelPriceTier{
+			ID:                           id,
+			Resolution:                   resolution,
+			VideoSeconds:                 videoSeconds,
+			ProviderModelKey:             strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(input.ProviderModelKey, fallbackProviderModelKey)), "models/"),
+			BillingMode:                  billingMode,
+			UnitPriceMicrocredits:        input.UnitPriceMicrocredits,
+			InputTokenPriceMicrocredits:  input.InputTokenPriceMicrocredits,
+			OutputTokenPriceMicrocredits: input.OutputTokenPriceMicrocredits,
+			CachedTokenPriceMicrocredits: input.CachedTokenPriceMicrocredits,
+			PriceConfigured:              input.PriceConfigured,
+			Enabled:                      enabled,
+			PriceVersion:                 1,
+		})
+	}
+	return result, nil
+}
+
+func validateChannelModelTierPricing(capability string, protocol model.ChannelInterfaceType, billingMode string, input ChannelModelPriceTierRequest) error {
+	if billingMode != "fixed_request" && billingMode != "per_second" && billingMode != "token" {
+		return BadAuthRequest("模型计费方式仅支持按次、按秒或 Token")
+	}
+	if billingMode == "per_second" && capability != "video" {
+		return BadAuthRequest("只有视频模型可以按秒计费")
+	}
+	if billingMode == "token" && !supportsTokenBilling(capability, protocol) {
+		return BadAuthRequest("Token 计费仅支持文本模型和火山方舟视频协议")
+	}
+	if input.UnitPriceMicrocredits < 0 || input.InputTokenPriceMicrocredits < 0 || input.OutputTokenPriceMicrocredits < 0 || input.CachedTokenPriceMicrocredits < 0 {
+		return BadAuthRequest("模型积分价格不能小于 0")
+	}
+	if !input.PriceConfigured {
+		return nil
+	}
+	if billingMode == "token" && input.InputTokenPriceMicrocredits == 0 && input.OutputTokenPriceMicrocredits == 0 && input.CachedTokenPriceMicrocredits == 0 {
+		return BadAuthRequest("Token 计费至少需要配置一项价格")
+	}
+	if billingMode == "token" && capability == "video" && input.OutputTokenPriceMicrocredits == 0 {
+		return BadAuthRequest("火山方舟视频 Token 计费需要配置每百万视频 Token 价格")
+	}
+	const maxTokenPriceMicrocredits = int64(1_000_000) * CreditScale
+	if input.InputTokenPriceMicrocredits > maxTokenPriceMicrocredits || input.OutputTokenPriceMicrocredits > maxTokenPriceMicrocredits || input.CachedTokenPriceMicrocredits > maxTokenPriceMicrocredits {
+		return BadAuthRequest("Token 每百万用量价格不能超过 1,000,000 积分")
+	}
+	return nil
+}
+
+func normalizeChannelModelTierResolution(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || value == "*" || strings.EqualFold(value, "any") {
+		return "*"
+	}
+	normalized := normalizeModelRequestOption("vquality", value)
+	return strings.ToLower(strings.TrimSpace(fmt.Sprint(normalized)))
+}
+
+func (s *Service) applyChannelModelPriceTierSummary(item *model.ChannelModel, tiers []model.ChannelModelPriceTier) {
+	item.PriceConfigured = false
+	item.BillingMode = "fixed_request"
+	item.UnitPriceMicrocredits = 0
+	item.InputTokenPriceMicrocredits = 0
+	item.OutputTokenPriceMicrocredits = 0
+	item.CachedTokenPriceMicrocredits = 0
+	var summary *model.ChannelModelPriceTier
+	for index := range tiers {
+		tier := &tiers[index]
+		if tier.Enabled && tier.PriceConfigured {
+			item.PriceConfigured = true
+		}
+		if summary == nil || (tier.Resolution == "*" && tier.VideoSeconds == 0) {
+			summary = tier
+		}
+	}
+	if summary == nil {
+		return
+	}
+	item.BillingMode = summary.BillingMode
+	item.UnitPriceMicrocredits = summary.UnitPriceMicrocredits
+	item.InputTokenPriceMicrocredits = summary.InputTokenPriceMicrocredits
+	item.OutputTokenPriceMicrocredits = summary.OutputTokenPriceMicrocredits
+	item.CachedTokenPriceMicrocredits = summary.CachedTokenPriceMicrocredits
 }
 
 func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, channelID string, req ChannelModelRequest) (*AdminChannelModelTestResult, error) {

@@ -7,7 +7,7 @@ import { scopedLocalStorage } from "@/lib/user-scope";
 import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import type { ModelCapabilityConfig } from "@/lib/model-capabilities";
-import type { CapabilitySpec } from "@/services/api/logical-models";
+import type { CapabilitySpec, PublicLogicalModelPriceTier } from "@/services/api/logical-models";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ChannelInterfaceType = ModelProtocol;
@@ -51,6 +51,7 @@ export type ModelChannel = {
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];
+		logicalPriceTiers?: PublicLogicalModelPriceTier[];
         defaultOptions?: Record<string, unknown>;
     }>;
 };

@@ -31,7 +31,11 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 	tokenEstimate := estimateTaskBillingTokens(input, capability)
 
 	if routed.LogicalModel.PricePolicy == "channel" {
-		order, billingErr := s.newBillingOrder("", "", nil, "quote", routed.ChannelModel.ChannelID, routed.ChannelModel.ModelKey, capability, "model_quote", quantity, tokenEstimate)
+		priceTierID := ""
+		if routed.PriceTier != nil {
+			priceTierID = routed.PriceTier.ID
+		}
+		order, billingErr := s.newBillingOrderWithPriceTier("", "", nil, "quote", routed.ChannelModel.ChannelID, routed.ChannelModel.ModelKey, capability, "model_quote", quantity, tokenEstimate, priceTierID)
 		if billingErr != nil {
 			return nil, billingErr
 		}

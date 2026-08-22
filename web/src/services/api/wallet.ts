@@ -99,6 +99,25 @@ export type ChannelModel = {
     priceVersion: number;
     capabilityVersion?: number;
     capabilityConfig?: import("@/lib/model-capabilities").ModelCapabilityConfig;
+	priceTiers: ChannelModelPriceTier[];
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ChannelModelPriceTier = {
+    id: string;
+    channelModelId: string;
+    resolution: string;
+    videoSeconds: number;
+    providerModelKey: string;
+    billingMode: "fixed_request" | "per_second" | "token";
+    unitPriceMicrocredits: number;
+    inputTokenPriceMicrocredits: number;
+    outputTokenPriceMicrocredits: number;
+    cachedTokenPriceMicrocredits: number;
+    priceConfigured: boolean;
+    enabled: boolean;
+    priceVersion: number;
     createdAt: string;
     updatedAt: string;
 };

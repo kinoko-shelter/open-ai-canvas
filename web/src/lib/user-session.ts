@@ -94,6 +94,7 @@ function managedModelChannels(models: PublicLogicalModel[]) {
             logicalModelId: item.id,
             logicalCapabilitySpec: item.capabilitySpec,
             logicalCapabilityProfiles: item.capabilityProfiles,
+			logicalPriceTiers: item.priceTiers,
             defaultOptions: item.defaultOptions,
         })),
     };

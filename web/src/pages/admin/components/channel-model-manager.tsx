@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch } from "antd";
+import { App, Button, Drawer, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch, type FormInstance } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { FlaskConical, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { FlaskConical, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 
 import { PaginationBar } from "@/components/layout/workspace-page";
 import { ModelIcon } from "@/components/model-picker";
@@ -9,7 +9,7 @@ import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { CapabilityCardPicker, ProtocolCardPicker, type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig, hasModelSpecificImageCapability, normalizeModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { MODEL_PROTOCOLS, modelProtocolCapability, modelProtocolDefinition, modelProtocolLabel, modelProtocolSupportsTokenBilling, type ModelProtocol } from "@/lib/model-protocols";
-import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
+import { createAdminChannelModel, deleteAdminChannelModel, fetchAdminChannelModels, listAdminChannelModels, testAdminChannelModel, updateAdminChannelModel, type ChannelModel, type ChannelModelPriceTier } from "@/services/api/wallet";
 import type { ModelChannel } from "@/stores/use-config-store";
 import { AdminPageFrame } from "./admin-shell";
 import { AdminDataTable, AdminFilterChip, AdminStatusBadge } from "./admin-ui";
@@ -22,13 +22,22 @@ type FormValues = {
     displayName?: string;
     capability: EditableCapability;
     protocol: ModelProtocol;
+	priceTiers: PriceTierFormValues[];
+    enabled: boolean;
+    capabilityConfig?: ModelCapabilityConfig;
+};
+
+type PriceTierFormValues = {
+    resolution: string;
+    videoSeconds: number;
+    providerModelKey?: string;
     billingMode: ChannelModel["billingMode"];
     unitPrice: number;
     inputTokenPrice: number;
     outputTokenPrice: number;
     cachedTokenPrice: number;
+    priceConfigured: boolean;
     enabled: boolean;
-    capabilityConfig?: ModelCapabilityConfig;
 };
 
 export function ChannelModelManager({ channel, onClose, onChanged }: { channel: ModelChannel; onClose: () => void; onChanged: () => void | Promise<void> }) {
@@ -46,11 +55,11 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [form] = Form.useForm<FormValues>();
-    const billingMode = Form.useWatch("billingMode", form) || "fixed_request";
     const modelCapability = Form.useWatch("capability", form);
     const modelProtocol = Form.useWatch("protocol", form);
     const modelKey = Form.useWatch("modelKey", form) || "";
     const providerModelKey = Form.useWatch("providerModelKey", form) || "";
+	const capabilityConfig = Form.useWatch("capabilityConfig", form);
 
     const reload = async () => {
         if (!channel) return;
@@ -99,11 +108,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             displayName: "",
             capability: "text",
             protocol: "chat-completion",
-            billingMode: "fixed_request",
-            unitPrice: 0,
-            inputTokenPrice: 0,
-            outputTokenPrice: 0,
-            cachedTokenPrice: 0,
+			priceTiers: [defaultPriceTier()],
             enabled: true,
             capabilityConfig: defaultModelCapabilityConfig("chat-completion", ""),
         });
@@ -118,11 +123,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             displayName: item.displayName,
             capability: item.capability || undefined,
             protocol: item.protocol,
-            billingMode: item.billingMode,
-            unitPrice: item.unitPriceMicrocredits / 1_000_000,
-            inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000,
-            outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000,
-            cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000,
+			priceTiers: item.priceTiers?.length ? item.priceTiers.map(priceTierToForm) : [legacyPriceTierToForm(item)],
             enabled: item.enabled,
             capabilityConfig: item.capability === "text" || item.capability === "image" || item.capability === "video"
                 ? normalizeModelCapabilityConfig(item.capabilityConfig, item.protocol, item.providerModelKey || item.modelKey, channel.apiFormat)
@@ -145,12 +146,18 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 displayName: values.displayName?.trim() || values.modelKey.trim(),
                 capability: values.capability,
                 protocol: values.protocol,
-                billingMode: values.billingMode,
-                unitPriceMicrocredits: Math.round(values.unitPrice * 1_000_000),
-                inputTokenPriceMicrocredits: Math.round((values.inputTokenPrice || 0) * 1_000_000),
-                outputTokenPriceMicrocredits: Math.round((values.outputTokenPrice || 0) * 1_000_000),
-                cachedTokenPriceMicrocredits: Math.round((values.cachedTokenPrice || 0) * 1_000_000),
-                priceConfigured: true,
+				priceTiers: values.priceTiers.map((tier) => ({
+					resolution: values.capability === "video" ? (tier.resolution || "*") : "*",
+					videoSeconds: values.capability === "video" ? Number(tier.videoSeconds || 0) : 0,
+					providerModelKey: tier.providerModelKey?.trim() || upstreamModel,
+					billingMode: tier.billingMode,
+					unitPriceMicrocredits: Math.round((tier.unitPrice || 0) * 1_000_000),
+					inputTokenPriceMicrocredits: Math.round((tier.inputTokenPrice || 0) * 1_000_000),
+					outputTokenPriceMicrocredits: Math.round((tier.outputTokenPrice || 0) * 1_000_000),
+					cachedTokenPriceMicrocredits: Math.round((tier.cachedTokenPrice || 0) * 1_000_000),
+					priceConfigured: tier.priceConfigured !== false,
+					enabled: tier.enabled !== false,
+				})),
                 enabled: values.enabled !== false,
                 capabilityConfig,
             };
@@ -211,11 +218,6 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         if (changed.modelKey !== undefined && nextCapability === "image" && (hasModelSpecificImageCapability(nextProtocol, changed.modelKey, channel.apiFormat) || hasModelSpecificImageCapability(nextProtocol, modelKey, channel.apiFormat))) {
             form.setFieldValue("capabilityConfig", defaultModelCapabilityConfig(nextProtocol, changed.modelKey, channel.apiFormat));
         }
-        const currentBillingMode = form.getFieldValue("billingMode") as ChannelModel["billingMode"] | undefined;
-        const tokenBillingAllowed = modelProtocolSupportsTokenBilling(nextCapability, nextProtocol);
-        if ((currentBillingMode === "per_second" && nextCapability !== "video") || (currentBillingMode === "token" && !tokenBillingAllowed)) {
-            form.setFieldValue("billingMode", "fixed_request");
-        }
         if (!changed.capability) return;
         const current = nextProtocol;
         if (modelProtocolCapability(current) !== changed.capability) {
@@ -223,6 +225,13 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
             form.setFieldValue("protocol", nextProtocol);
             form.setFieldValue("capabilityConfig", changed.capability === "text" || changed.capability === "image" || changed.capability === "video" ? defaultModelCapabilityConfig(nextProtocol, form.getFieldValue("modelKey"), channel.apiFormat) : undefined);
         }
+		const nextTiers = (form.getFieldValue("priceTiers") || []).map((tier: PriceTierFormValues) => ({
+			...tier,
+			resolution: changed.capability === "video" ? tier.resolution || "*" : "*",
+			videoSeconds: changed.capability === "video" ? tier.videoSeconds || 0 : 0,
+			billingMode: tier.billingMode === "per_second" && changed.capability !== "video" ? "fixed_request" : tier.billingMode,
+		}));
+		form.setFieldValue("priceTiers", nextTiers);
     };
 
     const columns: ColumnsType<ChannelModel> = [
@@ -256,7 +265,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     <AdminStatusBadge label="待配置" tone="warning" />
                 ),
         },
-        { title: "计费", width: 220, render: (_, item) => (item.priceConfigured ? billingSummary(item) : <AdminStatusBadge label="未配置价格" tone="warning" />) },
+		{ title: "规格价格", width: 280, render: (_, item) => (item.priceConfigured ? billingSummary(item) : <AdminStatusBadge label="未配置价格" tone="warning" />) },
         { title: "版本", dataIndex: "priceVersion", width: 75, render: (value) => `v${value}` },
         { title: "状态", dataIndex: "enabled", width: 85, render: (enabled) => <AdminStatusBadge label={enabled ? "启用" : "停用"} tone={enabled ? "success" : "neutral"} /> },
         {
@@ -390,7 +399,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                                             <ModelIcon model={modelKey} />
                                         </span>
                                     }
-                                    placeholder="例如：seedance-2-5-720p"
+                                    placeholder="例如：seedance-2-5"
                                 />
                             </Form.Item>
                             <Form.Item name="providerModelKey" label="上游模型 ID">
@@ -423,41 +432,28 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
 
                     <section className="admin-form-section">
                         <div className="mb-4">
-                            <h2 className="text-sm font-semibold">计费</h2>
+                            <h2 className="text-sm font-semibold">规格价格档</h2>
                         </div>
-                        <Form.Item name="billingMode" label="计费方式" rules={[{ required: true }]}>
-                            <Segmented
-                                block
-                                options={[
-                                    { label: "按次计费", value: "fixed_request" },
-                                    { label: "按秒计费", value: "per_second", disabled: modelCapability !== "video" },
-                                    { label: "Token 计费", value: "token", disabled: !modelProtocolSupportsTokenBilling(modelCapability, modelProtocol) },
-                                ]}
-                            />
-                        </Form.Item>
-                        {billingMode === "token" ? (
-                            modelCapability === "video" ? (
-                                <Form.Item name="outputTokenPrice" label="视频 / 百万 Token" rules={[{ required: true, message: "请输入视频 Token 价格" }]}>
-                                    <InputNumber style={{ width: "100%" }} min={0.000001} max={1_000_000} precision={6} step={0.1} />
-                                </Form.Item>
-                            ) : (
-                                <div className="grid gap-3 sm:grid-cols-3">
-                                    <Form.Item name="inputTokenPrice" label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}>
-                                        <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                                    </Form.Item>
-                                    <Form.Item name="outputTokenPrice" label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}>
-                                        <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                                    </Form.Item>
-                                    <Form.Item name="cachedTokenPrice" label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}>
-                                        <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                                    </Form.Item>
-                                </div>
-                            )
-                        ) : (
-                            <Form.Item name="unitPrice" label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
-                                <InputNumber style={{ width: "100%" }} min={0} max={1_000_000} precision={6} step={0.1} />
-                            </Form.Item>
-                        )}
+						<Form.List name="priceTiers" rules={[{ validator: async (_, value) => { if (!value?.length) throw new Error("请至少配置一个价格档"); } }]}>
+							{(fields, { add, remove }, { errors }) => (
+								<div className="space-y-3">
+									{fields.map((field, index) => (
+										<PriceTierFields
+											key={field.key}
+											index={field.name}
+											ordinal={index + 1}
+											form={form}
+											capability={modelCapability}
+											protocol={modelProtocol}
+											capabilityConfig={capabilityConfig}
+											onRemove={() => remove(field.name)}
+										/>
+									))}
+									<Button icon={<Plus className="size-4" />} onClick={() => add(defaultPriceTier())}>新增价格档</Button>
+									<Form.ErrorList errors={errors} />
+								</div>
+							)}
+						</Form.List>
                     </section>
 
                     <section className="admin-form-section">
@@ -478,18 +474,117 @@ function capabilityLabel(value: ChannelModel["capability"]) {
     return { text: "文本", image: "图片", video: "视频", audio: "音频", "": "待配置" }[value];
 }
 
-function billingSummary(item: ChannelModel) {
-    if (item.billingMode !== "token") {
-        return `${formatCredits(item.unitPriceMicrocredits)} 积分 / ${item.billingMode === "per_second" ? "秒" : "次"}`;
-    }
-    if (item.capability === "video") return `视频输出 ${formatCredits(item.outputTokenPriceMicrocredits)} / 百万 Token`;
+function PriceTierFields({
+    index,
+    ordinal,
+    form,
+    capability,
+    protocol,
+    capabilityConfig,
+    onRemove,
+}: {
+    index: number;
+    ordinal: number;
+    form: FormInstance<FormValues>;
+    capability: EditableCapability | undefined;
+    protocol: ModelProtocol | undefined;
+    capabilityConfig?: ModelCapabilityConfig;
+    onRemove: () => void;
+}) {
+    const billingMode = Form.useWatch(["priceTiers", index, "billingMode"], form) || "fixed_request";
+    const video = capabilityConfig?.video;
+    const resolutionOptions = video?.resolutions || [];
+    const durationOptions = video?.duration.selection === "enum" ? video.duration.values || [] : [];
+    const tokenEnabled = Boolean(capability && protocol && modelProtocolSupportsTokenBilling(capability, protocol));
+    const isVideo = capability === "video";
     return (
-        <div className="text-xs leading-5">
-            <div>输入 {formatCredits(item.inputTokenPriceMicrocredits)} / 百万</div>
-            <div>输出 {formatCredits(item.outputTokenPriceMicrocredits)} / 百万</div>
-            <div>缓存 {formatCredits(item.cachedTokenPriceMicrocredits)} / 百万</div>
+        <div className="rounded-md border border-border bg-muted/10 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="text-sm font-medium">价格档 {ordinal}</div>
+                <Button type="text" danger aria-label={`删除价格档 ${ordinal}`} title="删除价格档" icon={<X className="size-4" />} onClick={onRemove} />
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+                {isVideo ? (
+                    <Form.Item name={[index, "resolution"]} label="分辨率" rules={[{ required: true, message: "请选择分辨率" }]}>
+                        <Select options={[{ label: "任意分辨率", value: "*" }, ...resolutionOptions.map((value) => ({ label: value.toUpperCase(), value }))]} />
+                    </Form.Item>
+                ) : null}
+                {isVideo ? (
+                    <Form.Item name={[index, "videoSeconds"]} label="时长" rules={[{ required: true, message: "请输入时长" }]} extra="0 表示任意时长">
+                        {durationOptions.length ? <Select options={[{ label: "任意时长", value: 0 }, ...durationOptions.map((value) => ({ label: `${value} 秒`, value }))]} /> : <InputNumber className="w-full" min={0} precision={0} />}
+                    </Form.Item>
+                ) : null}
+                <Form.Item name={[index, "providerModelKey"]} label="上游模型 ID">
+                    <Input placeholder="留空则使用模型默认上游 ID" />
+                </Form.Item>
+            </div>
+            <Form.Item name={[index, "billingMode"]} label="计费方式" rules={[{ required: true }]}>
+                <Segmented
+                    block
+                    options={[
+                        { label: "按次计费", value: "fixed_request" },
+                        { label: "按秒计费", value: "per_second", disabled: !isVideo },
+                        { label: "Token 计费", value: "token", disabled: !tokenEnabled },
+                    ]}
+                />
+            </Form.Item>
+            {billingMode === "token" ? (
+                isVideo ? (
+                    <Form.Item name={[index, "outputTokenPrice"]} label="视频 / 百万 Token" rules={[{ required: true, message: "请输入视频 Token 价格" }]}>
+                        <InputNumber className="w-full" min={0.000001} max={1_000_000} precision={6} step={0.1} />
+                    </Form.Item>
+                ) : (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                        <Form.Item name={[index, "inputTokenPrice"]} label="输入 / 百万 Token" rules={[{ required: true, message: "请输入输入价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                        <Form.Item name={[index, "outputTokenPrice"]} label="输出 / 百万 Token" rules={[{ required: true, message: "请输入输出价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                        <Form.Item name={[index, "cachedTokenPrice"]} label="缓存 / 百万 Token" rules={[{ required: true, message: "请输入缓存价格" }]}><InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} /></Form.Item>
+                    </div>
+                )
+            ) : (
+                <Form.Item name={[index, "unitPrice"]} label={billingMode === "per_second" ? "每秒消耗积分" : "每次消耗积分"} rules={[{ required: true, message: "请输入积分价格" }]}>
+                    <InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} />
+                </Form.Item>
+            )}
+            <div className="flex items-center gap-8">
+                <Form.Item name={[index, "priceConfigured"]} label="价格已配置" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
+                <Form.Item name={[index, "enabled"]} label="启用此价格档" valuePropName="checked" className="mb-0"><Switch /></Form.Item>
+            </div>
         </div>
     );
+}
+
+function defaultPriceTier(): PriceTierFormValues {
+    return { resolution: "*", videoSeconds: 0, providerModelKey: "", billingMode: "fixed_request", unitPrice: 0, inputTokenPrice: 0, outputTokenPrice: 0, cachedTokenPrice: 0, priceConfigured: true, enabled: true };
+}
+
+function priceTierToForm(tier: ChannelModelPriceTier): PriceTierFormValues {
+    return {
+        resolution: tier.resolution || "*", videoSeconds: tier.videoSeconds || 0, providerModelKey: tier.providerModelKey || "", billingMode: tier.billingMode,
+        unitPrice: tier.unitPriceMicrocredits / 1_000_000, inputTokenPrice: tier.inputTokenPriceMicrocredits / 1_000_000,
+        outputTokenPrice: tier.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: tier.cachedTokenPriceMicrocredits / 1_000_000,
+        priceConfigured: tier.priceConfigured, enabled: tier.enabled,
+    };
+}
+
+function legacyPriceTierToForm(item: ChannelModel): PriceTierFormValues {
+    return {
+        resolution: "*", videoSeconds: 0, providerModelKey: item.providerModelKey || "", billingMode: item.billingMode,
+        unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000,
+        outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000,
+        priceConfigured: item.priceConfigured, enabled: item.enabled,
+    };
+}
+
+function billingSummary(item: ChannelModel) {
+	const tiers = item.priceTiers?.filter((tier) => tier.enabled && tier.priceConfigured) || [];
+	if (!tiers.length) return <AdminStatusBadge label="未配置价格" tone="warning" />;
+	return <div className="space-y-1 text-xs leading-5">{tiers.slice(0, 3).map((tier) => <div key={tier.id}>{priceTierLabel(tier)}</div>)}{tiers.length > 3 ? <div className="text-foreground/45">另有 {tiers.length - 3} 个规格价格档</div> : null}</div>;
+}
+
+function priceTierLabel(tier: ChannelModelPriceTier) {
+    const spec = [tier.resolution === "*" ? "任意分辨率" : tier.resolution.toUpperCase(), tier.videoSeconds ? `${tier.videoSeconds} 秒` : "任意时长"].join(" / ");
+    if (tier.billingMode === "token") return `${spec} · ${formatCredits(tier.outputTokenPriceMicrocredits)} / 百万 Token`;
+    return `${spec} · ${formatCredits(tier.unitPriceMicrocredits)} 积分 / ${tier.billingMode === "per_second" ? "秒" : "次"}`;
 }
 
 function formatCredits(value: number) {
