@@ -122,6 +122,24 @@ export type ChannelModelPriceTier = {
     updatedAt: string;
 };
 
+// 系统渠道模型的写入合同。标量价格只用于兼容旧管理请求；新的后台界面只提交 priceTiers。
+export type ChannelModelMutation = {
+    modelKey: string;
+    providerModelKey?: string;
+    displayName?: string;
+    capability: ChannelModel["capability"];
+    protocol?: ChannelModel["protocol"];
+    enabled?: boolean;
+    capabilityConfig?: ChannelModel["capabilityConfig"];
+    priceTiers?: Array<Omit<ChannelModelPriceTier, "id" | "channelModelId" | "priceVersion" | "createdAt" | "updatedAt">>;
+    billingMode?: ChannelModel["billingMode"];
+    unitPriceMicrocredits?: number;
+    inputTokenPriceMicrocredits?: number;
+    outputTokenPriceMicrocredits?: number;
+    cachedTokenPriceMicrocredits?: number;
+    priceConfigured?: boolean;
+};
+
 export type LinuxDOSetting = {
     enabled: boolean;
     clientId: string;
@@ -306,11 +324,11 @@ export function testAdminChannelModel(channelId: string, input: Pick<ChannelMode
     return request<{ durationMs: number }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models/test`, input, { timeout: 10 * 60 * 1000 }));
 }
 
-export function createAdminChannelModel(channelId: string, input: Omit<ChannelModel, "id" | "channelId" | "priceVersion" | "createdAt" | "updatedAt">) {
+export function createAdminChannelModel(channelId: string, input: ChannelModelMutation) {
     return request<{ model: ChannelModel }>(api.post(`/admin/channels/${encodeURIComponent(channelId)}/models`, input));
 }
 
-export function updateAdminChannelModel(channelId: string, id: string, input: Omit<ChannelModel, "id" | "channelId" | "priceVersion" | "createdAt" | "updatedAt">) {
+export function updateAdminChannelModel(channelId: string, id: string, input: ChannelModelMutation) {
     return request<{ model: ChannelModel }>(api.patch(`/admin/channels/${encodeURIComponent(channelId)}/models/${encodeURIComponent(id)}`, input));
 }
 
