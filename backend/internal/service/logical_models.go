@@ -18,22 +18,25 @@ import (
 var logicalModelCodePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,79}$`)
 
 type LogicalModelRequest struct {
-	Code                    string                `json:"code"`
-	Name                    string                `json:"name"`
-	Icon                    string                `json:"icon"`
-	Description             string                `json:"description"`
-	Capability              string                `json:"capability"`
-	Enabled                 bool                  `json:"enabled"`
-	SortOrder               int                   `json:"sortOrder"`
-	PricePolicy             string                `json:"pricePolicy"`
-	BillingMode             string                `json:"billingMode"`
-	UnitPriceMicrocredits   int64                 `json:"unitPriceMicrocredits"`
-	InputPriceMicrocredits  int64                 `json:"inputPriceMicrocredits"`
-	OutputPriceMicrocredits int64                 `json:"outputPriceMicrocredits"`
-	CachedPriceMicrocredits int64                 `json:"cachedPriceMicrocredits"`
-	CapabilitySpec          CapabilitySpec        `json:"capabilitySpec"`
-	DefaultOptions          map[string]any        `json:"defaultOptions"`
-	Routes                  []LogicalRouteRequest `json:"routes"`
+	Code                    string `json:"code"`
+	Name                    string `json:"name"`
+	Icon                    string `json:"icon"`
+	Description             string `json:"description"`
+	Capability              string `json:"capability"`
+	Enabled                 bool   `json:"enabled"`
+	SortOrder               int    `json:"sortOrder"`
+	PricePolicy             string `json:"pricePolicy"`
+	BillingMode             string `json:"billingMode"`
+	UnitPriceMicrocredits   int64  `json:"unitPriceMicrocredits"`
+	InputPriceMicrocredits  int64  `json:"inputPriceMicrocredits"`
+	OutputPriceMicrocredits int64  `json:"outputPriceMicrocredits"`
+	CachedPriceMicrocredits int64  `json:"cachedPriceMicrocredits"`
+	// LegacyModelIDs 只用于将用户本地保存的旧目录选择迁移到当前模型家族，
+	// 不能用它重写任务、账单或路由尝试中的不可变快照。
+	LegacyModelIDs []string              `json:"legacyModelIds"`
+	CapabilitySpec CapabilitySpec        `json:"capabilitySpec"`
+	DefaultOptions map[string]any        `json:"defaultOptions"`
+	Routes         []LogicalRouteRequest `json:"routes"`
 }
 
 type LogicalRouteRequest struct {
@@ -57,6 +60,7 @@ type PublicLogicalModel struct {
 	InputPriceMicrocredits  int64          `json:"inputPriceMicrocredits"`
 	OutputPriceMicrocredits int64          `json:"outputPriceMicrocredits"`
 	CachedPriceMicrocredits int64          `json:"cachedPriceMicrocredits"`
+	LegacyModelIDs          []string       `json:"legacyModelIds"`
 	CapabilitySpec          CapabilitySpec `json:"capabilitySpec"`
 	// CapabilityProfiles 是创作端可见的匿名能力组合，不暴露其背后的供应线路关系。
 	CapabilityProfiles []CapabilitySpec `json:"capabilityProfiles"`
@@ -159,7 +163,29 @@ func publicLogicalModel(cached cachedLogicalModel, available bool) PublicLogical
 			profiles = append(profiles, route.CapabilitySpec)
 		}
 	}
-	return PublicLogicalModel{ID: item.ID, Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: item.Capability, SortOrder: item.SortOrder, PricePolicy: item.PricePolicy, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputPriceMicrocredits: item.InputPriceMicrocredits, OutputPriceMicrocredits: item.OutputPriceMicrocredits, CachedPriceMicrocredits: item.CachedPriceMicrocredits, CapabilitySpec: productSpec, CapabilityProfiles: profiles, DefaultOptions: cached.Defaults, Available: available}
+	return PublicLogicalModel{ID: item.ID, Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: item.Capability, SortOrder: item.SortOrder, PricePolicy: item.PricePolicy, BillingMode: item.BillingMode, UnitPriceMicrocredits: item.UnitPriceMicrocredits, InputPriceMicrocredits: item.InputPriceMicrocredits, OutputPriceMicrocredits: item.OutputPriceMicrocredits, CachedPriceMicrocredits: item.CachedPriceMicrocredits, LegacyModelIDs: decodeLegacyModelIDs(item.LegacyModelIDsJSON), CapabilitySpec: productSpec, CapabilityProfiles: profiles, DefaultOptions: cached.Defaults, Available: available}
+}
+
+func decodeLegacyModelIDs(raw string) []string {
+	var values []string
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return []string{}
+	}
+	return normalizeLegacyModelIDs(values)
+}
+
+func normalizeLegacyModelIDs(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 // capabilitySpecWithRoutePresets repairs old front-model snapshots that stored
@@ -507,6 +533,13 @@ func (s *Service) logicalModelBundle(actor *model.User, id string, req LogicalMo
 	item.Code, item.Name, item.Icon, item.Description, item.Capability = code, name, strings.TrimSpace(req.Icon), strings.TrimSpace(req.Description), capability
 	item.Enabled, item.SortOrder, item.PricePolicy, item.BillingMode = req.Enabled, req.SortOrder, pricePolicy, billingMode
 	item.UnitPriceMicrocredits, item.InputPriceMicrocredits, item.OutputPriceMicrocredits, item.CachedPriceMicrocredits = req.UnitPriceMicrocredits, req.InputPriceMicrocredits, req.OutputPriceMicrocredits, req.CachedPriceMicrocredits
+	if req.LegacyModelIDs != nil {
+		legacyJSON, marshalErr := json.Marshal(normalizeLegacyModelIDs(req.LegacyModelIDs))
+		if marshalErr != nil {
+			return nil, nil, nil, false, marshalErr
+		}
+		item.LegacyModelIDsJSON = string(legacyJSON)
+	}
 	item.UpdatedAt = time.Now()
 	revisionID, err := s.repo.NextPrefixedID("REVISION")
 	if err != nil {

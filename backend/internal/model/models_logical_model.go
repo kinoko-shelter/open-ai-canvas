@@ -28,6 +28,9 @@ type LogicalModel struct {
 	InputPriceMicrocredits  int64  `json:"inputPriceMicrocredits"`
 	OutputPriceMicrocredits int64  `json:"outputPriceMicrocredits"`
 	CachedPriceMicrocredits int64  `json:"cachedPriceMicrocredits"`
+	// LegacyModelIDsJSON 用于创作端把已保存的旧 SKU 选择无缝映射到新的模型家族。
+	// 这只是目录兼容信息，任务、路由尝试和账单仍固定引用其创建时的 ID 快照。
+	LegacyModelIDsJSON string `json:"-" gorm:"type:text"`
 	// ArchivedAt 仅从可选目录隐藏模型；历史任务、计费和审计仍需读取主体及不可变 revision。
 	ArchivedAt *time.Time `json:"-" gorm:"index"`
 	CreatedAt  time.Time  `json:"createdAt"`

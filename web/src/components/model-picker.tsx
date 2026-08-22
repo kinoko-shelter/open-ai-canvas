@@ -4,12 +4,13 @@ import { Popover } from "antd";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, videoDurationOptions } from "@/lib/model-capabilities";
-import { compatibleModelInGroup, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
+import { compatibleModelInGroup, groupModelsByDisplayName, modelCompatibilityError, modelRequestOptions, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
 import { modelDisplayName, modelIcon, modelOptionLabel, modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { ModelLogo } from "@/components/model-logo";
+import { quoteLogicalModel, type LogicalModelQuote, type ModelRequestIntent } from "@/services/api/logical-models";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -57,9 +58,28 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         return ungroupedModels.length ? [...channelGroups, { key: "ungrouped", label: "其他模型", scope: "未指定渠道", models: groupModelsByDisplayName(config, ungroupedModels) }] : channelGroups;
     }, [config, options]);
     const current = value || "";
-    const resolvedCurrent = resolveCompatibleModel(config, current, requirements) || current;
+    // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
+    const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
+    const resolvedCurrent = resolveCompatibleModel(config, current, selectionRequirements) || current;
     const currentPrice = modelMenuPrice(config, resolvedCurrent);
+    const quoteRequest = useMemo(() => modelQuoteRequest(config, resolvedCurrent, capability, requirements), [capability, config, requirements, resolvedCurrent]);
+    const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
     const creationVariant = variant === "creation";
+
+    useEffect(() => {
+        if (!showSelectedPrice || !creditsEnabled || !quoteRequest) {
+            setRouteQuote(undefined);
+            return;
+        }
+        const controller = new AbortController();
+        setRouteQuote(undefined);
+        quoteLogicalModel(quoteRequest.logicalModelID, quoteRequest.intent, controller.signal)
+            .then((payload) => setRouteQuote(payload.quote))
+            .catch(() => {
+                if (!controller.signal.aborted) setRouteQuote(undefined);
+            });
+        return () => controller.abort();
+    }, [creditsEnabled, quoteRequest, showSelectedPrice]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -143,9 +163,9 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                         <div className="grid min-w-0 gap-1">
                             {group.models.map((modelGroup) => {
                                 const selected = modelGroup.models.includes(current);
-                                const model = compatibleModelInGroup(config, modelGroup.models, requirements, selected ? current : undefined);
+                                const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
                                 const displayModel = model || (selected ? current : modelGroup.models[0]);
-                                const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], requirements) || "当前输入不符合该模型能力";
+                                const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
                                 return (
                                     <button
                                         key={modelGroup.key}
@@ -210,7 +230,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                             <ModelIcon config={config} model={current} />
                         </span>
                         <span className="min-w-0 flex-1 truncate">{current ? (creationVariant ? modelDisplayName(config, current) : modelOptionLabel(config, current)) : placeholder}</span>
-                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} compact /> : null}
+                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} compact /> : null}
                     </span>
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
@@ -330,6 +350,7 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
 
 type ModelMenuPrice =
     | { kind: "channel" }
+    | { kind: "estimate" }
     | { kind: "fixed"; value: number; unit: "次" | "秒" | "百万 Token" };
 
 function modelMenuPrice(config: AiConfig, model: string): ModelMenuPrice | null | undefined {
@@ -339,13 +360,21 @@ function modelMenuPrice(config: AiConfig, model: string): ModelMenuPrice | null 
     if (!cost) return channel.scope === "system" ? null : undefined;
     // 跟随供应价格会因实际命中的线路和能力档位变化，不能把逻辑模型中的零占位价展示给用户。
     if (cost.pricePolicy === "channel") return { kind: "channel" };
-    if (cost.billingMode === "token") {
-        return { kind: "fixed", value: (cost.outputTokenPriceMicrocredits || 0) / 1_000_000, unit: "百万 Token" };
-    }
+    if (cost.billingMode === "token") return { kind: "estimate" };
     return { kind: "fixed", value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
 }
 
-function ModelPrice({ price, compact = false }: { price: ModelMenuPrice | null | undefined; compact?: boolean }) {
+function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; compact?: boolean }) {
+    if (quote) {
+        const amount = (quote.amountMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+        const label = quote.estimated ? `预计 ${amount}` : `${amount}`;
+        return (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={`${quote.estimated ? "预计" : "本次"}消耗 ${amount} 积分`}>
+                <Coins className="size-3" />
+                {compact ? label : `${label} 积分`}
+            </span>
+        );
+    }
     if (price === undefined) return null;
     if (price === null) return compact ? null : <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/40">未配置</span>;
     if (price.kind === "channel") {
@@ -356,12 +385,40 @@ function ModelPrice({ price, compact = false }: { price: ModelMenuPrice | null |
             </span>
         );
     }
+    if (price.kind === "estimate") {
+        return <span className="shrink-0 text-[var(--fs-tiny)] font-medium text-amber-600 dark:text-amber-300">按量预估</span>;
+    }
     return (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}>
             <Coins className="size-3" />
             {price.value.toLocaleString("zh-CN", { maximumFractionDigits: compact ? 3 : 6 })}/{price.unit}
         </span>
     );
+}
+
+function modelQuoteRequest(config: AiConfig, value: string, capability?: ModelCapability, requirements?: ModelRequirements): { logicalModelID: string; intent: ModelRequestIntent } | undefined {
+    if (!capability || !value) return undefined;
+    const channel = resolveModelChannel(config, value);
+    if (channel.scope !== "system") return undefined;
+    const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(value));
+    if (!cost?.logicalModelId) return undefined;
+    const input = requirements?.input;
+    const intent: ModelRequestIntent = {
+        capability,
+        operation: requirements?.videoOperation,
+        inputs: {
+            image: (input?.imageCount || 0) + (input?.characterCount || 0),
+            video: input?.videoCount || 0,
+            audio: input?.audioCount || 0,
+        },
+        options: {
+            ...modelRequestOptions(config, capability),
+            ...(requirements?.options || {}),
+            ...(requirements?.videoSeconds ? { videoSeconds: Number(requirements.videoSeconds) } : {}),
+            ...(requirements?.imageSize ? { size: requirements.imageSize } : {}),
+        },
+    };
+    return { logicalModelID: cost.logicalModelId, intent };
 }
 
 function modelMenuMeta(model: string, capability?: ModelCapability): { description: string; time?: string } {

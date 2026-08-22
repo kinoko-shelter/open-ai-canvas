@@ -359,6 +359,7 @@ func (r *Repository) SaveLogicalModelBundle(item *model.LogicalModel, revision *
 				"input_price_microcredits":  item.InputPriceMicrocredits,
 				"output_price_microcredits": item.OutputPriceMicrocredits,
 				"cached_price_microcredits": item.CachedPriceMicrocredits,
+				"legacy_model_ids_json":     item.LegacyModelIDsJSON,
 				"updated_at":                item.UpdatedAt,
 			})
 			if result.Error != nil {

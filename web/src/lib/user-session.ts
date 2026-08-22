@@ -75,6 +75,9 @@ function managedModelChannels(models: PublicLogicalModel[]) {
         scope: "system",
         enabled: true,
         models: availableModels.map((item) => item.id),
+        modelAliases: Object.fromEntries(
+            availableModels.flatMap((item) => (item.legacyModelIds || []).map((legacyID) => [legacyID, item.id])),
+        ),
         modelCosts: availableModels.map((item) => ({
             model: item.id,
             displayName: item.name,

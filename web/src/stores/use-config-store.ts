@@ -27,6 +27,8 @@ export type ModelChannel = {
     interfaceType?: ChannelInterfaceType;
     allowLocalChannel?: boolean;
     models: string[];
+    // 仅平台目录使用：将已保存的旧 SKU 选择重定向到当前模型家族。
+    modelAliases?: Record<string, string>;
     scope?: "system" | "user";
     enabled?: boolean;
     hasApiKey?: boolean;
@@ -434,10 +436,12 @@ export function normalizeModelOptionValue(value: unknown, channels: ModelChannel
     const decoded = decodeChannelModel(model);
     if (decoded) {
         const channel = channels.find((item) => item.id === decoded.channelId);
-        return channel && channel.models.includes(decoded.model) ? model : "";
+        const resolved = channel?.modelAliases?.[decoded.model] || decoded.model;
+        return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
     }
-    const channel = channels.find((item) => item.models.includes(model)) || channels[0];
-    return channel && channel.models.includes(model) ? encodeChannelModel(channel.id, model) : "";
+    const channel = channels.find((item) => item.models.includes(model) || Boolean(item.modelAliases?.[model])) || channels[0];
+    const resolved = channel?.modelAliases?.[model] || model;
+    return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
