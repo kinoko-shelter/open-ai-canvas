@@ -134,18 +134,21 @@ func (s *Service) FetchAdminChannelModels(ctx context.Context, actor *model.User
 	if err != nil {
 		return nil, err
 	}
-	// 只按当前未删除记录去重；重新拉取已删除模型时应生成新的待配置记录。
+	// 只按当前未删除记录去重；普通手动删除的模型仍可重新拉取，已合并进模型家族的 SKU 除外。
 	existing, err := s.repo.ChannelModels(channelID, true)
 	if err != nil {
 		return nil, err
 	}
 	known := make(map[string]struct{}, len(existing))
 	for _, item := range existing {
-		known[item.ModelKey] = struct{}{}
+		known[channelModelCatalogKey(item.ModelKey)] = struct{}{}
 	}
+	retired := retiredChannelModelKeys(channel.RetiredModelsJSON)
 	missing := make([]model.ChannelModel, 0, len(models))
 	for _, name := range models {
-		if _, ok := known[name]; ok {
+		name = strings.TrimPrefix(strings.TrimSpace(name), "models/")
+		key := channelModelCatalogKey(name)
+		if _, ok := known[key]; ok || retired[key] {
 			continue
 		}
 		// 自动发现不能绕过定价边界；新模型由管理员定价后再手动启用。
@@ -693,8 +696,12 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 		byKey[existing[index].ModelKey] = &existing[index]
 	}
 	desired := make(map[string]bool, len(names))
+	retired := retiredChannelModelKeys(channel.RetiredModelsJSON)
 	for _, name := range uniqueNonEmpty(names) {
 		name = strings.TrimPrefix(name, "models/")
+		if retired[channelModelCatalogKey(name)] {
+			continue
+		}
 		desired[name] = true
 		if item := byKey[name]; item != nil {
 			if !item.Enabled {
@@ -725,6 +732,22 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 		}
 	}
 	return nil
+}
+
+func retiredChannelModelKeys(raw string) map[string]bool {
+	var values []string
+	_ = json.Unmarshal([]byte(raw), &values)
+	result := make(map[string]bool, len(values))
+	for _, value := range values {
+		if key := channelModelCatalogKey(value); key != "" {
+			result[key] = true
+		}
+	}
+	return result
+}
+
+func channelModelCatalogKey(value string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "models/"))
 }
 
 func (s *Service) ensureChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {
