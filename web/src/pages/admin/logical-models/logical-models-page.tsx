@@ -220,6 +220,7 @@ export default function LogicalModelsPage() {
         {
             title: "前台模型",
             dataIndex: "name",
+            width: 250,
             render: (_, item) => (
                 <div className="flex min-w-0 items-center gap-2">
                     <ModelLogo icon={item.icon} size={20} />
@@ -234,7 +235,7 @@ export default function LogicalModelsPage() {
         { title: "创作端能力", width: 360, render: (_, item) => <CapabilitySummary spec={item.capabilitySpec} /> },
         {
             title: "供应线路",
-            width: 110,
+            width: 120,
             render: (_, item) => (
                 <div className="text-xs">
                     <div>{item.routes.filter((route) => route.enabled && route.available).length} 条可用</div>
@@ -246,7 +247,7 @@ export default function LogicalModelsPage() {
         { title: "状态", width: 130, render: (_, item) => logicalModelStatusTag(item) },
         {
             title: "操作",
-            width: 250,
+            width: 220,
             align: "right",
             render: (_, item) => (
                 <AdminRowActions
@@ -279,6 +280,7 @@ export default function LogicalModelsPage() {
                             onClick: () => void removeModel(item),
                         },
                     ]}
+                    visibleActionCount={1}
                 />
             ),
         },
@@ -316,7 +318,7 @@ export default function LogicalModelsPage() {
                     setKeyword("");
                     setPage(1);
                 }}
-                table={{ className: "admin-logical-model-table", rowKey: "id", size: "small", loading, pagination: false, columns: modelColumns, dataSource: paginatedModels, scroll: { x: 980 } }}
+                table={{ className: "admin-logical-model-table", rowKey: "id", size: "small", loading, pagination: false, columns: modelColumns, dataSource: paginatedModels, tableLayout: "fixed", scroll: { x: 1330 } }}
                 empty={<AdminTableEmpty filtered={Boolean(deferredKeyword)} title="暂无模型" />}
                 footer={
                     <PaginationBar

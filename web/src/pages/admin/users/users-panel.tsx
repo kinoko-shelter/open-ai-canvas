@@ -242,7 +242,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                     columns,
                     dataSource: users,
                     pagination: false,
-                    scroll: { x: 860 },
+                    scroll: { x: "max-content" },
                 }}
                 empty={<AdminTableEmpty filtered={hasFilters} />}
                 footer={<PaginationBar alwaysShow current={state.page} pageSize={state.pageSize} total={total} onChange={(page, pageSize) => update({ page: pageSize !== state.pageSize ? 1 : page, pageSize })} />}

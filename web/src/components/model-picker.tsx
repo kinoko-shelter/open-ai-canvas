@@ -408,8 +408,13 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
 
 type ModelMenuPrice =
     | { kind: "tiers"; label: string; compactLabel: string; title: string }
-    | { kind: "estimate" }
     | { kind: "fixed"; value: number; unit: "次" | "秒" | "百万 Token" };
+
+type TokenPrice = {
+    inputTokenPriceMicrocredits?: number;
+    outputTokenPriceMicrocredits?: number;
+    cachedTokenPriceMicrocredits?: number;
+};
 
 function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
@@ -421,7 +426,7 @@ function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapab
         if (!tiers.length) return null;
         return channelTierPriceSummary(priceTiersForCurrentSelection(tiers, capability, config), tiers);
     }
-    if (cost.billingMode === "token") return { kind: "estimate" };
+    if (cost.billingMode === "token") return tokenPriceSummary([cost]);
     return { kind: "fixed", value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
 }
 
@@ -446,8 +451,10 @@ function priceTiersForCurrentSelection(
     for (const tier of tiers) {
 		const selector = tier.selector || {};
 		const conditions = Object.entries(selector).filter(([, value]) => value && value !== "*");
-		if (conditions.some(([key, value]) => requested[key] !== value)) continue;
-		const score = conditions.length;
+		// 未选择具体规格（auto）时汇总可用档位，不能误报为未配置。
+		const requestedConditions = conditions.filter(([key]) => requested[key] !== undefined);
+		if (requestedConditions.some(([key, value]) => requested[key] !== value)) continue;
+		const score = requestedConditions.length;
         if (score > bestScore) {
             bestScore = score;
             matched = [tier];
@@ -476,26 +483,66 @@ function channelTierPriceSummary(
         .filter((tier) => tier.billingMode === "per_second")
         .map((tier) => tier.unitPriceMicrocredits / 1_000_000)
         .filter((value) => value > 0);
-    const hasTokenTier = visibleTiers.some((tier) => tier.billingMode === "token");
+    const tokenTiers = visibleTiers.filter((tier) => tier.billingMode === "token");
+    const tokenPrice = tokenTiers.length ? tokenPriceSummary(tokenTiers) : undefined;
     const label = fixedRequestValues.length
         ? formatPriceRange(fixedRequestValues, "积分")
         : perSecondValues.length
             ? formatPriceRange(perSecondValues, "积分/秒")
-            : hasTokenTier
-                ? "按量预估"
+            : tokenPrice
+                ? tokenPrice.label
                 : "未配置";
     return {
         kind: "tiers",
         label,
-        compactLabel: label,
+        compactLabel: tokenPrice?.compactLabel || label,
         title: `系统规格价格：${allTiers.map((tier) => `${tierSpecificationLabel(tier)} ${tierPriceLabel(tier)}`).join("；")}`,
     };
 }
 
 function formatPriceRange(values: number[], suffix: string) {
+    return `${formatPriceValues(values)} ${suffix}`;
+}
+
+function formatPriceValues(values: number[]) {
     const unique = Array.from(new Set(values)).sort((left, right) => left - right);
     const format = (value: number) => value.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
-    return unique.length === 1 ? `${format(unique[0])} ${suffix}` : `${format(unique[0])}-${format(unique[unique.length - 1])} ${suffix}`;
+    return unique.length === 1 ? format(unique[0]) : `${format(unique[0])}-${format(unique[unique.length - 1])}`;
+}
+
+function tokenPriceSummary(prices: TokenPrice[]): Extract<ModelMenuPrice, { kind: "tiers" }> {
+    const rates = {
+        input: tokenPriceValues(prices, "inputTokenPriceMicrocredits"),
+        output: tokenPriceValues(prices, "outputTokenPriceMicrocredits"),
+        cached: tokenPriceValues(prices, "cachedTokenPriceMicrocredits"),
+    };
+    const hasConfiguredRate = Object.values(rates).some((values) => values.some((value) => value > 0));
+    const visibleRates = hasConfiguredRate
+        ? [rates.input, rates.output].filter((values) => values.length)
+        : [];
+    const label = visibleRates.length
+        ? `${visibleRates.map(formatPriceValues).join("/")} 积分/M Token`
+        : "Token 计费";
+    const titleParts = hasConfiguredRate
+        ? [
+            rates.input.length ? `输入 ${formatPriceRange(rates.input, "积分/百万 Token")}` : "",
+            rates.output.length ? `输出 ${formatPriceRange(rates.output, "积分/百万 Token")}` : "",
+            rates.cached.length ? `缓存 ${formatPriceRange(rates.cached, "积分/百万 Token")}` : "",
+        ].filter(Boolean)
+        : [];
+    return {
+        kind: "tiers",
+        label,
+        compactLabel: "Token 计费",
+        title: titleParts.length ? `Token 单价：${titleParts.join("；")}` : "按 Token 计费，实际消耗以任务结算为准",
+    };
+}
+
+function tokenPriceValues(prices: TokenPrice[], key: keyof TokenPrice) {
+    return prices
+        .map((price) => price[key])
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0)
+        .map((value) => value / 1_000_000);
 }
 
 function tierResolutionLabel(value: string) {
@@ -522,7 +569,7 @@ function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels
 }
 
 function tierPriceLabel(tier: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>[number]) {
-    if (tier.billingMode === "token") return "按量预估";
+    if (tier.billingMode === "token") return tokenPriceSummary([tier]).label;
     return `${formatPriceRange([tier.unitPriceMicrocredits / 1_000_000], tier.billingMode === "per_second" ? "积分/秒" : "积分")}`;
 }
 
@@ -547,9 +594,6 @@ function ModelPrice({ price, quote, loading = false, compact = false }: { price:
                 {compact ? price.compactLabel : price.label}
             </span>
         );
-    }
-    if (price.kind === "estimate") {
-        return <span className="shrink-0 text-[var(--fs-tiny)] font-medium text-amber-600 dark:text-amber-300">按量预估</span>;
     }
     return (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={`每${price.unit}消耗 ${price.value.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`}>

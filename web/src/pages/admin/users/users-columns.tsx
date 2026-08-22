@@ -44,14 +44,15 @@ export function createUserColumns({
             key: "user",
             title: "用户",
             dataIndex: "username",
+            width: 220,
             render: (_, user) => (
-                <div>
-                    <div className="flex items-center gap-1.5"><button type="button" className="admin-table-primary-link font-medium" onClick={() => onView(user)}>{user.displayName || user.username}</button><IdentityProviderBadge user={user} /></div>
-                    <div className="text-xs text-foreground/45">@{user.username}</div>
+                <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5"><button type="button" className="admin-table-primary-link min-w-0 truncate font-medium" title={user.displayName || user.username} onClick={() => onView(user)}>{user.displayName || user.username}</button><IdentityProviderBadge user={user} /></div>
+                    <div className="truncate text-xs text-foreground/45" title={`@${user.username}`}>@{user.username}</div>
                 </div>
             ),
         },
-        { key: "email", title: "邮箱", dataIndex: "email", render: (email) => email || <span className="text-foreground/40">未填写</span> },
+        { key: "email", title: "邮箱", dataIndex: "email", width: 240, ellipsis: true, render: (email) => email || <span className="text-foreground/40">未填写</span> },
         { key: "department", title: "所属团队", dataIndex: "departmentName", width: 160, render: (value) => value || <span className="text-foreground/40">未分配</span> },
         {
             key: "credits",
