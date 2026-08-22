@@ -68,8 +68,7 @@ export function createUserColumns({
         {
             key: "actions",
             title: "操作",
-            width: 236,
-            fixed: "right",
+            width: 250,
             align: "right",
             render: (_, user) => (
                 <AdminRowActions

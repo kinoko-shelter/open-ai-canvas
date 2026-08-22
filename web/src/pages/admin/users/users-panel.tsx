@@ -128,6 +128,10 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
         onToggleStatus: toggleStatus,
         onImpersonate: impersonateUser,
     }), [actor?.id, canImpersonateUsers, impersonateUser, toggleStatus, visibleColumns]);
+    const tableScrollWidth = useMemo(
+        () => Math.max(760, columns.reduce((width, column) => width + (typeof column.width === "number" ? column.width : 140), 48)),
+        [columns],
+    );
 
     const resetFilters = () => update({ filter: "", role: "all", status: "all", page: 1 });
 
@@ -242,7 +246,8 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
                     columns,
                     dataSource: users,
                     pagination: false,
-                    scroll: { x: "max-content" },
+                    tableLayout: "fixed",
+                    scroll: { x: tableScrollWidth },
                 }}
                 empty={<AdminTableEmpty filtered={hasFilters} />}
                 footer={<PaginationBar alwaysShow current={state.page} pageSize={state.pageSize} total={total} onChange={(page, pageSize) => update({ page: pageSize !== state.pageSize ? 1 : page, pageSize })} />}
