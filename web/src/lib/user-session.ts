@@ -109,11 +109,10 @@ function managedModelChannels(models: PublicLogicalModel[]) {
 }
 
 function systemChannelModelChannels(channels: PublicChannelCatalog[]): ModelChannel[] {
-    return channels
-        .map((channel) => {
-            const models = channel.models.filter((item) => item.available);
-            if (!models.length) return null;
-            return {
+    return channels.reduce<ModelChannel[]>((result, channel) => {
+        const models = channel.models.filter((item) => item.available);
+        if (models.length) {
+            result.push({
                 id: channel.id,
                 name: channel.displayName || channel.name,
                 baseUrl: "/api",
@@ -139,9 +138,10 @@ function systemChannelModelChannels(channels: PublicChannelCatalog[]): ModelChan
                         logicalPriceTiers: item.priceTiers,
                     };
                 }),
-            } satisfies ModelChannel;
-        })
-        .filter((channel): channel is ModelChannel => Boolean(channel));
+            });
+        }
+        return result;
+    }, []);
 }
 
 function projectLogicalCapability(spec: CapabilitySpec, defaults: Record<string, unknown>): ModelCapabilityConfig {
