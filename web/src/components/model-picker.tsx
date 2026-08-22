@@ -60,27 +60,80 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     }, [config, options]);
     const current = value || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
-    const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
+    const selectionRequirements = useMemo(
+        () => requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined,
+        [requirements],
+    );
     const resolvedCurrent = resolveCompatibleModel(config, current, selectionRequirements) || current;
     const currentPrice = modelMenuPrice(config, resolvedCurrent, capability);
     const quoteRequest = useMemo(() => modelQuoteRequest(config, resolvedCurrent, capability, requirements), [capability, config, requirements, resolvedCurrent]);
+    const menuQuoteRequests = useMemo(() => {
+        const requests = new Map<string, { logicalModelID: string; intent: ModelRequestIntent }>();
+        optionGroups.forEach((group) => {
+            group.models.forEach((modelGroup) => {
+                const selected = modelGroup.models.includes(current);
+                const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
+                const request = model ? modelQuoteRequest(config, model, capability, requirements) : undefined;
+                if (model && request) requests.set(model, request);
+            });
+        });
+        return Array.from(requests.entries());
+    }, [capability, config, current, optionGroups, requirements, selectionRequirements]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
+    const [routeQuoteLoading, setRouteQuoteLoading] = useState(false);
+    const [menuQuotes, setMenuQuotes] = useState<Record<string, LogicalModelQuote>>({});
+    const [menuQuotesLoading, setMenuQuotesLoading] = useState(false);
     const creationVariant = variant === "creation";
 
     useEffect(() => {
         if (!showSelectedPrice || !creditsEnabled || !quoteRequest) {
             setRouteQuote(undefined);
+            setRouteQuoteLoading(false);
             return;
         }
         const controller = new AbortController();
         setRouteQuote(undefined);
+        setRouteQuoteLoading(true);
         quoteLogicalModel(quoteRequest.logicalModelID, quoteRequest.intent, controller.signal)
-            .then((payload) => setRouteQuote(payload.quote))
+            .then((payload) => {
+                if (!controller.signal.aborted) setRouteQuote(payload.quote);
+            })
             .catch(() => {
                 if (!controller.signal.aborted) setRouteQuote(undefined);
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setRouteQuoteLoading(false);
             });
         return () => controller.abort();
     }, [creditsEnabled, quoteRequest, showSelectedPrice]);
+
+    useEffect(() => {
+        if (!open || !creditsEnabled || !menuQuoteRequests.length) {
+            setMenuQuotes({});
+            setMenuQuotesLoading(false);
+            return;
+        }
+        const controller = new AbortController();
+        setMenuQuotes({});
+        setMenuQuotesLoading(true);
+        Promise.all(menuQuoteRequests.map(async ([model, request]) => {
+            try {
+                const payload = await quoteLogicalModel(request.logicalModelID, request.intent, controller.signal);
+                return [model, payload.quote] as const;
+            } catch {
+                return undefined;
+            }
+        })).then((entries) => {
+            if (controller.signal.aborted) return;
+            const quotes: Record<string, LogicalModelQuote> = {};
+            entries.forEach((entry) => {
+                if (entry) quotes[entry[0]] = entry[1];
+            });
+            setMenuQuotes(quotes);
+            setMenuQuotesLoading(false);
+        });
+        return () => controller.abort();
+    }, [creditsEnabled, menuQuoteRequests, open]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -185,7 +238,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                                             window.requestAnimationFrame(() => triggerRef.current?.focus());
                                         }}
                                     >
-                                        <ModelLabel config={config} model={displayModel} capability={capability} theme={theme} creationVariant={creationVariant} showPrice={creditsEnabled} disabledReason={disabledReason} />
+                                        <ModelLabel config={config} model={displayModel} capability={capability} theme={theme} creationVariant={creationVariant} showPrice={creditsEnabled} quote={menuQuotes[displayModel]} quoteLoading={menuQuotesLoading && menuQuoteRequests.some(([quotedModel]) => quotedModel === displayModel)} disabledReason={disabledReason} />
                                         {selected ? <Check className="canvas-model-picker-option-check" style={{ color: theme.node.activeStroke }} /> : null}
                                     </button>
                                 );
@@ -231,7 +284,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                             <ModelIcon config={config} model={current} />
                         </span>
                         <span className="min-w-0 flex-1 truncate">{current ? (creationVariant ? modelDisplayName(config, current) : modelOptionLabel(config, current)) : placeholder}</span>
-                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} compact /> : null}
+                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} loading={routeQuoteLoading} compact /> : null}
                     </span>
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
@@ -253,6 +306,8 @@ function ModelLabel({
     theme,
     creationVariant,
     showPrice,
+    quote,
+    quoteLoading,
     disabledReason,
 }: {
     config: AiConfig;
@@ -261,6 +316,8 @@ function ModelLabel({
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     creationVariant: boolean;
     showPrice: boolean;
+    quote?: LogicalModelQuote;
+    quoteLoading: boolean;
     disabledReason?: string;
 }) {
     const meta = modelMenuMeta(model, capability);
@@ -280,7 +337,7 @@ function ModelLabel({
                     {capabilitySummary}
                 </span>
             </span>
-            {showPrice ? <ModelPrice price={modelMenuPrice(config, model, capability, true)} /> : null}
+            {showPrice ? <ModelPrice price={modelMenuPrice(config, model, capability)} quote={quote} loading={quoteLoading} /> : null}
             {!creationVariant && meta.time ? (
                 <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[var(--fs-tiny)] tabular-nums" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     {meta.time}
@@ -354,7 +411,7 @@ type ModelMenuPrice =
     | { kind: "estimate" }
     | { kind: "fixed"; value: number; unit: "次" | "秒" | "百万 Token" };
 
-function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability, summary = false): ModelMenuPrice | null | undefined {
+function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
@@ -362,8 +419,7 @@ function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapab
     if (cost.pricePolicy === "channel") {
         const tiers = cost.logicalPriceTiers || [];
         if (!tiers.length) return null;
-        const matched = summary ? tiers : priceTiersForCurrentSelection(tiers, capability, config);
-        return channelTierPriceSummary(matched.length ? matched : tiers, tiers);
+        return channelTierPriceSummary(priceTiersForCurrentSelection(tiers, capability, config), tiers);
     }
     if (cost.billingMode === "token") return { kind: "estimate" };
     return { kind: "fixed", value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
@@ -470,7 +526,7 @@ function tierPriceLabel(tier: NonNullable<NonNullable<AiConfig["channels"][numbe
     return `${formatPriceRange([tier.unitPriceMicrocredits / 1_000_000], tier.billingMode === "per_second" ? "积分/秒" : "积分")}`;
 }
 
-function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; compact?: boolean }) {
+function ModelPrice({ price, quote, loading = false, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; loading?: boolean; compact?: boolean }) {
     if (quote) {
         const amount = (quote.amountMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 });
         const label = quote.estimated ? `预计 ${amount}` : `${amount}`;
@@ -481,6 +537,7 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
             </span>
         );
     }
+    if (loading) return <span className="shrink-0 text-[var(--fs-tiny)] font-medium text-foreground/45">计算中</span>;
     if (price === undefined) return null;
     if (price === null) return compact ? null : <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/40">未配置</span>;
     if (price.kind === "tiers") {

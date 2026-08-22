@@ -67,6 +67,7 @@ const ratioOptions = [
     { value: "3:4", label: "标准竖屏" },
     { value: "21:9", label: "宽银幕" },
 ];
+const commonRatioValues = new Set(["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"]);
 const qualityOptions = [
     { value: "auto", label: "自动", description: "由模型决定" },
     { value: "low", label: "低", description: "更快生成" },
@@ -1120,9 +1121,15 @@ function ModePicker({ mode, onModeChange }: { mode: CreationMode; onModeChange: 
 function GenerationSettingsMenu(props: ComposerProps) {
     const [open, setOpen] = useState(false);
     const [customRatioOpen, setCustomRatioOpen] = useState(!ratioOptions.some((option) => option.value === props.ratio));
+    const [additionalRatiosOpen, setAdditionalRatiosOpen] = useState(false);
     const activeQualityOptions = props.imageProfile.quality.values.map((value) => qualityOptions.find((item) => item.value === value) || { value, label: value.toUpperCase(), description: "模型支持的质量/分辨率" });
     const qualityLabel = activeQualityOptions.find((item) => item.value === props.quality)?.label || qualityOptions.find((item) => item.value === props.quality)?.label || props.quality || "自动";
     const ratios = props.mode === "video" ? props.videoProfile.ratios : props.imageProfile.size.values.length ? props.imageProfile.size.values : ratioOptions.map((item) => item.value);
+    const visibleRatios = Array.from(new Set([
+        ...ratios.filter((value) => commonRatioValues.has(value.toLowerCase()) || value === props.ratio),
+        ...(props.ratio && !ratios.includes(props.ratio) ? [props.ratio] : []),
+    ]));
+    const additionalRatios = ratios.filter((value) => !visibleRatios.includes(value));
     const resolutions = props.mode === "video" ? props.videoProfile.resolutions.map((value) => ({ value: value.replace(/p$/i, ""), label: videoResolutionLabel(value) })) : resolutionOptions;
     const imageSummary = [
         ...(props.imageProfile.size.parameter !== "none" ? [props.ratio] : []),
@@ -1132,7 +1139,23 @@ function GenerationSettingsMenu(props: ComposerProps) {
     const videoResolutionSupported = props.mode === "video" && resolutions.length > 0;
     const summary = props.mode === "video" ? [props.ratio, ...(videoResolutionSupported ? [videoResolutionLabel(props.videoQuality)] : [])].join(" · ") : imageSummary;
     const panel = <div className="creation-parameter-menu">
-        {props.mode === "video" || props.imageProfile.size.parameter !== "none" ? <SettingSection title="画幅" value={props.ratio}><div className="creation-parameter-content"><div className="creation-choice-grid is-ratio">{ratios.map((value) => <button key={value} type="button" aria-pressed={value === props.ratio} className={value === props.ratio ? "is-selected" : ""} onClick={() => { props.setRatio(value); setCustomRatioOpen(false); }}><span className="creation-ratio-preview"><span style={ratioPreviewStyle(value)} /></span><span>{value}</span></button>)}</div>{props.mode !== "video" && props.imageProfile.size.allowCustom && (customRatioOpen ? <label className="creation-custom-value"><span>宽 : 高</span><input value={props.ratio} onFocus={(event) => event.currentTarget.select()} onChange={(event) => props.setRatio(event.target.value)} placeholder="1920x1080 或 2:1" aria-label="自定义画幅，支持宽x高或比例" /></label> : <button type="button" className="creation-custom-trigger" onClick={() => setCustomRatioOpen(true)}><Plus />输入自定义比例</button>)}</div></SettingSection> : null}
+        {props.mode === "video" || props.imageProfile.size.parameter !== "none" ? (
+            <SettingSection title="画幅" value={props.ratio}>
+                <div className="creation-parameter-content">
+                    <RatioChoiceGrid values={visibleRatios} value={props.ratio} onChange={(value) => { props.setRatio(value); setCustomRatioOpen(false); setAdditionalRatiosOpen(false); }} />
+                    {additionalRatios.length ? (
+                        <div className="creation-additional-ratios">
+                            <button type="button" className="creation-ratio-more" aria-expanded={additionalRatiosOpen} onClick={() => setAdditionalRatiosOpen((current) => !current)}>
+                                <span>{additionalRatiosOpen ? "收起其他尺寸" : `其他尺寸（${additionalRatios.length}）`}</span>
+                                <ChevronDown className={additionalRatiosOpen ? "is-open" : ""} />
+                            </button>
+                            {additionalRatiosOpen ? <RatioChoiceGrid values={additionalRatios} value={props.ratio} onChange={(value) => { props.setRatio(value); setCustomRatioOpen(false); setAdditionalRatiosOpen(false); }} /> : null}
+                        </div>
+                    ) : null}
+                    {props.mode !== "video" && props.imageProfile.size.allowCustom && (customRatioOpen ? <label className="creation-custom-value"><span>宽 : 高</span><input value={props.ratio} onFocus={(event) => event.currentTarget.select()} onChange={(event) => props.setRatio(event.target.value)} placeholder="1920x1080 或 2:1" aria-label="自定义画幅，支持宽x高或比例" /></label> : <button type="button" className="creation-custom-trigger" onClick={() => setCustomRatioOpen(true)}><Plus />输入自定义比例</button>)}
+                </div>
+            </SettingSection>
+        ) : null}
         {props.mode === "video" ? (videoResolutionSupported ? <SettingSection title="清晰度" value={videoResolutionLabel(props.videoQuality)}><div className="creation-choice-grid is-resolution">{resolutions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.videoQuality} className={option.value === props.videoQuality ? "is-selected" : ""} onClick={() => props.setVideoQuality(option.value)}>{option.label}</button>)}</div></SettingSection> : null) : <>
             {props.imageProfile.quality.supported ? <SettingSection title={activeQualityOptions.some((item) => item.value === "1k" || item.value === "2k") ? "分辨率" : "图片质量"} value={qualityLabel}><div className="creation-choice-grid is-quality">{activeQualityOptions.map((option) => <button key={option.value} type="button" aria-pressed={option.value === props.quality} className={option.value === props.quality ? "is-selected" : ""} onClick={() => props.setQuality(option.value)}><span>{option.label}</span><small>{option.description}</small></button>)}</div></SettingSection> : null}
             {props.imageProfile.maxOutputs > 1 ? <SettingSection title="生成数量" value={`${props.count} 张`}><div className="creation-parameter-content"><div className="creation-choice-grid is-count">{countOptions.filter((option) => Number(option) <= props.imageProfile.maxOutputs).map((option) => <button key={option} type="button" aria-pressed={option === props.count} className={option === props.count ? "is-selected" : ""} onClick={() => props.setCount(option)}>{option}</button>)}</div><label className="creation-custom-value"><span>自定义</span><input inputMode="numeric" pattern="[0-9]*" value={props.count} onChange={(event) => props.setCount(String(Math.max(1, Math.min(props.imageProfile.maxOutputs, Number(event.target.value) || 1))))} aria-label={`生成数量，范围 1 到 ${props.imageProfile.maxOutputs}`} /><em>张</em></label></div></SettingSection> : null}
@@ -1145,6 +1168,19 @@ function GenerationSettingsMenu(props: ComposerProps) {
 
 function SettingSection({ title, value, children }: { title: string; value?: string; children: ReactNode }) {
     return <section className="creation-parameter-section"><header><h3>{title}</h3>{value ? <span>{value}</span> : null}</header>{children}</section>;
+}
+
+function RatioChoiceGrid({ values, value, onChange }: { values: string[]; value: string; onChange: (value: string) => void }) {
+    return (
+        <div className="creation-choice-grid is-ratio">
+            {values.map((item) => (
+                <button key={item} type="button" aria-pressed={item === value} className={item === value ? "is-selected" : ""} onClick={() => onChange(item)}>
+                    <span className="creation-ratio-preview"><span style={ratioPreviewStyle(item)} /></span>
+                    <span>{item}</span>
+                </button>
+            ))}
+        </div>
+    );
 }
 
 function DurationMenu({ profile, seconds, onChange }: { profile: VideoCapabilityConfig; seconds: string; onChange: (value: string) => void }) {

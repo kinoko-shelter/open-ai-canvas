@@ -8861,6 +8861,27 @@ html:not(.dark) .creation-message-content code { background: rgba(28, 32, 37, .0
     border-radius: 2px !important;
 }
 
+.creation-additional-ratios { margin-top: 3px; }
+
+.creation-ratio-more {
+    display: flex !important;
+    width: 100%;
+    height: 28px !important;
+    align-items: center;
+    justify-content: space-between;
+    border: 0 !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    padding: 0 7px !important;
+    color: var(--creation-muted) !important;
+    font-size: 10px !important;
+}
+
+.creation-ratio-more:hover { background: rgba(255, 255, 255, .055) !important; color: var(--creation-text) !important; }
+.creation-ratio-more svg { width: 12px; height: 12px; transition: transform 160ms var(--motion-ease-out); }
+.creation-ratio-more svg.is-open { transform: rotate(180deg); }
+.creation-additional-ratios > .creation-choice-grid { max-height: 224px; margin-top: 3px; overflow-y: auto; padding-right: 2px; }
+
 .creation-custom-trigger {
     display: inline-flex !important;
     height: 26px !important;
@@ -9113,6 +9134,7 @@ html:not(.dark) .creation-project-options button.is-selected,
 html:not(.dark) .creation-custom-trigger:hover { background: rgba(28, 32, 37, .055) !important; }
 html:not(.dark) .creation-choice-grid button.is-selected,
 html:not(.dark) .creation-duration-choices button.is-selected { background: rgba(28, 32, 37, .09) !important; }
+html:not(.dark) .creation-ratio-more:hover { background: rgba(28, 32, 37, .055) !important; }
 html:not(.dark) .creation-custom-value,
 html:not(.dark) .creation-project-empty { background: rgba(28, 32, 37, .055) !important; }
 

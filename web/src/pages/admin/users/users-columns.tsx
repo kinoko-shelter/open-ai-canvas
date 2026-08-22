@@ -67,7 +67,7 @@ export function createUserColumns({
         {
             key: "actions",
             title: "操作",
-            width: 220,
+            width: 236,
             fixed: "right",
             align: "right",
             render: (_, user) => (
@@ -100,6 +100,7 @@ export function createUserColumns({
                             onClick: () => onToggleStatus(user),
                         },
                     ]}
+                    visibleActionCount={0}
                 />
             ),
         },
