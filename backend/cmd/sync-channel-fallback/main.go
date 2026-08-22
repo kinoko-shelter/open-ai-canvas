@@ -57,7 +57,7 @@ func main() {
 	}
 
 	legacyTierCount := countLegacyPriceTierRepairs(sourceModels)
-	fallbackCount, err := countFallbackRoutes(repo, sourceModels)
+	fallbackCount, err := countFallbackRoutes(repo, sourceModels, target)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -264,10 +264,24 @@ func hasActivePriceTier(item model.ChannelModel) bool {
 	return false
 }
 
-func countFallbackRoutes(repo *repository.Repository, sourceModels []model.ChannelModel) (int, error) {
+func countFallbackRoutes(repo *repository.Repository, sourceModels []model.ChannelModel, target *model.ModelChannel) (int, error) {
 	sourceIDs := make(map[string]bool, len(sourceModels))
+	targetBySourceID := make(map[string]string, len(sourceModels))
 	for _, item := range sourceModels {
 		sourceIDs[item.ID] = true
+	}
+	if target != nil {
+		targetModels, err := repo.ChannelModels(target.ID, true)
+		if err != nil {
+			return 0, err
+		}
+		targetByKey := make(map[string]string, len(targetModels))
+		for _, item := range targetModels {
+			targetByKey[item.ModelKey] = item.ID
+		}
+		for _, source := range sourceModels {
+			targetBySourceID[source.ID] = targetByKey[source.ModelKey]
+		}
 	}
 	items, err := repo.LogicalModels(false)
 	if err != nil {
@@ -279,10 +293,16 @@ func countFallbackRoutes(repo *repository.Repository, sourceModels []model.Chann
 		if graphErr != nil || graph.Revision == nil {
 			return 0, fmt.Errorf("读取前台模型 %s 失败：%w", item.Code, graphErr)
 		}
+		existingRoutes := make(map[string]bool, len(graph.Routes))
 		for _, route := range graph.Routes {
-			if sourceIDs[route.ChannelModelID] {
+			existingRoutes[route.ChannelModelID] = true
+		}
+		for _, route := range graph.Routes {
+			if !sourceIDs[route.ChannelModelID] {
+				continue
+			}
+			if targetID := targetBySourceID[route.ChannelModelID]; targetID == "" || !existingRoutes[targetID] {
 				count++
-				break
 			}
 		}
 	}
