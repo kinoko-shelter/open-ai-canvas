@@ -1,11 +1,11 @@
 import { getFeatureAvailability, type AuthSessionPayload } from "@/services/api/auth";
-import { listLogicalModels, type CapabilitySpec, type OptionConstraint, type PublicLogicalModel } from "@/services/api/logical-models";
+import { getModelCatalog, type CapabilitySpec, type ModelCatalogResponse, type OptionConstraint, type PublicChannelCatalog, type PublicLogicalModel } from "@/services/api/logical-models";
 import { localForageStorage } from "@/lib/localforage-storage";
 import { appQueryClient } from "@/lib/query-client";
 import { scopedLocalStorage, setActiveUserScope } from "@/lib/user-scope";
 import { CANVAS_STORE_KEY, flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ASSET_STORE_KEY, useAssetStore } from "@/stores/use-asset-store";
-import { CONFIG_STORE_KEY, PUBLIC_MODEL_CATALOG_ID, defaultConfig, normalizeConfigSnapshot, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
+import { CONFIG_STORE_KEY, PUBLIC_MODEL_CATALOG_ID, defaultConfig, normalizeConfigSnapshot, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 import { installRemoteUserDataAutoSync, resetRemoteUserDataSync, syncRemoteUserData } from "@/services/user-data-sync";
@@ -35,11 +35,13 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         // Zustand 在目标 scope 没有快照时会保留旧内存，必须显式恢复该 scope 的空状态。
         if (!persistedCanvas) useCanvasStore.setState({ projects: [] });
         if (!persistedAssets) useAssetStore.setState({ assets: [] });
+        const catalog = await getModelCatalog();
+        const systemChannels = modelChannelsFromCatalog(catalog);
         if (!persistedConfig) {
             // 只有首次配置缺失时才生成能力推荐；已有配置中的空数组代表用户明确清空。
             const initialSystemConfig = {
                 ...defaultConfig,
-                channels: managedModelChannels(payload.logicalModels || []),
+                channels: systemChannels,
                 imageModels: undefined,
                 videoModels: undefined,
                 textModels: undefined,
@@ -47,7 +49,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
             };
             useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: initialSystemConfig }).config);
         } else {
-            useConfigStore.getState().mergeSystemChannels(managedModelChannels(payload.logicalModels || []));
+            useConfigStore.getState().mergeSystemChannels(systemChannels);
         }
         installRemoteUserDataAutoSync();
         if (payload.user?.id) await syncRemoteUserData(payload.user.id);
@@ -58,9 +60,14 @@ export async function applyUserSession(payload: AuthSessionPayload) {
 }
 
 export async function refreshSystemChannels() {
-    // 创作端只刷新公开前台模型；供应渠道目录仅管理员页面可见。
-    const logicalPayload = await listLogicalModels();
-    useConfigStore.getState().mergeSystemChannels(managedModelChannels(logicalPayload.models || []));
+    const catalog = await getModelCatalog();
+    useConfigStore.getState().mergeSystemChannels(modelChannelsFromCatalog(catalog));
+}
+
+function modelChannelsFromCatalog(catalog: ModelCatalogResponse) {
+    if (catalog.source === "frontend") return managedModelChannels(catalog.models || []);
+    if (catalog.source === "system") return systemChannelModelChannels(catalog.channels || []);
+    return [];
 }
 
 function managedModelChannels(models: PublicLogicalModel[]) {
@@ -99,6 +106,42 @@ function managedModelChannels(models: PublicLogicalModel[]) {
         })),
     };
     return [managed];
+}
+
+function systemChannelModelChannels(channels: PublicChannelCatalog[]): ModelChannel[] {
+    return channels
+        .map((channel) => {
+            const models = channel.models.filter((item) => item.available);
+            if (!models.length) return null;
+            return {
+                id: channel.id,
+                name: channel.displayName || channel.name,
+                baseUrl: "/api",
+                apiKey: "system",
+                apiFormat: "openai" as const,
+                scope: "system" as const,
+                enabled: true,
+                models: models.map((item) => item.modelKey),
+                modelAliases: {},
+                modelCosts: models.map((item) => {
+                    const firstTier = item.priceTiers[0];
+                    return {
+                        model: item.modelKey,
+                        displayName: item.displayName,
+                        capability: item.capability as ModelCapability,
+                        pricePolicy: "channel" as const,
+                        billingMode: firstTier?.billingMode || "fixed_request",
+                        unitPriceMicrocredits: firstTier?.unitPriceMicrocredits || 0,
+                        inputTokenPriceMicrocredits: firstTier?.inputTokenPriceMicrocredits || 0,
+                        outputTokenPriceMicrocredits: firstTier?.outputTokenPriceMicrocredits || 0,
+                        cachedTokenPriceMicrocredits: firstTier?.cachedTokenPriceMicrocredits || 0,
+                        capabilityConfig: item.capabilityConfig as ModelCapabilityConfig | undefined,
+                        logicalPriceTiers: item.priceTiers,
+                    };
+                }),
+            } satisfies ModelChannel;
+        })
+        .filter((channel): channel is ModelChannel => Boolean(channel));
 }
 
 function projectLogicalCapability(spec: CapabilitySpec, defaults: Record<string, unknown>): ModelCapabilityConfig {

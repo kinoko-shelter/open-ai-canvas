@@ -448,19 +448,47 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
-	var routed *RoutedModel
-	logicalModelID := strings.TrimSpace(req.LogicalModelID)
-	if logicalModelID != "" {
-		intent := ModelRequestIntentFromTaskInput(normalizedInput, req.Type, req.Operation)
-		routed, err = s.ResolveLogicalModel(logicalModelID, intent)
-		if err != nil {
-			return nil, err
-		}
-		normalizedInput = applyRoutedProviderSelection(normalizedInput, routed)
+	taskType := strings.TrimSpace(req.Type)
+	if taskType == "" {
+		taskType = "video_image_to_video"
 	}
-	// 前端自管的文本持久化任务：直连模型生成、增量上报 text-deltas，不排入 worker 队列生成。
+	// 前端自管的文本持久化不调用上游模型，不能被模型目录切换误判为生成任务。
 	if isTextReplayTaskRequest(normalizedInput) {
 		return s.createTextReplayTask(userID, req, normalizedInput)
+	}
+
+	frontendModelsEnabled, err := s.FeatureEnabled(FeatureFrontendModels)
+	if err != nil {
+		return nil, err
+	}
+	var routed *RoutedModel
+	logicalModelID := strings.TrimSpace(req.LogicalModelID)
+	if logicalModelID != "" || taskInputHasProviderConfig(normalizedInput) {
+		isCustomChannelTask := taskInputUsesCustomChannel(normalizedInput)
+		intent := ModelRequestIntentFromTaskInput(normalizedInput, taskType, req.Operation)
+		if frontendModelsEnabled {
+			// 平台系统模型必须由逻辑模型路由，避免客户端伪造渠道、SKU 或上游参数。
+			if logicalModelID == "" && !isCustomChannelTask {
+				return nil, BadAuthRequest("模型目录已更新，请重新选择")
+			}
+			if logicalModelID != "" {
+				routed, err = s.ResolveLogicalModel(logicalModelID, intent)
+				if err != nil {
+					return nil, err
+				}
+				normalizedInput = applyRoutedProviderSelection(normalizedInput, routed)
+			}
+		} else {
+			// 回退系统目录后不再接受旧前台模型 ID；自定义渠道继续使用其既有开关和中转合同。
+			if logicalModelID != "" {
+				return nil, BadAuthRequest("模型目录已更新，请重新选择")
+			}
+			if !isCustomChannelTask {
+				if err := s.validateSystemChannelModelSelection(normalizedInput, intent); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	if err := s.requireCustomChannelsForTaskInput(normalizedInput); err != nil {
 		return nil, err
@@ -481,10 +509,6 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	if activeTasks >= int64(policy.Task.ActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
-	}
-	taskType := req.Type
-	if taskType == "" {
-		taskType = "video_image_to_video"
 	}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
 		return nil, err
@@ -531,6 +555,54 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+func taskInputHasProviderConfig(input map[string]any) bool {
+	config, ok := input["config"].(map[string]any)
+	return ok && config != nil
+}
+
+// validateSystemChannelModelSelection 只接受目录返回的系统渠道模型，并要求当前 SKU 具备有效价格。
+func (s *Service) validateSystemChannelModelSelection(input map[string]any, intent ModelRequestIntent) error {
+	config, ok := input["config"].(map[string]any)
+	if !ok {
+		return BadAuthRequest("缺少系统模型配置")
+	}
+	channelID, _ := config["channelId"].(string)
+	modelKey, _ := config["model"].(string)
+	channelID = strings.TrimSpace(channelID)
+	modelKey = strings.TrimSpace(modelKey)
+	if channelID == "" || modelKey == "" {
+		return BadAuthRequest("请重新选择系统渠道模型")
+	}
+	channel, err := s.repo.SystemChannel(channelID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return BadAuthRequest("所选系统渠道已不可用，请重新选择")
+	}
+	if err != nil {
+		return err
+	}
+	if !channel.Enabled || channel.Scope != model.ChannelScopeSystem {
+		return BadAuthRequest("所选系统渠道已不可用，请重新选择")
+	}
+	channelModel, err := s.repo.ChannelModelByKey(channelID, modelKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return BadAuthRequest("所选系统模型已不可用，请重新选择")
+	}
+	if err != nil {
+		return err
+	}
+	if !channelModel.Enabled || normalizeCapability(channelModel.Capability) != normalizeCapability(intent.Capability) {
+		return BadAuthRequest("所选系统模型不支持当前创作类型，请重新选择")
+	}
+	tier := channelModelPriceTierForIntent(*channelModel, intent)
+	if tier == nil || !validChannelModelPriceTier(*tier) {
+		return BadAuthRequest("所选系统模型未配置当前规格的有效积分价格")
+	}
+	// 价格档和供应商 SKU 都由服务端重算，不能沿用客户端传入的历史值。
+	config["priceTierId"] = tier.ID
+	config["providerModelKey"] = tier.ProviderModelKey
+	return nil
 }
 
 func (s *Service) resolveTaskAigcProject(userID string, projectID string, requested *int64) (*int64, error) {

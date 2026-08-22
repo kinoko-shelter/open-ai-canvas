@@ -31,6 +31,7 @@ export type FeatureAvailability = {
     taskCenterEnabled: boolean;
     creditsEnabled: boolean;
     customChannelsEnabled: boolean;
+    frontendModelsEnabled: boolean;
     configured?: boolean;
     updatedBy?: string;
     updatedAt?: string;
@@ -46,6 +47,7 @@ export const defaultFeatureAvailability: FeatureAvailability = {
     taskCenterEnabled: true,
     creditsEnabled: true,
     customChannelsEnabled: true,
+    frontendModelsEnabled: true,
 };
 
 type UserStore = {

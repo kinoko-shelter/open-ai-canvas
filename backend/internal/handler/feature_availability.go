@@ -8,6 +8,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type featureAvailabilityUpdateRequest struct {
+	ShortDramaEnabled     bool  `json:"shortDramaEnabled"`
+	TaskCenterEnabled     bool  `json:"taskCenterEnabled"`
+	CreditsEnabled        bool  `json:"creditsEnabled"`
+	CustomChannelsEnabled bool  `json:"customChannelsEnabled"`
+	FrontendModelsEnabled *bool `json:"frontendModelsEnabled"`
+}
+
 func RegisterFeatureAvailabilityRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/features", func(c *gin.Context) {
 		if _, err := currentUser(c, svc); err != nil {
@@ -43,12 +51,27 @@ func RegisterFeatureAvailabilityRoutes(r *gin.RouterGroup, svc *service.Service)
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		var req service.FeatureAvailability
+		var req featureAvailabilityUpdateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		setting, err := svc.UpdateFeatureAvailability(user, req)
+		current, err := svc.AdminFeatureAvailability(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		value := service.FeatureAvailability{
+			ShortDramaEnabled:     req.ShortDramaEnabled,
+			TaskCenterEnabled:     req.TaskCenterEnabled,
+			CreditsEnabled:        req.CreditsEnabled,
+			CustomChannelsEnabled: req.CustomChannelsEnabled,
+			FrontendModelsEnabled: current.FrontendModelsEnabled,
+		}
+		if req.FrontendModelsEnabled != nil {
+			value.FrontendModelsEnabled = *req.FrontendModelsEnabled
+		}
+		setting, err := svc.UpdateFeatureAvailability(user, value)
 		if err != nil {
 			failService(c, err)
 			return

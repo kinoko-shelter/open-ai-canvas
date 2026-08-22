@@ -177,6 +177,7 @@ export type CanvasNodeMetadata = {
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
+    manualSize?: boolean;
     isBatchRoot?: boolean;
     batchRootId?: string;
     batchChildIds?: string[];

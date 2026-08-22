@@ -5,6 +5,7 @@ import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, C
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
@@ -1115,6 +1116,21 @@ function ImageContent({
     const nearViewport = useNearViewport(imageContainerRef);
     const { url, loading } = useNodeResourceUrl(node, nearViewport);
     const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
+    const { updateMetadata, resizeNode } = useCanvasNodeActions();
+
+    const fitToImage = (element: HTMLImageElement) => {
+        const naturalWidth = element.naturalWidth;
+        const naturalHeight = element.naturalHeight;
+        if (!naturalWidth || !naturalHeight) return;
+        if (node.metadata?.naturalWidth !== naturalWidth || node.metadata?.naturalHeight !== naturalHeight) {
+            updateMetadata?.(node.id, { naturalWidth, naturalHeight });
+        }
+        // 只修复从未手工调过尺寸的历史图片，锁定和自由比例节点必须保持用户布局。
+        if (node.metadata?.freeResize || node.metadata?.manualSize || node.metadata?.locked) return;
+        const size = fitNodeSize(naturalWidth, naturalHeight);
+        if (Math.abs(size.width - node.width) < 1 && Math.abs(size.height - node.height) < 1) return;
+        resizeNode?.(node.id, size);
+    };
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
@@ -1127,6 +1143,7 @@ function ImageContent({
                         decoding="async"
                         draggable={false}
                         onDragStart={(event) => event.preventDefault()}
+                        onLoad={(event) => fitToImage(event.currentTarget)}
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                     />
                 ) : <div className="grid size-full place-items-center" style={{ color: theme.node.muted }}>{loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5 opacity-45" />}</div>}

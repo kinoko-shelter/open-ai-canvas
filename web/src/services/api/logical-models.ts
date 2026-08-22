@@ -72,6 +72,18 @@ export type AdminLogicalModel = PublicLogicalModel & {
     routes: AdminLogicalRoute[];
 };
 
+// 管理端可能短暂读到升级前的响应；集合字段统一归一，避免页面因缺失数组中断渲染。
+export function normalizeAdminLogicalModel(model: AdminLogicalModel): AdminLogicalModel {
+    return {
+        ...model,
+        priceTiers: Array.isArray(model.priceTiers) ? model.priceTiers : [],
+        legacyModelIds: Array.isArray(model.legacyModelIds) ? model.legacyModelIds : [],
+        capabilityProfiles: Array.isArray(model.capabilityProfiles) ? model.capabilityProfiles : [],
+        defaultOptions: model.defaultOptions && typeof model.defaultOptions === "object" ? model.defaultOptions : {},
+        routes: Array.isArray(model.routes) ? model.routes : [],
+    };
+}
+
 export type LogicalModelMutation = {
     code: string;
     name: string;
@@ -105,6 +117,46 @@ export type LogicalModelQuote = {
     estimated: boolean;
 };
 
+export type ModelCatalogSource = "frontend" | "system";
+
+export type PublicChannelCatalog = {
+    id: string;
+    name: string;
+    displayName: string;
+    models: PublicChannelModel[];
+};
+
+export type PublicChannelModel = {
+    id: string;
+    modelKey: string;
+    displayName: string;
+    capability: CapabilitySpec["capability"];
+    capabilityConfig?: Record<string, unknown>;
+    priceTiers: PublicChannelModelPriceTier[];
+    pricingMode: string;
+    displayPrice?: number;
+    priceLabel: string;
+    available: boolean;
+};
+
+export type PublicChannelModelPriceTier = PublicLogicalModelPriceTier & {
+    id: string;
+};
+
+export type ModelCatalogResponse = {
+    source: ModelCatalogSource;
+    models?: PublicLogicalModel[];
+    channels?: PublicChannelCatalog[];
+};
+
+export function getModelCatalog() {
+    return request<ModelCatalogResponse>(apiClient.get("/model-catalog"));
+}
+
+export function getAvailableModelCatalog(intent: ModelRequestIntent) {
+    return request<ModelCatalogResponse>(apiClient.post("/model-catalog/available", intent));
+}
+
 export function listLogicalModels() {
     return request<{ models: PublicLogicalModel[] }>(apiClient.get("/models"));
 }
@@ -118,7 +170,9 @@ export function quoteLogicalModel(id: string, intent: ModelRequestIntent, signal
 }
 
 export function listAdminLogicalModels() {
-    return request<{ models: AdminLogicalModel[] }>(apiClient.get("/admin/logical-models"));
+    return request<{ models?: AdminLogicalModel[] }>(apiClient.get("/admin/logical-models")).then((result) => ({
+        models: Array.isArray(result?.models) ? result.models.filter(Boolean).map(normalizeAdminLogicalModel) : [],
+    }));
 }
 
 export function createAdminLogicalModel(input: LogicalModelMutation) {

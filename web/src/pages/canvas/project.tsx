@@ -1818,7 +1818,13 @@ function InfiniteCanvasPage() {
                                 onFileDragLeave={handleFileDragLeave}
                                 onFileDragOver={handleFileDragOver}
                             >
-                                <CanvasNodeActionContext.Provider value={{ download: downloadNodeImage, duplicate: (node) => duplicateNode(node.id), deleteNode: (node) => deleteNodes(new Set([node.id])) }}>
+                                <CanvasNodeActionContext.Provider value={{
+                                    download: downloadNodeImage,
+                                    duplicate: (node) => duplicateNode(node.id),
+                                    deleteNode: (node) => deleteNodes(new Set([node.id])),
+                                    updateMetadata: (nodeId, patch) => setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
+                                    resizeNode: (nodeId, size) => setNodes((current) => current.map((node) => (node.id === nodeId && !node.metadata?.locked ? { ...node, width: size.width, height: size.height } : node))),
+                                }}>
                                 <CanvasProjectWorldLayers
                                     projectId={projectId}
                                     viewportScale={viewport.k}

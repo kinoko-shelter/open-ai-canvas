@@ -65,7 +65,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         [requirements],
     );
     const resolvedCurrent = resolveCompatibleModel(config, current, selectionRequirements) || current;
-    const currentPrice = modelMenuPrice(config, resolvedCurrent, capability);
+    const currentPrice = modelMenuPrice(config, resolvedCurrent, capability, requirements);
     const quoteRequest = useMemo(() => modelQuoteRequest(config, resolvedCurrent, capability, requirements), [capability, config, requirements, resolvedCurrent]);
     const menuQuoteRequests = useMemo(() => {
         const requests = new Map<string, { logicalModelID: string; intent: ModelRequestIntent }>();
@@ -416,7 +416,7 @@ type TokenPrice = {
     cachedTokenPriceMicrocredits?: number;
 };
 
-function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability): ModelMenuPrice | null | undefined {
+function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability, requirements?: ModelRequirements): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
@@ -424,7 +424,7 @@ function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapab
     if (cost.pricePolicy === "channel") {
         const tiers = cost.logicalPriceTiers || [];
         if (!tiers.length) return null;
-        return channelTierPriceSummary(priceTiersForCurrentSelection(tiers, capability, config), tiers);
+        return channelTierPriceSummary(priceTiersForCurrentSelection(tiers, capability, config, requirements), tiers);
     }
     if (cost.billingMode === "token") return tokenPriceSummary([cost]);
     return { kind: "fixed", value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
@@ -434,9 +434,12 @@ function priceTiersForCurrentSelection(
     tiers: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>,
     capability: ModelCapability | undefined,
     config: AiConfig,
+    requirements?: ModelRequirements,
 ) {
     const requested: Record<string, string> = {};
     if (capability === "video") {
+        const imageCount = (requirements?.input?.imageCount || 0) + (requirements?.input?.characterCount || 0);
+        if (imageCount > 0) requested.imageCount = String(imageCount);
         const resolution = normalizeTierResolution(config.vquality);
         if (resolution !== "*") requested.vquality = resolution;
         const seconds = Math.max(0, Math.floor(Number(config.videoSeconds) || 0));
@@ -564,6 +567,7 @@ function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels
 		selector.size && selector.size !== "*" ? selector.size : "",
 		tier.resolution !== "*" ? tierResolutionLabel(tier.resolution) : "",
 		tier.videoSeconds ? tierDurationLabel(tier.videoSeconds) : "",
+		selector.imageCount && selector.imageCount !== "*" ? `${selector.imageCount} 张参考图` : "",
 	].filter(Boolean);
 	return details.length ? details.join(" / ") : "默认规格";
 }

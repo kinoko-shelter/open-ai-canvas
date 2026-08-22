@@ -39,6 +39,8 @@ type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 const PROMPT_EDITOR_MAX_HEIGHT = 224;
 const PROMPT_RESIZE_STEP = 8;
+const PROMPT_CONTENT_LINE_HEIGHT = 20;
+const PROMPT_CONTENT_VERTICAL_PADDING = 16;
 
 export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
@@ -54,7 +56,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [presetOpen, setPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [expandedPromptOpen, setExpandedPromptOpen] = useState(false);
-    const [promptContentHeight, setPromptContentHeight] = useState(0);
+    const [promptContentHeight, setPromptContentHeight] = useState(() => estimatePromptContentHeight(savedPrompt));
     const [manualPromptHeight, setManualPromptHeight] = useState<number | null>(null);
     const [paramsExpanded, setParamsExpanded] = useState(false); // #98 决策2：B区参数区折叠状态（手风琴）
     const activeReferences = mentionReferences.filter((item) => item.active && item.kind !== "skill");
@@ -83,6 +85,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     });
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
+    const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
     const darkSurface = themeName === "dark";
     const monochromeAccent = theme.node.activeStroke;
     const shellBorder = darkSurface ? "rgba(255,255,255,.08)" : "rgba(15,23,42,.08)";
@@ -110,7 +113,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     }, [node.id, node.metadata?.composerContent, node.metadata?.prompt]);
 
     useEffect(() => {
-        setPromptContentHeight(0);
+        setPromptContentHeight(estimatePromptContentHeight(savedPrompt));
         setManualPromptHeight(null);
     }, [node.id]);
 
@@ -317,7 +320,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             <PromptResizeHandle height={composerHeight} min={composerMinHeight} max={PROMPT_EDITOR_MAX_HEIGHT} onResize={setManualPromptHeight} />
 
             {/* B区 参数区（对应 #98 决策2：默认折叠，手风琴展开）*/}
-            {mode === "video" && !simpleMode ? (
+            {hasVideoPromptTools ? (
                 <div className="mt-1.5 overflow-hidden rounded-md border" style={{ background: controlSurface, borderColor: insetBorder }}>
                     <button
                         type="button"
@@ -374,7 +377,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             aria-label={`${modeDisplayName(mode)}提示词`}
                         />
                     </div>
-                    {mode === "video" && !simpleMode ? (
+                    {hasVideoPromptTools ? (
                         <div className="shrink-0 rounded-md border p-0.5" style={{ background: controlSurface, borderColor: insetBorder }}>
                             <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={(patch) => onConfigChange(node.id, patch)} />
                         </div>
@@ -384,6 +387,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             </Modal>
         </div>
     );
+}
+
+function estimatePromptContentHeight(value: string) {
+    if (!value.trim()) return 0;
+    const charsPerLine = 38;
+    const lineCount = value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(Array.from(line).length / charsPerLine)), 0);
+    return lineCount * PROMPT_CONTENT_LINE_HEIGHT + PROMPT_CONTENT_VERTICAL_PADDING;
 }
 
 function ComposerPill({ theme, borderColor, icon, label }: { theme: CanvasTheme; borderColor: string; icon: ReactNode; label: string }) {

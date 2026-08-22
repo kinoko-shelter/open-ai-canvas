@@ -693,6 +693,9 @@ func skuSelectorForIntent(intent ModelRequestIntent) map[string]string {
 	}
 	switch normalizeCapability(intent.Capability) {
 	case "video":
+		if count := intent.Inputs["image"]; count > 0 {
+			selector["imageCount"] = strconv.Itoa(count)
+		}
 		if value := normalizeChannelModelTierResolution(fmt.Sprint(intent.Options["vquality"])); value != "*" {
 			selector["vquality"] = value
 		}
