@@ -1529,6 +1529,7 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 		return nil, nil, err
 	}
 	task.InputJSON = decryptedInput
+	ctx = withTaskExecutionID(ctx, task.ID)
 	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)

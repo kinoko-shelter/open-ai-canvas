@@ -1,0 +1,18 @@
+---
+title: 后端数据库
+---
+
+# 后端数据库
+
+生产环境使用 PostgreSQL。启动时由 `backend/internal/database/schema.go` 中的 `Models()` 统一执行迁移；数据表或索引发生变化时必须同步更新本页。
+
+## 方舟可信素材绑定
+
+`ark_private_asset_bindings` 缓存本地素材库图片与方舟私域虚拟人素材库之间的关系：
+
+- `resource_id + project_name` 唯一，确保同一不可变资源在同一个 Ark Project 只导入一次。
+- `user_id` 保留导入任务的审计归属；实际读取参考图仍必须经过现有团队 scope 的 `ResourceForUser` 校验。
+- `asset_group_id`、`ark_asset_id`、`status` 和 `error` 只供后端任务 Worker 使用，前端不读取 `asset://` 标识或方舟素材库凭据。
+- `status=active` 时视频请求将该参考图替换为 `asset://<ark_asset_id>`；`failed` 或审核超时时任务失败，不回退到原始图片 URL。
+
+Ark IAM AK/SK 配置存于 `system_settings` 的 `ark_private_assets` 项，SecretKey 使用服务端 `.settings-key` 的 AES-GCM 加密保存，管理员读取接口只返回 `hasAccessKeySecret`。

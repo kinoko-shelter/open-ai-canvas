@@ -239,6 +239,7 @@ export type CanvasNodeMetadata = {
     taskUpdatedAt?: string;
     sessionId?: string;
     videoEditOperation?: CanvasVideoEditOperation;
+    arkPrivateAssetUpload?: string;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
     videoStartFrameNodeId?: string;
