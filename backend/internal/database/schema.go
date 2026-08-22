@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -94,7 +96,13 @@ func MigrateSchema(db *gorm.DB) error {
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
+	if err := migrateChannelModelPriceTierSelectors(db); err != nil {
+		return err
+	}
 	if err := backfillChannelModelPriceTiers(db); err != nil {
+		return err
+	}
+	if err := migrateChannelModelPriceTierSelectors(db); err != nil {
 		return err
 	}
 	if err := dropLegacyPhysicalVariants(db); err != nil {
@@ -121,6 +129,62 @@ func MigrateSchema(db *gorm.DB) error {
 		return err
 	}
 	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nonempty ON users(lower(email)) WHERE email <> ''").Error
+}
+
+// migrateChannelModelPriceTierSelectors upgrades the old video-only unique key to
+// a canonical SKU selector key. It never changes task, route-attempt, or billing
+// foreign keys, so completed work remains auditable after a product SKU merge.
+func migrateChannelModelPriceTierSelectors(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.ChannelModelPriceTier{}) {
+		return nil
+	}
+	var tiers []model.ChannelModelPriceTier
+	if err := db.Unscoped().Find(&tiers).Error; err != nil {
+		return fmt.Errorf("读取规格价格档：%w", err)
+	}
+	for _, tier := range tiers {
+		selector := model.DecodeSKUSelector(tier.SelectorJSON)
+		if len(selector) == 0 {
+			selector = map[string]string{}
+			if resolution := strings.TrimSpace(tier.Resolution); resolution != "" && resolution != "*" {
+				selector["vquality"] = strings.ToLower(resolution)
+			}
+			if tier.VideoSeconds > 0 {
+				selector["videoSeconds"] = strconv.Itoa(tier.VideoSeconds)
+			}
+		}
+		_, key, err := model.CanonicalSKUSelector(selector)
+		if err != nil {
+			return fmt.Errorf("规范化规格价格档 %s：%w", tier.ID, err)
+		}
+		if tier.SelectorKey == key && tier.SelectorJSON == key {
+			continue
+		}
+		if err := db.Unscoped().Model(&model.ChannelModelPriceTier{}).Where("id = ?", tier.ID).Updates(map[string]any{"selector_key": key, "selector_json": key}).Error; err != nil {
+			return fmt.Errorf("更新规格价格档 %s：%w", tier.ID, err)
+		}
+	}
+	var duplicate struct {
+		ChannelModelID string
+		SelectorKey    string
+		Count          int64
+	}
+	err := db.Table("channel_model_price_tiers").
+		Select("channel_model_id, selector_key, COUNT(*) AS count").
+		Where("deleted_at IS NULL").
+		Group("channel_model_id, selector_key").
+		Having("COUNT(*) > 1").
+		First(&duplicate).Error
+	if err == nil {
+		return fmt.Errorf("渠道模型 %s 存在重复 SKU 选择器 %s，拒绝建立唯一索引", duplicate.ChannelModelID, duplicate.SelectorKey)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("检查重复 SKU 选择器：%w", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_channel_model_price_tier_active").Error; err != nil {
+		return err
+	}
+	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_model_price_tier_active ON channel_model_price_tiers(channel_model_id, selector_key) WHERE deleted_at IS NULL").Error
 }
 
 // backfillChannelModelPriceTiers 将旧的单价模型无损映射为默认价格档。历史订单保存的是

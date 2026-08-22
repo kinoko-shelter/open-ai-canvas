@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"infinite-canvas/backend/internal/database"
@@ -26,10 +27,13 @@ var familyCodes = []string{
 }
 
 type familyPlan struct {
-	logicalModel  model.LogicalModel
-	channelModel  model.ChannelModel
-	priceTiers    []model.ChannelModelPriceTier
-	alreadySynced bool
+	logicalModel          model.LogicalModel
+	channelModel          model.ChannelModel
+	priceTiers            []model.ChannelModelPriceTier
+	legacyLogicalModelIDs []string
+	legacyChannelModelIDs []string
+	alreadySynced         bool
+	creatingLogical       bool
 }
 
 func main() {
@@ -56,9 +60,9 @@ func main() {
 	for _, plan := range plans {
 		tiers := make([]string, 0, len(plan.priceTiers))
 		for _, tier := range plan.priceTiers {
-			tiers = append(tiers, fmt.Sprintf("%s/%ds=>%s", tier.Resolution, tier.VideoSeconds, tier.ProviderModelKey))
+			tiers = append(tiers, fmt.Sprintf("%s=>%s", tier.SelectorKey, tier.ProviderModelKey))
 		}
-		log.Printf("%s: 系统模型=%s 价格档=[%s] 已同步=%t", plan.logicalModel.Code, plan.channelModel.ModelKey, strings.Join(tiers, ", "), plan.alreadySynced)
+		log.Printf("%s: 系统模型=%s 价格档=[%s] 已同步=%t，待停用旧前台=%d，旧渠道模型=%d", plan.logicalModel.Code, plan.channelModel.ModelKey, strings.Join(tiers, ", "), plan.alreadySynced, len(plan.legacyLogicalModelIDs), len(plan.legacyChannelModelIDs))
 	}
 	if !*apply {
 		log.Print("dry-run 完成；确认后使用 --apply 写入。旧 SKU 与全部历史快照不会删除或改写")
@@ -75,12 +79,19 @@ func main() {
 				log.Fatalf("保存 %s 价格档失败：%v", plan.logicalModel.Code, err)
 			}
 		}
-		if _, err := svc.SaveAdminLogicalModel(actor, plan.logicalModel.ID, service.LogicalModelRequest{
+		logicalModelID := plan.logicalModel.ID
+		if plan.creatingLogical {
+			logicalModelID = ""
+		}
+		if _, err := svc.SaveAdminLogicalModel(actor, logicalModelID, service.LogicalModelRequest{
 			Code: plan.logicalModel.Code, Name: plan.logicalModel.Name, Icon: plan.logicalModel.Icon, Description: plan.logicalModel.Description,
 			Capability: plan.channelModel.Capability, Enabled: plan.logicalModel.Enabled, SortOrder: plan.logicalModel.SortOrder,
-			LegacyModelIDs: decodeLegacyModelIDs(plan.logicalModel.LegacyModelIDsJSON), SourceChannelModelID: plan.channelModel.ID,
+			LegacyModelIDs: append(decodeLegacyModelIDs(plan.logicalModel.LegacyModelIDsJSON), plan.legacyLogicalModelIDs...), SourceChannelModelID: plan.channelModel.ID,
 		}); err != nil {
 			log.Fatalf("同步前台模型 %s 失败：%v", plan.logicalModel.Code, err)
+		}
+		if err := disableLegacySKURecords(db, plan); err != nil {
+			log.Fatalf("停用 %s 的旧 SKU 失败：%v", plan.logicalModel.Code, err)
 		}
 		log.Printf("已同步 %s 到系统模型 %s", plan.logicalModel.Code, plan.channelModel.ModelKey)
 	}
@@ -125,7 +136,154 @@ func buildPlans(repo *repository.Repository) ([]familyPlan, error) {
 		}
 		plans = append(plans, plan)
 	}
+	imagePlan, imageErr := buildImage2Plan(repo)
+	if imageErr != nil {
+		return nil, imageErr
+	}
+	if imagePlan != nil {
+		plans = append(plans, *imagePlan)
+	}
 	return plans, nil
+}
+
+// buildImage2Plan merges the three historical 1K/2K/4K records into one system
+// model. The exact upstream key remains tier-local so existing channel behaviour
+// is retained while the selected quality becomes a request parameter.
+func buildImage2Plan(repo *repository.Repository) (*familyPlan, error) {
+	all, err := repo.LogicalModels(true)
+	if err != nil {
+		return nil, err
+	}
+	byCode := make(map[string]model.LogicalModel, len(all))
+	for _, item := range all {
+		byCode[item.Code] = item
+	}
+	if existing, found := byCode["image-2"]; found && existing.SourceChannelModelID != "" {
+		source, sourceErr := repo.ChannelModel(existing.SourceChannelModelID)
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		return &familyPlan{logicalModel: existing, channelModel: *source, priceTiers: source.PriceTiers, alreadySynced: true}, nil
+	}
+	legacyCodes := []string{"image-2-1k", "image-2-2k", "image-2-4k"}
+	legacyModels := make([]model.LogicalModel, 0, len(legacyCodes))
+	legacyChannelModels := make([]model.ChannelModel, 0, len(legacyCodes))
+	for _, code := range legacyCodes {
+		logicalModel, found := byCode[code]
+		if !found {
+			return nil, fmt.Errorf("缺少 GPT Image 2 旧前台模型 %s", code)
+		}
+		graph, graphErr := repo.LogicalModelGraph(logicalModel.ID, true)
+		if graphErr != nil || graph.Revision == nil || len(graph.Routes) != 1 || len(graph.ChannelModels) != 1 {
+			return nil, fmt.Errorf("读取 GPT Image 2 旧模型 %s 的供应线路失败", code)
+		}
+		legacyModels = append(legacyModels, logicalModel)
+		legacyChannelModels = append(legacyChannelModels, graph.ChannelModels[0])
+	}
+	channelID := legacyChannelModels[0].ChannelID
+	for _, item := range legacyChannelModels {
+		if item.ChannelID != channelID || item.Capability != "image" || item.Protocol != legacyChannelModels[0].Protocol || item.CapabilityConfigJSON != legacyChannelModels[0].CapabilityConfigJSON {
+			return nil, errors.New("GPT Image 2 的旧 SKU 渠道、协议或能力配置不一致，拒绝自动合并")
+		}
+	}
+	canonical, canonicalErr := repo.ChannelModelByKeyIncludingDisabled(channelID, "gpt-image-2")
+	if canonicalErr != nil && !errors.Is(canonicalErr, gorm.ErrRecordNotFound) {
+		return nil, canonicalErr
+	}
+	tiers, tierErr := image2PriceTiersFromLegacy(repo, legacyChannelModels)
+	if tierErr != nil {
+		return nil, tierErr
+	}
+	channelModel := model.ChannelModel{}
+	alreadySynced := canonical != nil
+	if canonical != nil {
+		channelModel = *canonical
+		channelModel.PriceTiers = tiers
+	} else {
+		modelID, idErr := repo.NextPrefixedID("MODEL")
+		if idErr != nil {
+			return nil, idErr
+		}
+		channelModel = model.ChannelModel{
+			ID: modelID, ChannelID: channelID, ModelKey: "gpt-image-2", ProviderModelKey: "gpt-image-2", DisplayName: "GPT Image 2",
+			Capability: "image", Protocol: legacyChannelModels[0].Protocol, Enabled: true, PriceConfigured: true, PriceVersion: 1,
+			CapabilityConfigJSON: legacyChannelModels[0].CapabilityConfigJSON, CapabilityVersion: 1,
+		}
+	}
+	applyPriceSummary(&channelModel, tiers)
+	logicalModel := model.LogicalModel{Code: "image-2", Name: "GPT Image 2", Description: "GPT Image 2", Capability: "image", Enabled: true, SortOrder: legacyModels[0].SortOrder}
+	creatingLogical := true
+	if existing, found := byCode["image-2"]; found {
+		logicalModel = existing
+		creatingLogical = false
+	}
+	plan := &familyPlan{logicalModel: logicalModel, channelModel: channelModel, priceTiers: tiers, alreadySynced: alreadySynced, creatingLogical: creatingLogical}
+	for index := range legacyModels {
+		plan.legacyLogicalModelIDs = append(plan.legacyLogicalModelIDs, legacyModels[index].ID)
+		plan.legacyChannelModelIDs = append(plan.legacyChannelModelIDs, legacyChannelModels[index].ID)
+	}
+	return plan, nil
+}
+
+func image2PriceTiersFromLegacy(repo *repository.Repository, items []model.ChannelModel) ([]model.ChannelModelPriceTier, error) {
+	result := make([]model.ChannelModelPriceTier, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		quality := ""
+		for _, candidate := range []string{"1k", "2k", "4k"} {
+			if strings.HasSuffix(strings.ToLower(item.ModelKey), "-"+candidate) {
+				quality = candidate
+			}
+		}
+		if quality == "" || seen[quality] {
+			return nil, fmt.Errorf("无法从旧渠道模型 %s 推导唯一的 GPT Image 2 质量档", item.ModelKey)
+		}
+		seen[quality] = true
+		tier := firstActiveTier(item)
+		id, err := repo.NextPrefixedID("PTIER")
+		if err != nil {
+			return nil, err
+		}
+		selector, key, err := model.CanonicalSKUSelector(map[string]string{"quality": quality})
+		if err != nil {
+			return nil, err
+		}
+		tier.ID, tier.ChannelModelID, tier.Selector, tier.SelectorKey, tier.SelectorJSON = id, "", selector, key, key
+		tier.Resolution, tier.VideoSeconds = "*", 0
+		tier.ProviderModelKey = firstNonEmpty(tier.ProviderModelKey, item.ProviderModelKey, "gpt-image-2")
+		tier.PriceVersion = 1
+		result = append(result, tier)
+	}
+	if len(result) != 3 {
+		return nil, errors.New("GPT Image 2 缺少 1K、2K 或 4K 价格档")
+	}
+	return result, nil
+}
+
+func disableLegacySKURecords(db *gorm.DB, plan familyPlan) error {
+	if len(plan.legacyChannelModelIDs) == 0 && len(plan.legacyLogicalModelIDs) == 0 {
+		return nil
+	}
+	var active int64
+	if len(plan.legacyChannelModelIDs) > 0 {
+		if err := db.Model(&model.Task{}).Where("channel_model_id IN ? AND status IN ?", plan.legacyChannelModelIDs, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&active).Error; err != nil {
+			return err
+		}
+	}
+	if active > 0 {
+		return fmt.Errorf("仍有 %d 个排队或运行中的任务引用旧渠道 SKU，稍后重试迁移", active)
+	}
+	if len(plan.legacyLogicalModelIDs) > 0 {
+		if err := db.Model(&model.LogicalModel{}).Where("id IN ?", plan.legacyLogicalModelIDs).Update("enabled", false).Error; err != nil {
+			return err
+		}
+	}
+	if len(plan.legacyChannelModelIDs) > 0 {
+		if err := db.Model(&model.ChannelModel{}).Where("id IN ?", plan.legacyChannelModelIDs).Update("enabled", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func buildFamilyPlan(repo *repository.Repository, logicalModel model.LogicalModel, graph *repository.LogicalModelGraph) (familyPlan, error) {
@@ -225,7 +383,18 @@ func priceTiersFromLegacy(repo *repository.Repository, items []model.ChannelMode
 		if err != nil {
 			return nil, err
 		}
-		tier.ID, tier.ChannelModelID, tier.Resolution, tier.VideoSeconds = id, "", resolution, seconds
+		selectorInput := map[string]string{}
+		if resolution != "*" {
+			selectorInput["vquality"] = resolution
+		}
+		if seconds > 0 {
+			selectorInput["videoSeconds"] = strconv.Itoa(seconds)
+		}
+		selector, selectorKey, selectorErr := model.CanonicalSKUSelector(selectorInput)
+		if selectorErr != nil {
+			return nil, selectorErr
+		}
+		tier.ID, tier.ChannelModelID, tier.Selector, tier.SelectorKey, tier.SelectorJSON, tier.Resolution, tier.VideoSeconds = id, "", selector, selectorKey, selectorKey, resolution, seconds
 		tier.ProviderModelKey = firstNonEmpty(tier.ProviderModelKey, item.ProviderModelKey, item.ModelKey)
 		tier.PriceVersion = 1
 		result = append(result, tier)

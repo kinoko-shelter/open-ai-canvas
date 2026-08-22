@@ -755,13 +755,15 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		}
 		modelKey = models[0]
 	}
-	if !stringInSlice(modelKey, channelModelNames(*channel)) {
-		return providerConfig{}, errors.New("当前系统渠道未授权该模型")
-	}
 	config.ChannelID = channel.ID
 	config.APIFormat = channel.APIFormat
 	channelModel, modelErr := s.repo.ChannelModelByKey(channel.ID, modelKey)
-	if modelErr != nil || channelModel.Protocol == "" {
+	if modelErr != nil {
+		// ModelsJSON 只是旧渠道表上的目录缓存。SKU 合并后它不能代表可执行模型，
+		// 唯一授权来源必须是已启用的 channel_models 记录。
+		return providerConfig{}, errors.New("当前系统渠道未授权该模型")
+	}
+	if channelModel.Protocol == "" {
 		return providerConfig{}, errors.New("当前模型尚未配置请求协议")
 	}
 	providerModelKey := strings.TrimPrefix(strings.TrimSpace(config.ProviderModelKey), "models/")
@@ -802,16 +804,6 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 
 func providerChannelModelKey(config providerConfig) string {
 	return strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(config.ChannelModelKey, config.Model)), "models/")
-}
-
-func stringInSlice(value string, values []string) bool {
-	value = strings.TrimPrefix(strings.TrimSpace(value), "models/")
-	for _, candidate := range values {
-		if strings.TrimPrefix(strings.TrimSpace(candidate), "models/") == value {
-			return true
-		}
-	}
-	return false
 }
 
 func systemChannelIDFromBaseURL(baseURL string) string {

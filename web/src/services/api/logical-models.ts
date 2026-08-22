@@ -40,6 +40,7 @@ export type PublicLogicalModel = {
 };
 
 export type PublicLogicalModelPriceTier = {
+	selector: Record<string, string>;
 	resolution: string;
 	videoSeconds: number;
 	billingMode: "fixed_request" | "per_second" | "token";

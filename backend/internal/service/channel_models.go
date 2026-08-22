@@ -36,16 +36,19 @@ type ChannelModelRequest struct {
 // ChannelModelPriceTierRequest 是系统渠道内某个规格的上游 SKU 与结算价格。
 // Resolution="*"、VideoSeconds=0 分别表示任意分辨率和任意时长。
 type ChannelModelPriceTierRequest struct {
-	Resolution                   string `json:"resolution"`
-	VideoSeconds                 int    `json:"videoSeconds"`
-	ProviderModelKey             string `json:"providerModelKey"`
-	BillingMode                  string `json:"billingMode"`
-	UnitPriceMicrocredits        int64  `json:"unitPriceMicrocredits"`
-	InputTokenPriceMicrocredits  int64  `json:"inputTokenPriceMicrocredits"`
-	OutputTokenPriceMicrocredits int64  `json:"outputTokenPriceMicrocredits"`
-	CachedTokenPriceMicrocredits int64  `json:"cachedTokenPriceMicrocredits"`
-	PriceConfigured              bool   `json:"priceConfigured"`
-	Enabled                      *bool  `json:"enabled"`
+	// Selector 是 SKU 的规范匹配条件。支持 operation、quality、size、vquality、videoSeconds；
+	// operation 可区分文生/图生/视频生，避免同一分辨率下错误复用价格。
+	Selector                     map[string]string `json:"selector"`
+	Resolution                   string            `json:"resolution"`
+	VideoSeconds                 int               `json:"videoSeconds"`
+	ProviderModelKey             string            `json:"providerModelKey"`
+	BillingMode                  string            `json:"billingMode"`
+	UnitPriceMicrocredits        int64             `json:"unitPriceMicrocredits"`
+	InputTokenPriceMicrocredits  int64             `json:"inputTokenPriceMicrocredits"`
+	OutputTokenPriceMicrocredits int64             `json:"outputTokenPriceMicrocredits"`
+	CachedTokenPriceMicrocredits int64             `json:"cachedTokenPriceMicrocredits"`
+	PriceConfigured              bool              `json:"priceConfigured"`
+	Enabled                      *bool             `json:"enabled"`
 }
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
@@ -283,43 +286,12 @@ func validateChannelModelTierCapabilities(tiers []model.ChannelModelPriceTier, r
 	return nil
 }
 
-// syncLogicalModelsFromChannelModel 让前台目录成为系统渠道模型的投影。它只创建新的
-// logical revision 并切换 active revision，绝不改写任务、路由尝试和账单已有的快照。
+// syncLogicalModelsFromChannelModel 只失效路由目录。系统渠道 SKU 和前台产品目录由管理员
+// 分别维护：保存一个渠道模型绝不能自动创建或覆盖前台模型的线路、项目关联和权限可见性。
 func (s *Service) syncLogicalModelsFromChannelModel(actor *model.User, channelModel *model.ChannelModel) error {
-	if channelModel == nil {
-		return nil
-	}
-	items, err := s.repo.LogicalModelsBySourceChannelModelID(channelModel.ID)
-	if err != nil {
-		return err
-	}
-	if len(items) == 0 {
-		items, err = s.repo.LogicalModelsByOnlyActiveChannelModelID(channelModel.ID)
-		if err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			code := "system." + strings.ToLower(strings.TrimSpace(channelModel.ID))
-			name := strings.TrimSpace(channelModel.DisplayName)
-			if name == "" {
-				name = channelModel.ModelKey
-			}
-			_, err = s.SaveAdminLogicalModel(actor, "", LogicalModelRequest{
-				Code: code, Name: name, Description: "由系统渠道模型自动同步", Capability: channelModel.Capability,
-				Enabled: channelModel.Enabled, SortOrder: 0, SourceChannelModelID: channelModel.ID,
-			})
-			return err
-		}
-	}
-	for _, item := range items {
-		_, saveErr := s.SaveAdminLogicalModel(actor, item.ID, LogicalModelRequest{
-			Code: item.Code, Name: item.Name, Icon: item.Icon, Description: item.Description, Capability: channelModel.Capability,
-			Enabled: item.Enabled, SortOrder: item.SortOrder, LegacyModelIDs: decodeLegacyModelIDs(item.LegacyModelIDsJSON), SourceChannelModelID: channelModel.ID,
-		})
-		if saveErr != nil {
-			return saveErr
-		}
-	}
+	_ = actor
+	_ = channelModel
+	s.invalidateRouteCatalog()
 	return nil
 }
 
@@ -342,18 +314,16 @@ func (s *Service) normalizeChannelModelPriceTiers(req ChannelModelRequest, capab
 	result := make([]model.ChannelModelPriceTier, 0, len(inputs))
 	seen := make(map[string]bool, len(inputs))
 	for _, input := range inputs {
-		resolution := normalizeChannelModelTierResolution(input.Resolution)
-		videoSeconds := input.VideoSeconds
-		if capability != "video" {
-			if resolution != "*" || videoSeconds != 0 {
-				return nil, BadAuthRequest("只有视频模型可以按分辨率或时长配置价格档")
-			}
-		} else if videoSeconds < 0 {
-			return nil, BadAuthRequest("视频价格档时长不能小于 0")
+		selector, resolution, videoSeconds, selectorErr := normalizeChannelModelTierSelector(capability, input)
+		if selectorErr != nil {
+			return nil, selectorErr
 		}
-		key := resolution + ":" + strconv.Itoa(videoSeconds)
+		_, key, keyErr := model.CanonicalSKUSelector(selector)
+		if keyErr != nil {
+			return nil, keyErr
+		}
 		if seen[key] {
-			return nil, BadAuthRequest("同一分辨率和时长只能配置一个价格档")
+			return nil, BadAuthRequest("同一个操作和规格组合只能配置一个价格档")
 		}
 		seen[key] = true
 		billingMode := strings.TrimSpace(input.BillingMode)
@@ -370,6 +340,9 @@ func (s *Service) normalizeChannelModelPriceTiers(req ChannelModelRequest, capab
 		enabled := input.Enabled == nil || *input.Enabled
 		result = append(result, model.ChannelModelPriceTier{
 			ID:                           id,
+			SelectorKey:                  key,
+			SelectorJSON:                 key,
+			Selector:                     selector,
 			Resolution:                   resolution,
 			VideoSeconds:                 videoSeconds,
 			ProviderModelKey:             strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(input.ProviderModelKey, fallbackProviderModelKey)), "models/"),
@@ -384,6 +357,74 @@ func (s *Service) normalizeChannelModelPriceTiers(req ChannelModelRequest, capab
 		})
 	}
 	return result, nil
+}
+
+func normalizeChannelModelTierSelector(capability string, input ChannelModelPriceTierRequest) (map[string]string, string, int, error) {
+	selector := make(map[string]string, len(input.Selector)+3)
+	for rawKey, rawValue := range input.Selector {
+		key := strings.TrimSpace(rawKey)
+		value := strings.TrimSpace(rawValue)
+		if key == "" || value == "" {
+			continue
+		}
+		switch key {
+		case "operation":
+			value = strings.ToLower(value)
+		case "quality", "size":
+			value = strings.ToLower(value)
+			if value == "auto" || value == "any" {
+				value = "*"
+			}
+		case "vquality":
+			value = normalizeChannelModelTierResolution(value)
+		case "videoSeconds":
+			seconds, err := strconv.Atoi(value)
+			if err != nil || seconds < 0 {
+				return nil, "", 0, BadAuthRequest("视频价格档时长必须是非负整数")
+			}
+			if seconds == 0 {
+				continue
+			}
+			value = strconv.Itoa(seconds)
+		default:
+			return nil, "", 0, BadAuthRequest("价格档不支持规格字段：" + key)
+		}
+		selector[key] = value
+	}
+	if capability == "video" {
+		if _, exists := selector["vquality"]; !exists {
+			if resolution := normalizeChannelModelTierResolution(input.Resolution); resolution != "*" {
+				selector["vquality"] = resolution
+			}
+		}
+		if _, exists := selector["videoSeconds"]; !exists && input.VideoSeconds > 0 {
+			selector["videoSeconds"] = strconv.Itoa(input.VideoSeconds)
+		}
+	} else if input.Resolution != "" && normalizeChannelModelTierResolution(input.Resolution) != "*" {
+		return nil, "", 0, BadAuthRequest("非视频模型不能使用视频分辨率价格档")
+	} else if input.VideoSeconds != 0 {
+		return nil, "", 0, BadAuthRequest("非视频模型不能使用视频时长价格档")
+	}
+	for _, key := range []string{"quality", "size"} {
+		if _, exists := selector[key]; exists && capability != "image" {
+			return nil, "", 0, BadAuthRequest("只有图片模型可以按 " + key + " 配置价格档")
+		}
+	}
+	if _, exists := selector["vquality"]; exists && capability != "video" {
+		return nil, "", 0, BadAuthRequest("只有视频模型可以按分辨率配置价格档")
+	}
+	if _, exists := selector["videoSeconds"]; exists && capability != "video" {
+		return nil, "", 0, BadAuthRequest("只有视频模型可以按时长配置价格档")
+	}
+	resolution := "*"
+	if value := selector["vquality"]; value != "" {
+		resolution = value
+	}
+	videoSeconds := 0
+	if value := selector["videoSeconds"]; value != "" {
+		videoSeconds, _ = strconv.Atoi(value)
+	}
+	return selector, resolution, videoSeconds, nil
 }
 
 func validateChannelModelTierPricing(capability string, protocol model.ChannelInterfaceType, billingMode string, input ChannelModelPriceTierRequest) error {

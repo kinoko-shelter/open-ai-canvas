@@ -107,6 +107,8 @@ export type ChannelModel = {
 export type ChannelModelPriceTier = {
     id: string;
     channelModelId: string;
+	selector: Record<string, string>;
+	selectorKey: string;
     resolution: string;
     videoSeconds: number;
     providerModelKey: string;
@@ -131,7 +133,7 @@ export type ChannelModelMutation = {
     protocol?: ChannelModel["protocol"];
     enabled?: boolean;
     capabilityConfig?: ChannelModel["capabilityConfig"];
-    priceTiers?: Array<Omit<ChannelModelPriceTier, "id" | "channelModelId" | "priceVersion" | "createdAt" | "updatedAt">>;
+	priceTiers?: Array<Omit<ChannelModelPriceTier, "id" | "channelModelId" | "selectorKey" | "priceVersion" | "createdAt" | "updatedAt">>;
     billingMode?: ChannelModel["billingMode"];
     unitPriceMicrocredits?: number;
     inputTokenPriceMicrocredits?: number;

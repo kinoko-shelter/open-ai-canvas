@@ -281,7 +281,12 @@ function modelPriceTiers(config: AiConfig) {
 function hasPriceTierForVideoSelection(tiers: ReturnType<typeof modelPriceTiers>, resolution: string, seconds: number) {
 	if (!tiers.length) return true;
 	const normalizedResolution = normalizeTierResolution(resolution);
-	return tiers.some((tier) => (tier.resolution === "*" || normalizeTierResolution(tier.resolution) === normalizedResolution) && (tier.videoSeconds === 0 || tier.videoSeconds === seconds));
+	return tiers.some((tier) => {
+		const selector = tier.selector || {};
+		const tierResolution = selector.vquality || tier.resolution;
+		const tierSeconds = selector.videoSeconds ? Number(selector.videoSeconds) : tier.videoSeconds;
+		return (tierResolution === "*" || !tierResolution || normalizeTierResolution(tierResolution) === normalizedResolution) && (!tierSeconds || tierSeconds === seconds);
+	});
 }
 
 function normalizeTierResolution(value: string) {

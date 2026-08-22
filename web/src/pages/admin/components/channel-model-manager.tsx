@@ -28,6 +28,9 @@ type FormValues = {
 };
 
 type PriceTierFormValues = {
+	operation: string;
+	quality: string;
+	size: string;
     resolution: string;
     videoSeconds: number;
     providerModelKey?: string;
@@ -147,6 +150,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                 capability: values.capability,
                 protocol: values.protocol,
 				priceTiers: values.priceTiers.map((tier) => ({
+					selector: skuSelectorFromForm(values.capability, tier),
 					resolution: values.capability === "video" ? (tier.resolution || "*") : "*",
 					videoSeconds: values.capability === "video" ? Number(tier.videoSeconds || 0) : 0,
 					providerModelKey: tier.providerModelKey?.trim() || upstreamModel,
@@ -227,6 +231,9 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
         }
 		const nextTiers = (form.getFieldValue("priceTiers") || []).map((tier: PriceTierFormValues) => ({
 			...tier,
+			operation: tier.operation || "*",
+			quality: changed.capability === "image" ? tier.quality || "*" : "*",
+			size: changed.capability === "image" ? tier.size || "*" : "*",
 			resolution: changed.capability === "video" ? tier.resolution || "*" : "*",
 			videoSeconds: changed.capability === "video" ? tier.videoSeconds || 0 : 0,
 			billingMode: tier.billingMode === "per_second" && changed.capability !== "video" ? "fixed_request" : tier.billingMode,
@@ -504,6 +511,9 @@ function PriceTierFields({
                 <Button type="text" danger aria-label={`删除价格档 ${ordinal}`} title="删除价格档" icon={<X className="size-4" />} onClick={onRemove} />
             </div>
             <div className="grid gap-3 md:grid-cols-3">
+				<Form.Item name={[index, "operation"]} label="生成方式" rules={[{ required: true, message: "请选择生成方式" }]}>
+					<Select options={operationOptions(capability)} />
+				</Form.Item>
                 {isVideo ? (
                     <Form.Item name={[index, "resolution"]} label="分辨率" rules={[{ required: true, message: "请选择分辨率" }]}>
                         <Select options={[{ label: "任意分辨率", value: "*" }, ...resolutionOptions.map((value) => ({ label: value.toUpperCase(), value }))]} />
@@ -514,6 +524,16 @@ function PriceTierFields({
                         {durationOptions.length ? <Select options={[{ label: "任意时长", value: 0 }, ...durationOptions.map((value) => ({ label: `${value} 秒`, value }))]} /> : <InputNumber className="w-full" min={0} precision={0} />}
                     </Form.Item>
                 ) : null}
+				{capability === "image" ? (
+					<Form.Item name={[index, "quality"]} label="质量/分辨率" rules={[{ required: true, message: "请选择质量或分辨率" }]}>
+						<Select options={[{ label: "任意质量", value: "*" }, { label: "1K", value: "1k" }, { label: "2K", value: "2k" }, { label: "4K", value: "4k" }]} />
+					</Form.Item>
+				) : null}
+				{capability === "image" ? (
+					<Form.Item name={[index, "size"]} label="画幅/尺寸" extra="留空或任意表示不区分画幅">
+						<Input placeholder="例如：1:1、16:9 或 1024x1024" />
+					</Form.Item>
+				) : null}
                 <Form.Item name={[index, "providerModelKey"]} label="上游模型 ID">
                     <Input placeholder="留空则使用模型默认上游 ID" />
                 </Form.Item>
@@ -554,11 +574,12 @@ function PriceTierFields({
 }
 
 function defaultPriceTier(): PriceTierFormValues {
-    return { resolution: "*", videoSeconds: 0, providerModelKey: "", billingMode: "fixed_request", unitPrice: 0, inputTokenPrice: 0, outputTokenPrice: 0, cachedTokenPrice: 0, priceConfigured: true, enabled: true };
+    return { operation: "*", quality: "*", size: "*", resolution: "*", videoSeconds: 0, providerModelKey: "", billingMode: "fixed_request", unitPrice: 0, inputTokenPrice: 0, outputTokenPrice: 0, cachedTokenPrice: 0, priceConfigured: true, enabled: true };
 }
 
 function priceTierToForm(tier: ChannelModelPriceTier): PriceTierFormValues {
     return {
+		operation: tier.selector?.operation || "*", quality: tier.selector?.quality || "*", size: tier.selector?.size || "*",
         resolution: tier.resolution || "*", videoSeconds: tier.videoSeconds || 0, providerModelKey: tier.providerModelKey || "", billingMode: tier.billingMode,
         unitPrice: tier.unitPriceMicrocredits / 1_000_000, inputTokenPrice: tier.inputTokenPriceMicrocredits / 1_000_000,
         outputTokenPrice: tier.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: tier.cachedTokenPriceMicrocredits / 1_000_000,
@@ -568,7 +589,7 @@ function priceTierToForm(tier: ChannelModelPriceTier): PriceTierFormValues {
 
 function legacyPriceTierToForm(item: ChannelModel): PriceTierFormValues {
     return {
-        resolution: "*", videoSeconds: 0, providerModelKey: item.providerModelKey || "", billingMode: item.billingMode,
+        operation: "*", quality: "*", size: "*", resolution: "*", videoSeconds: 0, providerModelKey: item.providerModelKey || "", billingMode: item.billingMode,
         unitPrice: item.unitPriceMicrocredits / 1_000_000, inputTokenPrice: item.inputTokenPriceMicrocredits / 1_000_000,
         outputTokenPrice: item.outputTokenPriceMicrocredits / 1_000_000, cachedTokenPrice: item.cachedTokenPriceMicrocredits / 1_000_000,
         priceConfigured: item.priceConfigured, enabled: item.enabled,
@@ -582,9 +603,43 @@ function billingSummary(item: ChannelModel) {
 }
 
 function priceTierLabel(tier: ChannelModelPriceTier) {
-    const spec = [tier.resolution === "*" ? "任意分辨率" : tier.resolution.toUpperCase(), tier.videoSeconds ? `${tier.videoSeconds} 秒` : "任意时长"].join(" / ");
+    const selector = tier.selector || {};
+    const specParts = [
+        selector.operation && selector.operation !== "*" ? operationLabel(selector.operation) : "任意生成方式",
+        selector.quality && selector.quality !== "*" ? selector.quality.toUpperCase() : "",
+        selector.size && selector.size !== "*" ? selector.size : "",
+        tier.resolution === "*" ? "" : tier.resolution.toUpperCase(),
+        tier.videoSeconds ? `${tier.videoSeconds} 秒` : "",
+    ].filter(Boolean);
+    const spec = specParts.length ? specParts.join(" / ") : "默认规格";
     if (tier.billingMode === "token") return `${spec} · ${formatCredits(tier.outputTokenPriceMicrocredits)} / 百万 Token`;
     return `${spec} · ${formatCredits(tier.unitPriceMicrocredits)} 积分 / ${tier.billingMode === "per_second" ? "秒" : "次"}`;
+}
+
+function operationOptions(capability: EditableCapability | undefined) {
+	const options = [{ label: "任意生成方式", value: "*" }];
+	if (capability === "image") return [...options, { label: "文生图", value: "text_to_image" }, { label: "图生图", value: "image_to_image" }];
+	if (capability === "video") return [...options, { label: "文生视频", value: "text_to_video" }, { label: "图生视频", value: "image_to_video" }, { label: "视频生视频", value: "video_to_video" }];
+	if (capability === "text") return [...options, { label: "文本生成", value: "text_generation" }];
+	return options;
+}
+
+function operationLabel(operation: string) {
+	return ({ text_to_image: "文生图", image_to_image: "图生图", text_to_video: "文生视频", image_to_video: "图生视频", video_to_video: "视频生视频", text_generation: "文本生成" } as Record<string, string>)[operation] || operation;
+}
+
+function skuSelectorFromForm(capability: EditableCapability, tier: PriceTierFormValues) {
+	const selector: Record<string, string> = {};
+	if (tier.operation && tier.operation !== "*") selector.operation = tier.operation;
+	if (capability === "video") {
+		if (tier.resolution && tier.resolution !== "*") selector.vquality = tier.resolution;
+		if (Number(tier.videoSeconds) > 0) selector.videoSeconds = String(Number(tier.videoSeconds));
+	}
+	if (capability === "image") {
+		if (tier.quality && tier.quality !== "*") selector.quality = tier.quality;
+		if (tier.size && tier.size !== "*") selector.size = tier.size;
+	}
+	return selector;
 }
 
 function formatCredits(value: number) {

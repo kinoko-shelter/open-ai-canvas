@@ -963,7 +963,7 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, aig
 	}
 	return &model.BillingOrder{
 		ID: newID(), UserID: userID, IdempotencyKey: idempotencyKey, TaskID: taskID, AigcProjectID: aigcProjectID,
-		ChannelID: channelID, ChannelModelID: item.ID, PriceTierID: tier.ID, PriceTierVersion: tier.PriceVersion, Model: modelKey, Capability: capability,
+		ChannelID: channelID, ChannelModelID: item.ID, PriceTierID: tier.ID, PriceTierVersion: tier.PriceVersion, PriceSelectorJSON: tier.SelectorJSON, Model: modelKey, Capability: capability,
 		Scene: truncateRunes(scene, 80), BillingMode: tier.BillingMode, PriceVersion: item.PriceVersion,
 		UnitPriceMicrocredits: tier.UnitPriceMicrocredits, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		ReservedAmountMicrocredits: amount, InputTokenPriceMicrocredits: tier.InputTokenPriceMicrocredits,

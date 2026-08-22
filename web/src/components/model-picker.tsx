@@ -4,6 +4,7 @@ import { Popover } from "antd";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, videoDurationOptions } from "@/lib/model-capabilities";
+import { normalizeVideoResolution } from "@/lib/video-generation-options";
 import { compatibleModelInGroup, groupModelsByDisplayName, modelCompatibilityError, modelRequestOptions, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
 import { modelDisplayName, modelIcon, modelOptionLabel, modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
@@ -61,7 +62,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
     const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
     const resolvedCurrent = resolveCompatibleModel(config, current, selectionRequirements) || current;
-    const currentPrice = modelMenuPrice(config, resolvedCurrent);
+    const currentPrice = modelMenuPrice(config, resolvedCurrent, capability);
     const quoteRequest = useMemo(() => modelQuoteRequest(config, resolvedCurrent, capability, requirements), [capability, config, requirements, resolvedCurrent]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
     const creationVariant = variant === "creation";
@@ -279,7 +280,7 @@ function ModelLabel({
                     {capabilitySummary}
                 </span>
             </span>
-            {showPrice ? <ModelPrice price={modelMenuPrice(config, model)} /> : null}
+            {showPrice ? <ModelPrice price={modelMenuPrice(config, model, capability, true)} /> : null}
             {!creationVariant && meta.time ? (
                 <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[var(--fs-tiny)] tabular-nums" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     {meta.time}
@@ -349,19 +350,124 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
 }
 
 type ModelMenuPrice =
-    | { kind: "channel" }
+    | { kind: "tiers"; label: string; compactLabel: string; title: string }
     | { kind: "estimate" }
     | { kind: "fixed"; value: number; unit: "次" | "秒" | "百万 Token" };
 
-function modelMenuPrice(config: AiConfig, model: string): ModelMenuPrice | null | undefined {
+function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability, summary = false): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
-    // 跟随供应价格会因实际命中的线路和能力档位变化，不能把逻辑模型中的零占位价展示给用户。
-    if (cost.pricePolicy === "channel") return { kind: "channel" };
+    if (cost.pricePolicy === "channel") {
+        const tiers = cost.logicalPriceTiers || [];
+        if (!tiers.length) return null;
+        const matched = summary ? tiers : priceTiersForCurrentSelection(tiers, capability, config);
+        return channelTierPriceSummary(matched.length ? matched : tiers, tiers);
+    }
     if (cost.billingMode === "token") return { kind: "estimate" };
     return { kind: "fixed", value: cost.unitPriceMicrocredits / 1_000_000, unit: cost.billingMode === "per_second" ? "秒" : "次" };
+}
+
+function priceTiersForCurrentSelection(
+    tiers: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>,
+    capability: ModelCapability | undefined,
+    config: AiConfig,
+) {
+    const requested: Record<string, string> = {};
+    if (capability === "video") {
+        const resolution = normalizeTierResolution(config.vquality);
+        if (resolution !== "*") requested.vquality = resolution;
+        const seconds = Math.max(0, Math.floor(Number(config.videoSeconds) || 0));
+        if (seconds > 0) requested.videoSeconds = String(seconds);
+    }
+    if (capability === "image") {
+        if (config.quality && config.quality !== "auto") requested.quality = config.quality.toLowerCase();
+        if (config.size && config.size !== "auto") requested.size = config.size.toLowerCase();
+    }
+    let bestScore = -1;
+    let matched: typeof tiers = [];
+    for (const tier of tiers) {
+		const selector = tier.selector || {};
+		const conditions = Object.entries(selector).filter(([, value]) => value && value !== "*");
+		if (conditions.some(([key, value]) => requested[key] !== value)) continue;
+		const score = conditions.length;
+        if (score > bestScore) {
+            bestScore = score;
+            matched = [tier];
+        } else if (score === bestScore) {
+            matched.push(tier);
+        }
+    }
+    return matched;
+}
+
+function normalizeTierResolution(value: string) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "*") return "*";
+    return `${normalizeVideoResolution(raw)}p`;
+}
+
+function channelTierPriceSummary(
+    visibleTiers: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>,
+    allTiers: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>,
+): Extract<ModelMenuPrice, { kind: "tiers" }> {
+    const fixedRequestValues = visibleTiers
+        .filter((tier) => tier.billingMode === "fixed_request")
+        .map((tier) => tier.unitPriceMicrocredits / 1_000_000)
+        .filter((value) => value > 0);
+    const perSecondValues = visibleTiers
+        .filter((tier) => tier.billingMode === "per_second")
+        .map((tier) => tier.unitPriceMicrocredits / 1_000_000)
+        .filter((value) => value > 0);
+    const hasTokenTier = visibleTiers.some((tier) => tier.billingMode === "token");
+    const label = fixedRequestValues.length
+        ? formatPriceRange(fixedRequestValues, "积分")
+        : perSecondValues.length
+            ? formatPriceRange(perSecondValues, "积分/秒")
+            : hasTokenTier
+                ? "按量预估"
+                : "未配置";
+    return {
+        kind: "tiers",
+        label,
+        compactLabel: label,
+        title: `系统规格价格：${allTiers.map((tier) => `${tierSpecificationLabel(tier)} ${tierPriceLabel(tier)}`).join("；")}`,
+    };
+}
+
+function formatPriceRange(values: number[], suffix: string) {
+    const unique = Array.from(new Set(values)).sort((left, right) => left - right);
+    const format = (value: number) => value.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+    return unique.length === 1 ? `${format(unique[0])} ${suffix}` : `${format(unique[0])}-${format(unique[unique.length - 1])} ${suffix}`;
+}
+
+function tierResolutionLabel(value: string) {
+    const normalized = normalizeTierResolution(value);
+    return normalized === "*" ? "全部分辨率" : normalized.toUpperCase();
+}
+
+function tierDurationLabel(seconds: number) {
+    return seconds > 0 ? `${seconds} 秒` : "全部时长";
+}
+
+function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>[number]) {
+    const selector = tier.selector || {};
+	const operationLabels: Record<string, string> = { text_to_image: "文生图", image_to_image: "图生图", text_to_video: "文生视频", image_to_video: "图生视频", video_to_video: "视频生视频" };
+	const operation = selector.operation && selector.operation !== "*" ? (operationLabels[selector.operation] || selector.operation) : "";
+	const details = [
+		operation,
+		selector.quality && selector.quality !== "*" ? selector.quality.toUpperCase() : "",
+		selector.size && selector.size !== "*" ? selector.size : "",
+		tier.resolution !== "*" ? tierResolutionLabel(tier.resolution) : "",
+		tier.videoSeconds ? tierDurationLabel(tier.videoSeconds) : "",
+	].filter(Boolean);
+	return details.length ? details.join(" / ") : "默认规格";
+}
+
+function tierPriceLabel(tier: NonNullable<NonNullable<AiConfig["channels"][number]["modelCosts"]>[number]["logicalPriceTiers"]>[number]) {
+    if (tier.billingMode === "token") return "按量预估";
+    return `${formatPriceRange([tier.unitPriceMicrocredits / 1_000_000], tier.billingMode === "per_second" ? "积分/秒" : "积分")}`;
 }
 
 function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; compact?: boolean }) {
@@ -377,11 +483,11 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
     }
     if (price === undefined) return null;
     if (price === null) return compact ? null : <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/40">未配置</span>;
-    if (price.kind === "channel") {
+    if (price.kind === "tiers") {
         return (
-            <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold text-amber-600 dark:text-amber-300" title="按实际命中的供应线路和能力档位结算积分">
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--fs-tiny)] font-bold tabular-nums text-amber-600 dark:text-amber-300" title={price.title}>
                 <Coins className="size-3" />
-                {compact ? "渠道价" : "按渠道计费"}
+                {compact ? price.compactLabel : price.label}
             </span>
         );
     }

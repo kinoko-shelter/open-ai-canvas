@@ -6,10 +6,11 @@
 
 - 产品运行时品牌固定为“故事创作”。上游同步不得覆盖工作区、后台或 Canvas Agent 的品牌文案；具体扫描要求见 [AGENTS.md](../AGENTS.md) 第 11 节「Git、提交与发布」。
 - 上游功能按团队、项目、权限、账务和资源归属合同逐块迁移，不直接用整文件覆盖本地业务实现。
-- 系统渠道模型是能力、规格、上游 SKU 与用户价格的唯一配置源。一个 `ChannelModel` 可有多条 `ChannelModelPriceTier`，按 `resolution + videoSeconds` 匹配；`*` 与 `0` 分别表示任意分辨率、任意时长，精确规格优先于通配规格。
-- `ChannelModel.modelKey` 是稳定的产品模型标识；每个价格档的 `providerModelKey` 才是该规格实际发送给上游的模型 ID。不得因分辨率或时长新增重复前台模型，也不得把渠道模型的规格拆回多个独立 SKU。
-- 前台逻辑模型是系统渠道模型的只读投影：保存渠道模型会创建新的逻辑模型 revision 并切换 active revision；前台不得重复编辑能力、默认参数、供应线路或价格。历史 `Task`、`RouteAttempt`、`BillingOrder` 和旧 revision 必须保持原引用及金额快照。
-- 账单必须记录实际命中的 `ChannelModelID`、`PriceTierID`、版本、单价和最终金额；上游同步或价格调整不得回写历史任务与订单。新增模型治理或上游合并前必须检查这些约束，不能用整页或整文件覆盖恢复双配置。
+- 系统渠道模型是能力、规格、上游 SKU 与用户价格的唯一配置源。一个 `ChannelModel` 代表一个模型家族，`ChannelModelPriceTier` 用规范 `selector` 匹配可计费 SKU：视频使用 `operation + vquality + videoSeconds`，图片使用 `operation + quality + size`；缺失字段或 `*` 表示通配，精确组合优先于通配。
+- `ChannelModel.modelKey` 是稳定的系统模型家族标识；每个价格档的 `providerModelKey` 才是该规格实际发送给上游的模型 ID。不得因分辨率、时长、输入类型或图片质量新增重复系统模型或前台模型。Mini、Fast、Pro 等独立产品才是独立模型。
+- 前台逻辑模型是产品目录与多渠道故障切换层，只维护展示、创作端能力、默认参数和线路优先级/权重。前台模型必须使用 `pricePolicy=channel`，不得维护第二份价格；保存系统渠道模型不得自动创建、覆盖或删除前台模型、团队权限、项目关联或线路配置。
+- 路由由后端根据真实输入推导 `operation`，再选择可匹配 SKU、实际渠道和上游模型键；前端只提交质量、尺寸、分辨率和时长，不得传入或缓存上游 SKU。任一回退线路缺少当前规格的 SKU 时，该线路不参与该规格的切换。
+- 账单必须记录实际命中的 `ChannelModelID`、`PriceTierID`、价格档版本、规格选择器、单价和最终金额；上游同步或价格调整不得回写历史 `Task`、`RouteAttempt`、`BillingOrder` 和旧 revision。SKU 合并先 dry-run，拒绝存在排队/运行任务或重复 selector 的计划；旧记录只停用保留，不能删除或改写外键。
 
 ## 设计沉淀
 

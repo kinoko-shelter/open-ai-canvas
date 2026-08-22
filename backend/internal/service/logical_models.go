@@ -75,13 +75,14 @@ type PublicLogicalModel struct {
 // PublicLogicalModelPriceTier 是创作端用于约束规格选择和展示当前报价的安全投影，
 // 不暴露供应渠道、上游模型 ID 或内部路由信息。
 type PublicLogicalModelPriceTier struct {
-	Resolution                   string `json:"resolution"`
-	VideoSeconds                 int    `json:"videoSeconds"`
-	BillingMode                  string `json:"billingMode"`
-	UnitPriceMicrocredits        int64  `json:"unitPriceMicrocredits"`
-	InputTokenPriceMicrocredits  int64  `json:"inputTokenPriceMicrocredits"`
-	OutputTokenPriceMicrocredits int64  `json:"outputTokenPriceMicrocredits"`
-	CachedTokenPriceMicrocredits int64  `json:"cachedTokenPriceMicrocredits"`
+	Selector                     map[string]string `json:"selector"`
+	Resolution                   string            `json:"resolution"`
+	VideoSeconds                 int               `json:"videoSeconds"`
+	BillingMode                  string            `json:"billingMode"`
+	UnitPriceMicrocredits        int64             `json:"unitPriceMicrocredits"`
+	InputTokenPriceMicrocredits  int64             `json:"inputTokenPriceMicrocredits"`
+	OutputTokenPriceMicrocredits int64             `json:"outputTokenPriceMicrocredits"`
+	CachedTokenPriceMicrocredits int64             `json:"cachedTokenPriceMicrocredits"`
 }
 
 type AdminLogicalRoute struct {
@@ -148,7 +149,7 @@ func (s *Service) PublicLogicalModels(intent *ModelRequestIntent) ([]PublicLogic
 			available = false
 			if coverageValid {
 				for _, route := range cached.Routes {
-					if route.Route.Enabled && route.Route.Weight > 0 && !s.logicalRouteBlocked(route) && MatchCapability(route.CapabilitySpec, resolvedIntent).Matched {
+					if route.Route.Enabled && route.Route.Weight > 0 && !s.logicalRouteBlocked(route) && MatchCapability(route.CapabilitySpec, resolvedIntent).Matched && (cached.Model.PricePolicy != "channel" || channelModelPriceTierForIntent(route.ChannelModel, resolvedIntent) != nil) {
 						available = true
 						break
 					}
@@ -196,12 +197,17 @@ func publicLogicalModelPriceTiers(cached cachedLogicalModel) []PublicLogicalMode
 			if !tier.Enabled || !tier.PriceConfigured {
 				continue
 			}
-			key := fmt.Sprintf("%s:%d:%s:%d:%d:%d:%d", tier.Resolution, tier.VideoSeconds, tier.BillingMode, tier.UnitPriceMicrocredits, tier.InputTokenPriceMicrocredits, tier.OutputTokenPriceMicrocredits, tier.CachedTokenPriceMicrocredits)
+			selector := skuSelectorForTier(tier)
+			_, selectorKey, selectorErr := model.CanonicalSKUSelector(selector)
+			if selectorErr != nil {
+				continue
+			}
+			key := fmt.Sprintf("%s:%s:%d:%d:%d:%d", selectorKey, tier.BillingMode, tier.UnitPriceMicrocredits, tier.InputTokenPriceMicrocredits, tier.OutputTokenPriceMicrocredits, tier.CachedTokenPriceMicrocredits)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			result = append(result, PublicLogicalModelPriceTier{Resolution: normalizeChannelModelTierResolution(tier.Resolution), VideoSeconds: tier.VideoSeconds, BillingMode: tier.BillingMode, UnitPriceMicrocredits: tier.UnitPriceMicrocredits, InputTokenPriceMicrocredits: tier.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: tier.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: tier.CachedTokenPriceMicrocredits})
+			result = append(result, PublicLogicalModelPriceTier{Selector: selector, Resolution: normalizeChannelModelTierResolution(tier.Resolution), VideoSeconds: tier.VideoSeconds, BillingMode: tier.BillingMode, UnitPriceMicrocredits: tier.UnitPriceMicrocredits, InputTokenPriceMicrocredits: tier.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: tier.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: tier.CachedTokenPriceMicrocredits})
 		}
 	}
 	return result
@@ -545,14 +551,18 @@ func (s *Service) logicalModelBundle(actor *model.User, id string, req LogicalMo
 		if defaultsErr != nil {
 			return nil, nil, nil, false, defaultsErr
 		}
-		req.CapabilitySpec = derivedSpec
-		req.DefaultOptions = derivedDefaults
-		req.Routes = []LogicalRouteRequest{{ChannelModelID: source.ID, Enabled: true, Priority: 100, Weight: 100}}
+		if len(req.Routes) == 0 {
+			req.CapabilitySpec = derivedSpec
+			req.DefaultOptions = derivedDefaults
+			req.Routes = []LogicalRouteRequest{{ChannelModelID: source.ID, Enabled: true, Priority: 100, Weight: 100}}
+		}
 		req.PricePolicy = "channel"
 		req.BillingMode = "fixed_request"
 		req.UnitPriceMicrocredits, req.InputPriceMicrocredits, req.OutputPriceMicrocredits, req.CachedPriceMicrocredits = 0, 0, 0, 0
 		// 未完成定价的系统模型仅在后台目录保留同步记录，不能暴露到创作端。
-		req.Enabled = source.Enabled && channelModelHasActivePriceTier(*source)
+		if strings.TrimSpace(id) == "" {
+			req.Enabled = source.Enabled && channelModelHasActivePriceTier(*source)
+		}
 	}
 	normalizedSpec, err := NormalizeCapabilitySpec(req.CapabilitySpec)
 	if err != nil {
@@ -599,9 +609,6 @@ func (s *Service) logicalModelBundle(actor *model.User, id string, req LogicalMo
 		}
 		if item.ArchivedAt != nil {
 			return nil, nil, nil, false, BadAuthRequest("前台模型不存在或已删除")
-		}
-		if item.SourceChannelModelID != "" && sourceChannelModelID != item.SourceChannelModelID {
-			return nil, nil, nil, false, BadAuthRequest("该前台模型由系统渠道自动同步，请在系统渠道模型中修改能力、规格和价格")
 		}
 	}
 	item.Code, item.Name, item.Icon, item.Description, item.Capability = code, name, strings.TrimSpace(req.Icon), strings.TrimSpace(req.Description), capability

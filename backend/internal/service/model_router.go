@@ -645,17 +645,10 @@ func channelModelHasActivePriceTier(channelModel model.ChannelModel) bool {
 	return false
 }
 
-// channelModelPriceTierForIntent 使用“精确规格优先、通配规格兜底”的规则。价格档只对视频
-// 使用分辨率和时长维度；其他能力总是命中默认档，保持文本/图片现有结算语义。
+// channelModelPriceTierForIntent 使用“精确规格优先、通配规格兜底”的规则。SKU 选择器与
+// 运行意图使用同一组规范键，因而图片质量/画幅、视频分辨率/时长和生成操作都能独立定价。
 func channelModelPriceTierForIntent(channelModel model.ChannelModel, intent ModelRequestIntent) *model.ChannelModelPriceTier {
-	resolution := "*"
-	videoSeconds := 0
-	if normalizeCapability(intent.Capability) == "video" {
-		resolution = normalizeChannelModelTierResolution(fmt.Sprint(intent.Options["vquality"]))
-		if parsed, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(intent.Options["videoSeconds"]))); err == nil && parsed > 0 {
-			videoSeconds = parsed
-		}
-	}
+	selector := skuSelectorForIntent(intent)
 	bestScore := -1
 	var best *model.ChannelModelPriceTier
 	for index := range channelModel.PriceTiers {
@@ -663,25 +656,66 @@ func channelModelPriceTierForIntent(channelModel model.ChannelModel, intent Mode
 		if !tier.Enabled || !tier.PriceConfigured {
 			continue
 		}
-		tierResolution := normalizeChannelModelTierResolution(tier.Resolution)
-		if tierResolution != "*" && tierResolution != resolution {
+		matched, score := matchSKUSelector(skuSelectorForTier(*tier), selector)
+		if !matched {
 			continue
-		}
-		if tier.VideoSeconds > 0 && tier.VideoSeconds != videoSeconds {
-			continue
-		}
-		score := 0
-		if tierResolution != "*" {
-			score += 2
-		}
-		if tier.VideoSeconds > 0 {
-			score++
 		}
 		if score > bestScore {
 			best, bestScore = tier, score
 		}
 	}
 	return best
+}
+
+func skuSelectorForIntent(intent ModelRequestIntent) map[string]string {
+	selector := map[string]string{}
+	if operation := strings.ToLower(strings.TrimSpace(intent.Operation)); operation != "" {
+		selector["operation"] = operation
+	}
+	switch normalizeCapability(intent.Capability) {
+	case "video":
+		if value := normalizeChannelModelTierResolution(fmt.Sprint(intent.Options["vquality"])); value != "*" {
+			selector["vquality"] = value
+		}
+		if seconds, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(intent.Options["videoSeconds"]))); err == nil && seconds > 0 {
+			selector["videoSeconds"] = strconv.Itoa(seconds)
+		}
+	case "image":
+		for _, key := range []string{"quality", "size"} {
+			if value := strings.ToLower(strings.TrimSpace(fmt.Sprint(intent.Options[key]))); value != "" && value != "auto" && value != "any" {
+				selector[key] = value
+			}
+		}
+	}
+	return selector
+}
+
+func skuSelectorForTier(tier model.ChannelModelPriceTier) map[string]string {
+	selector := model.DecodeSKUSelector(tier.SelectorJSON)
+	if len(selector) == 0 {
+		if resolution := normalizeChannelModelTierResolution(tier.Resolution); resolution != "*" {
+			selector["vquality"] = resolution
+		}
+		if tier.VideoSeconds > 0 {
+			selector["videoSeconds"] = strconv.Itoa(tier.VideoSeconds)
+		}
+	}
+	return selector
+}
+
+func matchSKUSelector(tier map[string]string, requested map[string]string) (bool, int) {
+	score := 0
+	for key, expected := range tier {
+		expected = strings.TrimSpace(expected)
+		if expected == "" || expected == "*" {
+			continue
+		}
+		if requested[key] != expected {
+			return false, 0
+		}
+		score++
+	}
+	return true, score
 }
 
 func (s *Service) logicalRouteBlocked(route cachedLogicalRoute) bool {

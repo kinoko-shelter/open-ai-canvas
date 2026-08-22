@@ -141,13 +141,13 @@ func (r *Repository) SaveChannelModelWithPriceTiers(item *model.ChannelModel, ti
 		}
 		existingByKey := make(map[string]model.ChannelModelPriceTier, len(existing))
 		for _, tier := range existing {
-			existingByKey[channelModelPriceTierKey(tier.Resolution, tier.VideoSeconds)] = tier
+			existingByKey[channelModelPriceTierKey(tier)] = tier
 		}
 		selected := make(map[string]bool, len(tiers))
 		for index := range tiers {
 			tier := &tiers[index]
 			tier.ChannelModelID = item.ID
-			key := channelModelPriceTierKey(tier.Resolution, tier.VideoSeconds)
+			key := channelModelPriceTierKey(*tier)
 			if existingTier, exists := existingByKey[key]; exists {
 				tier.ID = existingTier.ID
 				tier.PriceVersion = existingTier.PriceVersion + 1
@@ -174,8 +174,18 @@ func (r *Repository) SaveChannelModelWithPriceTiers(item *model.ChannelModel, ti
 	})
 }
 
-func channelModelPriceTierKey(resolution string, videoSeconds int) string {
-	return strings.TrimSpace(resolution) + ":" + strconv.Itoa(videoSeconds)
+func channelModelPriceTierKey(tier model.ChannelModelPriceTier) string {
+	if strings.TrimSpace(tier.SelectorKey) != "" {
+		return tier.SelectorKey
+	}
+	_, key, err := model.CanonicalSKUSelector(map[string]string{
+		"vquality":     strings.TrimSpace(tier.Resolution),
+		"videoSeconds": strconv.Itoa(tier.VideoSeconds),
+	})
+	if err != nil {
+		return "{}"
+	}
+	return key
 }
 
 func (r *Repository) attachChannelModelPriceTiers(items []*model.ChannelModel) error {
@@ -187,8 +197,11 @@ func (r *Repository) attachChannelModelPriceTiers(items []*model.ChannelModel) e
 		ids = append(ids, item.ID)
 	}
 	var tiers []model.ChannelModelPriceTier
-	if err := r.db.Where("channel_model_id IN ?", ids).Order("resolution asc, video_seconds asc, created_at asc").Find(&tiers).Error; err != nil {
+	if err := r.db.Where("channel_model_id IN ?", ids).Order("selector_key asc, created_at asc").Find(&tiers).Error; err != nil {
 		return err
+	}
+	for index := range tiers {
+		tiers[index].Selector = model.DecodeSKUSelector(tiers[index].SelectorJSON)
 	}
 	tiersByModelID := make(map[string][]model.ChannelModelPriceTier, len(items))
 	for _, tier := range tiers {
