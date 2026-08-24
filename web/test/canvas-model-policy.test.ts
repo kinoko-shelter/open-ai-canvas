@@ -163,6 +163,45 @@ describe("逻辑模型选择", () => {
         })).toBe("");
     });
 
+    test("逻辑 GPT Image 2 将自定义尺寸通配符视为可用", () => {
+        const model = "gpt-image-2";
+        const channel: ModelChannel = {
+            id: "logical-image",
+            name: "平台图片模型",
+            baseUrl: "/api",
+            apiKey: "system",
+            apiFormat: "openai",
+            scope: "system",
+            models: [model],
+            modelCosts: [{
+                model,
+                capability: "image",
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 1,
+                logicalCapabilitySpec: {
+                    version: 1,
+                    capability: "image",
+                    inputs: { image: { min: 0, max: 16 } },
+                    options: {
+                        size: { values: ["*"] },
+                        quality: { values: ["1k", "2k", "4k"] },
+                        transparentBackground: { values: [false] },
+                        count: { min: 1, max: 1, step: 1 },
+                    },
+                },
+            }],
+        };
+        const value = `logical-image::${model}`;
+        const config = { ...defaultConfig, channels: [channel], models: [value], imageModels: [value], model: value, imageModel: value };
+
+        expect(modelCompatibilityError(config, value, {
+            capability: "image",
+            input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 },
+            imageSize: "1824x1024",
+            options: { size: "1824x1024", quality: "2k", transparentBackground: false, count: 1 },
+        })).toBe("");
+    });
+
     test("已保存的旧 SKU 选择会解析到新的模型家族", () => {
         const channel: ModelChannel = {
             id: "managed",

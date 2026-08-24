@@ -136,7 +136,8 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
 function logicalOptionMatches(name: string, constraint: { values?: unknown[]; min?: number; max?: number; step?: number }, value: unknown) {
     if (constraint.values?.length) {
         const requested = normalizeLogicalOptionValue(name, value);
-        return constraint.values.some((candidate) => normalizeLogicalOptionValue(name, candidate) === requested);
+        // 与后端路由一致：`*` 表示渠道允许该参数的任意合法取值。
+        return constraint.values.some((candidate) => normalizeLogicalOptionValue(name, candidate) === "*" || normalizeLogicalOptionValue(name, candidate) === requested);
     }
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return false;
