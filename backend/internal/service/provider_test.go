@@ -17,6 +17,23 @@ import (
 
 const testReferenceImageDataURL = "data:image/png;base64,aGVsbG8="
 
+func TestProviderAPIURLUsesVersionedProviderPath(t *testing.T) {
+	tests := []struct {
+		base string
+		path string
+		want string
+	}{
+		{base: "https://api.example.com", path: "/chat/completions", want: "https://api.example.com/v1/chat/completions"},
+		{base: "https://api.example.com/v1", path: "/chat/completions", want: "https://api.example.com/v1/chat/completions"},
+		{base: "https://ark.example.com/api/v3", path: "/images/generations", want: "https://ark.example.com/api/v3/images/generations"},
+	}
+	for _, test := range tests {
+		if got := ProviderAPIURL(test.base, test.path); got != test.want {
+			t.Fatalf("ProviderAPIURL(%q, %q) = %q, want %q", test.base, test.path, got, test.want)
+		}
+	}
+}
+
 func TestWriteMediaPartSanitizesFilenameAndSetsMimeType(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

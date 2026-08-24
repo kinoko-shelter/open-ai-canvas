@@ -963,7 +963,8 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	for _, key := range []string{"key", "api_key", "access_token", "token"} {
 		query.Del(key)
 	}
-	target := strings.TrimRight(channel.BaseURL, "/") + path
+	// 同步代理与任务 worker 必须使用同一上游 API URL 规则，避免漏掉 OpenAI 兼容渠道的 /v1。
+	target := service.ProviderAPIURL(channel.BaseURL, path)
 	if encodedQuery := query.Encode(); encodedQuery != "" {
 		target += "?" + encodedQuery
 	}

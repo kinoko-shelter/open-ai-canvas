@@ -3250,6 +3250,11 @@ func apiURL(baseURL string, path string) string {
 	return base + "/v1" + path
 }
 
+// ProviderAPIURL 统一服务端上游请求的版本化路径，供任务 worker 和同步代理共同使用。
+func ProviderAPIURL(baseURL string, path string) string {
+	return apiURL(baseURL, path)
+}
+
 func writeField(writer *multipart.Writer, key string, value string) {
 	_ = writer.WriteField(key, value)
 }
