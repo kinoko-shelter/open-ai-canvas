@@ -467,14 +467,17 @@ export function channelConnectionSignature(channel: ModelChannel) {
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
-    const configuredProtocol = channel.modelCosts?.find((item) => item.model === model)?.protocol;
+    const managedModel = channel.modelCosts?.find((item) => item.model === model);
+    const configuredProtocol = managedModel?.protocol;
     // Gemini 图片模型过去会落到 openai-image；请求格式必须随渠道切换为原生 generateContent。
     const modelProtocol = channel.apiFormat === "gemini" && modelMatchesCapability(model, "image") && (!configuredProtocol || configuredProtocol === "openai-image") ? "gemini-image" : configuredProtocol;
     const interfaceType = modelProtocol || channel.interfaceType;
     return {
         ...config,
         model,
-        baseUrl: channel.baseUrl,
+        // 前台逻辑模型不能走通用 /api：自定义渠道中转会把相对路径交给 URL
+        // 构造器。按模型生成受控代理地址，由服务端选择实际渠道和 SKU。
+        baseUrl: managedModel?.logicalModelId ? `/api/ai/logical/${encodeURIComponent(managedModel.logicalModelId)}` : channel.baseUrl,
         apiKey: channel.apiKey,
         secretKey: channel.secretKey,
         headers: channel.headers,
@@ -577,11 +580,14 @@ export function resolveBackendApiUrl(value: string) {
 }
 
 export function isSystemProxyBaseUrl(baseUrl: string) {
-    const marker = "/api/ai/system/";
-    const index = baseUrl.toLowerCase().indexOf(marker);
-    if (index < 0) return false;
-    const channelId = baseUrl.slice(index + marker.length);
-    return Boolean(channelId && !channelId.includes("/") && !channelId.includes("?") && !channelId.includes("#"));
+    const normalized = baseUrl.trim();
+    for (const marker of ["/api/ai/system/", "/api/ai/logical/"]) {
+        const index = normalized.toLowerCase().indexOf(marker);
+        if (index < 0) continue;
+        const identifier = normalized.slice(index + marker.length);
+        if (identifier && !identifier.includes("/") && !identifier.includes("?") && !identifier.includes("#")) return true;
+    }
+    return false;
 }
 
 function normalizeArkPlanBaseUrl(baseUrl: string) {

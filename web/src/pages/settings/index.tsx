@@ -644,6 +644,8 @@ function channelValidationError(channel: ModelChannel) {
 }
 
 function isChannelReady(channel: ModelChannel) {
+    // 系统目录下发的是受控代理，不存在可由用户填写或校验的外部地址与密钥。
+    if (channel.scope === "system" && channel.apiKey === "system" && channel.models.length > 0) return true;
     return !channelValidationError(channel);
 }
 

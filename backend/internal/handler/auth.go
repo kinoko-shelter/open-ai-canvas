@@ -845,11 +845,56 @@ func RegisterSystemProxyRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusNotFound, errors.New("系统渠道不存在或已停用"))
 			return
 		}
-		proxySystemRequest(c, svc, user, channel)
+		proxySystemRequest(c, svc, user, channel, nil)
+	})
+	r.Any("/ai/logical/:logicalModelID/*path", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		frontendModelsEnabled, err := svc.FeatureEnabled(service.FeatureFrontendModels)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !frontendModelsEnabled {
+			fail(c, http.StatusNotFound, errors.New("前台模型路由未启用"))
+			return
+		}
+		intent, err := logicalProxyIntent(c.Param("path"))
+		if err != nil {
+			fail(c, http.StatusForbidden, err)
+			return
+		}
+		routed, err := svc.ResolveLogicalModel(c.Param("logicalModelID"), intent)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		channel, err := svc.SystemChannel(routed.ChannelModel.ChannelID)
+		if err != nil {
+			fail(c, http.StatusNotFound, errors.New("当前逻辑模型的系统渠道不可用"))
+			return
+		}
+		proxySystemRequest(c, svc, user, channel, routed)
 	})
 }
 
-func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, channel *model.ModelChannel) {
+func logicalProxyIntent(requestPath string) (service.ModelRequestIntent, error) {
+	switch requestPath {
+	case "/responses", "/chat/completions":
+		return service.ModelRequestIntent{Capability: "text"}, nil
+	case "/images/generations", "/images/edits":
+		return service.ModelRequestIntent{Capability: "image"}, nil
+	case "/audio/speech":
+		return service.ModelRequestIntent{Capability: "audio"}, nil
+	default:
+		return service.ModelRequestIntent{}, errors.New("当前前台模型不支持该同步请求协议")
+	}
+}
+
+func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, channel *model.ModelChannel, routed *service.RoutedModel) {
 	startedAt := time.Now()
 	policy, available := loadRuntimePolicy(c, svc)
 	if !available || !enforceRateLimit(c, "system-proxy:"+user.ID, policy.Request.SystemRelayPerMinute, time.Minute) {
@@ -869,7 +914,21 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	protocol := model.ChannelInterfaceType("")
 	capability := "text"
 	var channelModel *model.ChannelModel
-	if !(c.Request.Method == http.MethodGet && path == "/models") {
+	if routed != nil {
+		channelModel = &routed.ChannelModel
+		modelName = channelModel.ModelKey
+		protocol = channelModel.Protocol
+		capability = channelModel.Capability
+		authorizationBody, rewriteErr := replaceJSONProxyModel(body, channelModel.ModelKey)
+		if rewriteErr != nil {
+			fail(c, http.StatusBadRequest, rewriteErr)
+			return
+		}
+		if err := authorizeSystemProxy(channel, protocol, c.Request.Method, path, c.GetHeader("Content-Type"), authorizationBody); err != nil {
+			fail(c, http.StatusForbidden, err)
+			return
+		}
+	} else if !(c.Request.Method == http.MethodGet && path == "/models") {
 		var modelErr error
 		channelModel, modelErr = svc.SystemChannelModel(channel.ID, modelName)
 		if modelErr != nil || channelModel.Protocol == "" {
@@ -879,12 +938,25 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		protocol = channelModel.Protocol
 		capability = channelModel.Capability
 	}
-	if err := authorizeSystemProxy(channel, protocol, c.Request.Method, path, c.GetHeader("Content-Type"), body); err != nil {
-		fail(c, http.StatusForbidden, err)
-		return
+	if routed == nil {
+		if err := authorizeSystemProxy(channel, protocol, c.Request.Method, path, c.GetHeader("Content-Type"), body); err != nil {
+			fail(c, http.StatusForbidden, err)
+			return
+		}
 	}
 	if channelModel != nil && channelModel.BillingMode == "token" && protocol == model.ChannelInterfaceChatCompletion {
 		body, err = service.EnsureChatCompletionStreamUsageRequest(body)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+	}
+	if routed != nil {
+		providerModelKey := strings.TrimSpace(routed.ChannelModel.ProviderModelKey)
+		if routed.PriceTier != nil && strings.TrimSpace(routed.PriceTier.ProviderModelKey) != "" {
+			providerModelKey = routed.PriceTier.ProviderModelKey
+		}
+		body, err = replaceJSONProxyModel(body, providerModelKey)
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -1010,6 +1082,23 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+}
+
+// 逻辑模型在浏览器中只暴露逻辑 ID；真正的渠道模型和供应商模型标识只在服务端替换。
+func replaceJSONProxyModel(body []byte, modelKey string) ([]byte, error) {
+	if strings.TrimSpace(modelKey) == "" {
+		return nil, errors.New("当前逻辑模型缺少供应商模型标识")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, errors.New("当前前台模型只支持 JSON 请求体")
+	}
+	payload["model"] = strings.TrimPrefix(strings.TrimSpace(modelKey), "models/")
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 func systemProxyAigcProjectID(c *gin.Context, svc *service.Service, userID string) (*int64, error) {
