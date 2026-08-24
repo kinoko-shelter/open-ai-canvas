@@ -1,4 +1,5 @@
 import { apiClient, request } from "@/services/api/request";
+import type { AigcDepartment, AigcProject } from "@/services/api/aigc";
 
 const api = apiClient;
 
@@ -253,6 +254,34 @@ export type BillingOrder = {
     updatedAt: string;
 };
 
+export type SettlementStatus = "all" | "settled" | "unsettled";
+
+export type SettlementStatement = {
+    id: number;
+    month: string;
+    userId?: string;
+    deptId: number;
+    departmentName: string;
+    aigcProjectId?: number;
+    aigcProjectName: string;
+    settlementType: string;
+    settlementStatus: "settled" | "unsettled";
+    orderCount: number;
+    amountMicrocredits: number;
+    firstOrderAt?: string;
+    lastOrderAt?: string;
+};
+
+export type SettlementSummary = {
+    month: string;
+    totalCount: number;
+    settledCount: number;
+    unsettledCount: number;
+    totalAmountMicrocredits: number;
+    settledAmountMicrocredits: number;
+    unsettledAmountMicrocredits: number;
+};
+
 export function getWallet(page = 1, limit = 30, type = "all") {
     return request<WalletSummary>(api.get("/wallet", { params: { type, page, limit } }));
 }
@@ -374,4 +403,20 @@ export function resolveAdminBillingOrder(id: string, input: { action: "settle" |
 
 export function resolveAdminBillingOrders(input: { ids: string[]; action: "settle" | "refund"; note: string }) {
     return request<{ resolvedCount: number; failed: Array<{ id: string; message: string }> }>(api.post("/admin/billing-orders/batch-resolve", input));
+}
+
+export function listAdminSettlementStatements(params: { month?: string; status?: SettlementStatus; deptId?: number; projectId?: number; page?: number; limit?: number } = {}) {
+    return request<{ statements: SettlementStatement[]; summary: SettlementSummary; total: number; page: number; limit: number }>(api.get("/admin/settlement-statements", { params }));
+}
+
+export function getAdminSettlementReferences() {
+    return request<{ departments: AigcDepartment[]; projects: AigcProject[] }>(api.get("/admin/settlement-statements/references"));
+}
+
+export function confirmAdminSettlementStatements(input: { items: Array<Pick<SettlementStatement, "month" | "userId" | "deptId" | "aigcProjectId" | "settlementType">>; note: string }) {
+    return request<{ confirmedCount: number }>(api.post("/admin/settlement-statements/confirm", input));
+}
+
+export function listAdminSettlementStatementOrders(params: { month: string; deptId: number; userId?: string; projectId?: number; settlementType: string; status?: SettlementStatus; page?: number; limit?: number }) {
+    return request<{ orders: BillingOrder[]; total: number; page: number; limit: number }>(api.get("/admin/settlement-statements/orders", { params }));
 }

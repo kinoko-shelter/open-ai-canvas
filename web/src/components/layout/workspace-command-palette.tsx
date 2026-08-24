@@ -37,6 +37,7 @@ export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onCl
             toolEntry("skills", "/skills"),
             ...(features.creditsEnabled ? [toolEntry("wallet", "/wallet")] : []),
             ...(user?.status === "active" && (user.role === "admin" || user.role === "team_lead") ? [toolEntry("aigc-projects", "/aigc-projects")] : []),
+            ...(user?.status === "active" && (user.role === "admin" || user.role === "operations_manager") ? [toolEntry("settlement-statements", "/settlement-statements")] : []),
             toolEntry("settings", "/settings"),
         ];
     }, [features, user]);

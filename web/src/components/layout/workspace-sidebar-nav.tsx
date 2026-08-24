@@ -42,6 +42,7 @@ function toolItem(slug: NavigationToolSlug, to: string): WorkspaceNavItem {
 
 function buildNav(features: FeatureAvailability, balance: string, user: LocalUser | null): { groups: WorkspaceNavGroup[]; footer: WorkspaceNavItem[] } {
     const canManageAigcProjects = user?.status === "active" && (user.role === "admin" || user.role === "team_lead");
+    const canViewSettlementStatements = user?.status === "active" && (user.role === "admin" || user.role === "operations_manager");
     const groups: WorkspaceNavGroup[] = [
         {
             items: [
@@ -60,6 +61,7 @@ function buildNav(features: FeatureAvailability, balance: string, user: LocalUse
                 toolItem("skills", "/skills"),
                 ...(features.creditsEnabled ? [{ ...toolItem("wallet", "/wallet"), badge: balance }] : []),
                 ...(canManageAigcProjects ? [toolItem("aigc-projects", "/aigc-projects")] : []),
+                ...(canViewSettlementStatements ? [toolItem("settlement-statements", "/settlement-statements")] : []),
             ],
         },
     ];

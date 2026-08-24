@@ -66,6 +66,45 @@ type BillingOrderPage struct {
 	Limit  int                  `json:"limit"`
 }
 
+type SettlementStatementPage struct {
+	Statements []SettlementStatement `json:"statements"`
+	Summary    SettlementSummary     `json:"summary"`
+	Total      int64                 `json:"total"`
+	Page       int                   `json:"page"`
+	Limit      int                   `json:"limit"`
+}
+
+type SettlementReferences struct {
+	Departments []model.AigcDepartment `json:"departments"`
+	Projects    []model.AigcProject    `json:"projects"`
+}
+
+type SettlementStatement struct {
+	ID                 int64      `json:"id"`
+	Month              string     `json:"month"`
+	UserID             string     `json:"userId,omitempty"`
+	DeptID             int64      `json:"deptId"`
+	DepartmentName     string     `json:"departmentName"`
+	AigcProjectID      *int64     `json:"aigcProjectId,omitempty"`
+	AigcProjectName    string     `json:"aigcProjectName"`
+	SettlementType     string     `json:"settlementType"`
+	SettlementStatus   string     `json:"settlementStatus"`
+	OrderCount         int64      `json:"orderCount"`
+	AmountMicrocredits int64      `json:"amountMicrocredits"`
+	FirstOrderAt       *time.Time `json:"firstOrderAt"`
+	LastOrderAt        *time.Time `json:"lastOrderAt"`
+}
+
+type SettlementSummary struct {
+	Month                       string `json:"month"`
+	TotalCount                  int64  `json:"totalCount"`
+	SettledCount                int64  `json:"settledCount"`
+	UnsettledCount              int64  `json:"unsettledCount"`
+	TotalAmountMicrocredits     int64  `json:"totalAmountMicrocredits"`
+	SettledAmountMicrocredits   int64  `json:"settledAmountMicrocredits"`
+	UnsettledAmountMicrocredits int64  `json:"unsettledAmountMicrocredits"`
+}
+
 type CreateRedeemBatchRequest struct {
 	AmountMicrocredits int64      `json:"amountMicrocredits"`
 	Count              int        `json:"count"`
@@ -154,6 +193,19 @@ type ResolveBillingBatchFailure struct {
 type ResolveBillingBatchResult struct {
 	ResolvedCount int                          `json:"resolvedCount"`
 	Failed        []ResolveBillingBatchFailure `json:"failed"`
+}
+
+type SettlementStatementConfirmItem struct {
+	Month          string `json:"month"`
+	UserID         string `json:"userId"`
+	DeptID         int64  `json:"deptId"`
+	AigcProjectID  *int64 `json:"aigcProjectId"`
+	SettlementType string `json:"settlementType"`
+}
+
+type ConfirmSettlementStatementsRequest struct {
+	Items []SettlementStatementConfirmItem `json:"items"`
+	Note  string                           `json:"note"`
 }
 
 type tokenBillingEstimate struct {
@@ -652,6 +704,215 @@ func (s *Service) AdminBillingOrderPage(actor *model.User, query AdminListQuery)
 	return &BillingOrderPage{Orders: items, Total: total, Page: page, Limit: limit}, nil
 }
 
+func (s *Service) SettlementStatementPage(actor *model.User, month string, status string, deptID *int64, projectID *int64, page int, limit int) (*SettlementStatementPage, error) {
+	if err := s.requireSettlementViewer(actor); err != nil {
+		return nil, err
+	}
+	page, limit = normalizeAdminPage(page, limit)
+	monthStart, monthEnd, monthLabel, err := parseSettlementMonth(month)
+	if err != nil {
+		return nil, err
+	}
+	status = strings.TrimSpace(status)
+	if status != "" && status != "all" && status != "settled" && status != "unsettled" {
+		return nil, BadAuthRequest("结算单状态无效")
+	}
+	liveRows, _, _, err := s.repo.SettlementStatements(monthLabel, monthStart, monthEnd, "all", deptID, projectID, 10000, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertSettlementStatements(settlementStatementsFromRows(monthLabel, liveRows)); err != nil {
+		return nil, err
+	}
+	rows, total, summary, err := s.repo.SettlementStatements(monthLabel, monthStart, monthEnd, status, deptID, projectID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, err
+	}
+	statements := make([]SettlementStatement, 0, len(rows))
+	for _, row := range rows {
+		statements = append(statements, SettlementStatement{
+			ID:                 row.ID,
+			Month:              monthLabel,
+			UserID:             row.UserID,
+			DeptID:             row.DeptID,
+			DepartmentName:     row.DepartmentName,
+			AigcProjectID:      row.AigcProjectID,
+			AigcProjectName:    row.AigcProjectName,
+			SettlementType:     row.SettlementType,
+			SettlementStatus:   row.SettlementStatus,
+			OrderCount:         row.OrderCount,
+			AmountMicrocredits: row.AmountMicrocredits,
+			FirstOrderAt:       row.FirstOrderAt,
+			LastOrderAt:        row.LastOrderAt,
+		})
+	}
+	return &SettlementStatementPage{
+		Statements: statements,
+		Summary: SettlementSummary{
+			Month:                       monthLabel,
+			TotalCount:                  summary.TotalCount,
+			SettledCount:                summary.SettledCount,
+			UnsettledCount:              summary.UnsettledCount,
+			TotalAmountMicrocredits:     summary.TotalAmountMicrocredits,
+			SettledAmountMicrocredits:   summary.SettledAmountMicrocredits,
+			UnsettledAmountMicrocredits: summary.UnsettledAmountMicrocredits,
+		},
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	}, nil
+}
+
+func (s *Service) SettlementReferences(actor *model.User) (*SettlementReferences, error) {
+	if err := s.requireSettlementViewer(actor); err != nil {
+		return nil, err
+	}
+	departments, err := s.repo.AigcDepartments("")
+	if err != nil {
+		return nil, err
+	}
+	projects, _, err := s.repo.AigcProjects("", "", "", nil, nil, 1000, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &SettlementReferences{Departments: departments, Projects: projects}, nil
+}
+
+func (s *Service) startSettlementStatementRefresh() {
+	s.backgroundTasks.Add(1)
+	go func() {
+		defer s.backgroundTasks.Done()
+		refresh := func() {
+			if err := s.RefreshScheduledSettlementStatements(time.Now()); err != nil {
+				fmt.Printf("刷新结算单失败：%v\n", err)
+			}
+		}
+		refresh()
+		ticker := time.NewTicker(20 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.workerStop:
+				return
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	}()
+}
+
+func (s *Service) RefreshScheduledSettlementStatements(now time.Time) error {
+	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	if err := s.refreshSettlementStatementsForMonth(currentMonth); err != nil {
+		return err
+	}
+	if now.Day() == 1 {
+		return s.refreshSettlementStatementsForMonth(currentMonth.AddDate(0, -1, 0))
+	}
+	return nil
+}
+
+func (s *Service) refreshSettlementStatementsForMonth(monthStart time.Time) error {
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	month := monthStart.Format("2006-01")
+	rows, _, _, err := s.repo.SettlementStatements(month, monthStart, monthEnd, "all", nil, nil, 10000, 0)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpsertSettlementStatements(settlementStatementsFromRows(month, rows))
+}
+
+func (s *Service) ConfirmSettlementStatements(actor *model.User, req ConfirmSettlementStatementsRequest) (int64, error) {
+	if err := s.requireSettlementViewer(actor); err != nil {
+		return 0, err
+	}
+	if len(req.Items) == 0 {
+		return 0, BadAuthRequest("请选择要确认的结算单")
+	}
+	note := strings.TrimSpace(req.Note)
+	if note == "" {
+		return 0, BadAuthRequest("请填写确认依据")
+	}
+	seen := make(map[string]struct{}, len(req.Items))
+	confirmed := int64(0)
+	for _, item := range req.Items {
+		monthStart, monthEnd, monthLabel, err := parseSettlementMonth(item.Month)
+		if err != nil {
+			return 0, err
+		}
+		if monthLabel != previousSettlementMonth(time.Now()) {
+			return 0, BadAuthRequest("只能确认上个月的结算单")
+		}
+		if item.DeptID < 0 {
+			return 0, BadAuthRequest("团队信息无效")
+		}
+		if item.DeptID == 0 && strings.TrimSpace(item.UserID) == "" {
+			return 0, BadAuthRequest("个人结算单用户无效")
+		}
+		key := settlementStatementKey(monthLabel, item.DeptID, item.UserID, item.AigcProjectID, item.SettlementType)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		rows, _, _, err := s.repo.SettlementStatements(monthLabel, monthStart, monthEnd, "all", &item.DeptID, item.AigcProjectID, 10000, 0)
+		if err != nil {
+			return 0, err
+		}
+		if err := s.repo.UpsertSettlementStatements(settlementStatementsFromRows(monthLabel, rows)); err != nil {
+			return 0, err
+		}
+		statement, found := settlementStatementRowByKey(rows, key)
+		if !found {
+			return 0, BadAuthRequest("结算单不存在或已无可计费订单")
+		}
+		if statement.SettlementStatus != string(model.SettlementStatementUnsettled) {
+			return 0, BadAuthRequest("只能确认未结算的结算单")
+		}
+		updated, err := s.repo.ConfirmSettlementStatement(key, actor.ID, truncateRunes(note, 500), time.Now())
+		if err != nil {
+			return 0, err
+		}
+		if !updated {
+			return 0, BadAuthRequest("只能确认未结算的结算单")
+		}
+		confirmed++
+		if err := s.appendAdminAudit(actor, "settlement_statement.confirm", "settlement_statement", key, "确认结算单", map[string]any{"month": monthLabel, "note": truncateRunes(note, 500)}); err != nil {
+			return 0, err
+		}
+	}
+	return confirmed, nil
+}
+
+func (s *Service) SettlementStatementOrders(actor *model.User, month string, deptID int64, userID string, projectID *int64, settlementType string, status string, page int, limit int) (*BillingOrderPage, error) {
+	if err := s.requireSettlementViewer(actor); err != nil {
+		return nil, err
+	}
+	if deptID < 0 {
+		return nil, BadAuthRequest("团队信息无效")
+	}
+	if deptID == 0 && strings.TrimSpace(userID) == "" {
+		return nil, BadAuthRequest("个人结算单用户无效")
+	}
+	settlementType = strings.TrimSpace(settlementType)
+	if settlementType == "" {
+		return nil, BadAuthRequest("结算类型无效")
+	}
+	status = strings.TrimSpace(status)
+	if status != "" && status != "all" && status != "settled" && status != "unsettled" {
+		return nil, BadAuthRequest("结算单状态无效")
+	}
+	page, limit = normalizeAdminPage(page, limit)
+	monthStart, monthEnd, _, err := parseSettlementMonth(month)
+	if err != nil {
+		return nil, err
+	}
+	items, total, err := s.repo.SettlementStatementOrders(monthStart, monthEnd, deptID, userID, projectID, settlementType, status, limit, (page-1)*limit)
+	if err != nil {
+		return nil, err
+	}
+	return &BillingOrderPage{Orders: items, Total: total, Page: page, Limit: limit}, nil
+}
+
 func (s *Service) ResolveBillingOrder(actor *model.User, id string, req ResolveBillingRequest) (*model.BillingOrder, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
@@ -735,6 +996,88 @@ func (s *Service) resolveBillingOrder(actor *model.User, id string, action strin
 		return nil, err
 	}
 	return s.repo.BillingOrder(id)
+}
+
+func (s *Service) requireSettlementViewer(actor *model.User) error {
+	if actor == nil {
+		return Unauthorized("请先登录")
+	}
+	if actor.Status != model.UserStatusActive {
+		return Forbidden("当前账号已停用")
+	}
+	if actor.Role != model.UserRoleAdmin && actor.Role != model.UserRoleOperationsManager {
+		return Forbidden("需要运营管理权限")
+	}
+	return nil
+}
+
+func parseSettlementMonth(value string) (time.Time, time.Time, string, error) {
+	month := strings.TrimSpace(value)
+	if month == "" {
+		month = time.Now().Format("2006-01")
+	}
+	parsed, err := time.ParseInLocation("2006-01", month, time.Local)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", BadAuthRequest("结算月份格式无效")
+	}
+	start := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.Local)
+	end := start.AddDate(0, 1, 0)
+	return start, end, start.Format("2006-01"), nil
+}
+
+func settlementStatementID(month string, deptID int64, userID string, projectID *int64, settlementType string) string {
+	projectPart := "all"
+	if projectID != nil {
+		projectPart = strconv.FormatInt(*projectID, 10)
+	}
+	return month + ":" + strconv.FormatInt(deptID, 10) + ":" + strings.TrimSpace(userID) + ":" + projectPart + ":" + settlementType
+}
+
+func settlementStatementKey(month string, deptID int64, userID string, projectID *int64, settlementType string) string {
+	return settlementStatementID(month, deptID, userID, projectID, settlementType)
+}
+
+func previousSettlementMonth(now time.Time) string {
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	return start.AddDate(0, -1, 0).Format("2006-01")
+}
+
+func settlementStatementsFromRows(month string, rows []repository.SettlementStatementRow) []model.SettlementStatement {
+	now := time.Now()
+	statements := make([]model.SettlementStatement, 0, len(rows))
+	for _, row := range rows {
+		key := settlementStatementKey(month, row.DeptID, row.UserID, row.AigcProjectID, row.SettlementType)
+		if key == "" {
+			continue
+		}
+		statements = append(statements, model.SettlementStatement{
+			StatementKey:       key,
+			Month:              month,
+			UserID:             row.UserID,
+			DeptID:             row.DeptID,
+			DepartmentName:     row.DepartmentName,
+			AigcProjectID:      row.AigcProjectID,
+			AigcProjectName:    row.AigcProjectName,
+			SettlementType:     row.SettlementType,
+			Status:             model.SettlementStatementUnsettled,
+			OrderCount:         row.OrderCount,
+			AmountMicrocredits: row.AmountMicrocredits,
+			FirstOrderAt:       row.FirstOrderAt,
+			LastOrderAt:        row.LastOrderAt,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		})
+	}
+	return statements
+}
+
+func settlementStatementRowByKey(rows []repository.SettlementStatementRow, key string) (repository.SettlementStatementRow, bool) {
+	for _, row := range rows {
+		if row.StatementKey == key {
+			return row, true
+		}
+	}
+	return repository.SettlementStatementRow{}, false
 }
 
 func (s *Service) AdminDisableRedeemBatch(actor *model.User, batchID string) (int64, error) {

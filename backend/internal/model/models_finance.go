@@ -76,6 +76,29 @@ type BillingOrder struct {
 	UpdatedAt                    time.Time     `json:"updatedAt"`
 }
 
+// SettlementStatement 记录运营对月度结算单的人工确认状态；底层 BillingOrder 状态只表示计费订单生命周期。
+type SettlementStatement struct {
+	ID                 int64                     `json:"id" gorm:"primaryKey;autoIncrement"`
+	StatementKey       string                    `json:"statementKey" gorm:"size:240;uniqueIndex"`
+	Month              string                    `json:"month" gorm:"size:7;index"`
+	UserID             string                    `json:"userId,omitempty" gorm:"size:36;index"`
+	DeptID             int64                     `json:"deptId" gorm:"index"`
+	DepartmentName     string                    `json:"departmentName" gorm:"size:120"`
+	AigcProjectID      *int64                    `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id;index"`
+	AigcProjectName    string                    `json:"aigcProjectName" gorm:"size:160"`
+	SettlementType     string                    `json:"settlementType" gorm:"size:32;index"`
+	Status             SettlementStatementStatus `json:"status" gorm:"size:24;index"`
+	OrderCount         int64                     `json:"orderCount"`
+	AmountMicrocredits int64                     `json:"amountMicrocredits"`
+	FirstOrderAt       *time.Time                `json:"firstOrderAt"`
+	LastOrderAt        *time.Time                `json:"lastOrderAt"`
+	ConfirmedBy        string                    `json:"confirmedBy,omitempty" gorm:"size:36;index"`
+	ConfirmedAt        *time.Time                `json:"confirmedAt"`
+	ConfirmNote        string                    `json:"confirmNote,omitempty" gorm:"size:500"`
+	CreatedAt          time.Time                 `json:"createdAt"`
+	UpdatedAt          time.Time                 `json:"updatedAt"`
+}
+
 type RedeemBatch struct {
 	ID                 string     `json:"id" gorm:"primaryKey;size:36"`
 	AmountMicrocredits int64      `json:"amountMicrocredits"`

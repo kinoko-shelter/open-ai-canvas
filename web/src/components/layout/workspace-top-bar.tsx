@@ -17,6 +17,7 @@ const PAGE_TITLES: Record<string, string> = {
     skills: "技能库",
     wallet: "积分中心",
     "aigc-projects": "项目管理",
+    "settlement-statements": "结算单",
     settings: "设置",
 };
 
