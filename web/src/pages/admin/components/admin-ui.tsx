@@ -35,6 +35,7 @@ export function AdminStatTile({ label, value, detail, trend }: { label: string; 
 export function AdminDataTable<RecordType extends object>({
     toolbar,
     toolbarActive,
+    toolbarDefaultFiltersOpen,
     toolbarFilters,
     toolbarActiveFilters,
     onReset,
@@ -49,6 +50,7 @@ export function AdminDataTable<RecordType extends object>({
 }: {
     toolbar?: ReactNode;
     toolbarActive?: boolean;
+    toolbarDefaultFiltersOpen?: boolean;
     toolbarFilters?: ReactNode;
     toolbarActiveFilters?: ReactNode;
     onReset?: () => void;
@@ -66,7 +68,7 @@ export function AdminDataTable<RecordType extends object>({
 
     return (
         <div className="admin-data-table">
-            {toolbar ? <ListToolbar active={toolbarActive} filters={toolbarFilters} activeFilters={toolbarActiveFilters} onReset={onReset} trailing={trailing}>{toolbar}</ListToolbar> : null}
+            {toolbar ? <ListToolbar active={toolbarActive} defaultFiltersOpen={toolbarDefaultFiltersOpen} filters={toolbarFilters} activeFilters={toolbarActiveFilters} onReset={onReset} trailing={trailing}>{toolbar}</ListToolbar> : null}
             {batchActions}
             <div className={cn("admin-table-surface", className)}>
                 <div className="admin-table-scroll">

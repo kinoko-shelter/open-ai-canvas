@@ -30,8 +30,8 @@ export function PageHeader({ title, description, meta, actions }: { title: strin
     );
 }
 
-export function ListToolbar({ children, filters, activeFilters, trailing, active, onReset, className }: { children: ReactNode; filters?: ReactNode; activeFilters?: ReactNode; trailing?: ReactNode; active?: boolean; onReset?: () => void; className?: string }) {
-    const [filtersOpen, setFiltersOpen] = useState(false);
+export function ListToolbar({ children, filters, activeFilters, trailing, active, defaultFiltersOpen = false, onReset, className }: { children: ReactNode; filters?: ReactNode; activeFilters?: ReactNode; trailing?: ReactNode; active?: boolean; defaultFiltersOpen?: boolean; onReset?: () => void; className?: string }) {
+    const [filtersOpen, setFiltersOpen] = useState(defaultFiltersOpen);
 
     useEffect(() => {
         if (active) setFiltersOpen(true);

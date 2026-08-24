@@ -36,6 +36,7 @@ func Models() []any {
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.BillingOrder{},
+		&model.SettlementStatement{},
 		&model.RedeemBatch{},
 		&model.RedeemCode{},
 		&model.AdminAuditEvent{},
@@ -94,6 +95,9 @@ func MigrateSchema(db *gorm.DB) error {
 	if err := migrateLogicalRoutesToChannelModels(db); err != nil {
 		return err
 	}
+	if err := migrateSettlementStatementAutoID(db); err != nil {
+		return err
+	}
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
@@ -130,6 +134,37 @@ func MigrateSchema(db *gorm.DB) error {
 		return err
 	}
 	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nonempty ON users(lower(email)) WHERE email <> ''").Error
+}
+
+func migrateSettlementStatementAutoID(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" || !db.Migrator().HasTable(&model.SettlementStatement{}) {
+		return nil
+	}
+	var dataType string
+	err := db.Raw(`SELECT data_type FROM information_schema.columns WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'settlement_statements' AND column_name = 'id'`).Scan(&dataType).Error
+	if err != nil {
+		return fmt.Errorf("检查结算单 ID 类型：%w", err)
+	}
+	if dataType == "" || dataType == "bigint" || dataType == "integer" {
+		return nil
+	}
+	// 早期开发版使用字符串 ID；改名保留追溯值，再启用数据库自增主键。
+	statements := []string{
+		`DO $$ DECLARE pk_name text; BEGIN SELECT conname INTO pk_name FROM pg_constraint WHERE conrelid = 'settlement_statements'::regclass AND contype = 'p'; IF pk_name IS NOT NULL THEN EXECUTE format('ALTER TABLE settlement_statements DROP CONSTRAINT %I', pk_name); END IF; END $$`,
+		`ALTER TABLE settlement_statements RENAME COLUMN id TO legacy_id`,
+		`ALTER TABLE settlement_statements ADD COLUMN id bigint`,
+		`CREATE SEQUENCE IF NOT EXISTS settlement_statements_id_seq OWNED BY settlement_statements.id`,
+		`UPDATE settlement_statements SET id = nextval('settlement_statements_id_seq') WHERE id IS NULL`,
+		`ALTER TABLE settlement_statements ALTER COLUMN id SET DEFAULT nextval('settlement_statements_id_seq')`,
+		`ALTER TABLE settlement_statements ALTER COLUMN id SET NOT NULL`,
+		`ALTER TABLE settlement_statements ADD PRIMARY KEY (id)`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return fmt.Errorf("迁移结算单自增 ID：%w", err)
+		}
+	}
+	return nil
 }
 
 // migrateChannelModelPriceTierSelectors upgrades the old video-only unique key to

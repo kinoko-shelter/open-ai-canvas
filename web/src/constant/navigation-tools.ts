@@ -1,4 +1,4 @@
-import { CircleDollarSign, Clapperboard, FolderKanban, Images, LibraryBig, ListTodo, PanelsTopLeft, Settings, WandSparkles } from "lucide-react";
+import { CircleDollarSign, Clapperboard, FolderKanban, Images, LibraryBig, ListTodo, PanelsTopLeft, ReceiptText, Settings, WandSparkles } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -47,6 +47,12 @@ export const navigationTools = [
         slug: "aigc-projects",
         label: "项目管理",
         icon: FolderKanban,
+        section: "工作台管理",
+    },
+    {
+        slug: "settlement-statements",
+        label: "结算单",
+        icon: ReceiptText,
         section: "工作台管理",
     },
     {

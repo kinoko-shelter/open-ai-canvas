@@ -35,6 +35,31 @@ type TeamCreditTransferResult struct {
 	Replayed         bool
 }
 
+type SettlementStatementRow struct {
+	ID                 int64      `json:"id" gorm:"column:id"`
+	StatementKey       string     `json:"statementKey" gorm:"column:statement_key"`
+	UserID             string     `json:"userId,omitempty" gorm:"column:user_id"`
+	DeptID             int64      `json:"deptId" gorm:"column:dept_id"`
+	DepartmentName     string     `json:"departmentName" gorm:"column:department_name"`
+	AigcProjectID      *int64     `json:"aigcProjectId,omitempty" gorm:"column:aigc_project_id"`
+	AigcProjectName    string     `json:"aigcProjectName" gorm:"column:aigc_project_name"`
+	SettlementType     string     `json:"settlementType" gorm:"column:settlement_type"`
+	SettlementStatus   string     `json:"settlementStatus" gorm:"column:settlement_status"`
+	OrderCount         int64      `json:"orderCount" gorm:"column:order_count"`
+	AmountMicrocredits int64      `json:"amountMicrocredits" gorm:"column:amount_microcredits"`
+	FirstOrderAt       *time.Time `json:"firstOrderAt" gorm:"column:first_order_at"`
+	LastOrderAt        *time.Time `json:"lastOrderAt" gorm:"column:last_order_at"`
+}
+
+type SettlementStatementSummary struct {
+	TotalCount                  int64 `json:"totalCount" gorm:"column:total_count"`
+	SettledCount                int64 `json:"settledCount" gorm:"column:settled_count"`
+	UnsettledCount              int64 `json:"unsettledCount" gorm:"column:unsettled_count"`
+	TotalAmountMicrocredits     int64 `json:"totalAmountMicrocredits" gorm:"column:total_amount_microcredits"`
+	SettledAmountMicrocredits   int64 `json:"settledAmountMicrocredits" gorm:"column:settled_amount_microcredits"`
+	UnsettledAmountMicrocredits int64 `json:"unsettledAmountMicrocredits" gorm:"column:unsettled_amount_microcredits"`
+}
+
 // 先抢占唯一业务键再更新账户，确保注册和签到奖励在多实例并发下只入账一次。
 func (r *Repository) GrantCreditsOnce(userID string, entryType model.CreditLedgerType, amount int64, referenceKey string, note string) (*model.CreditAccount, bool, error) {
 	var account model.CreditAccount
@@ -712,6 +737,161 @@ func (r *Repository) AdminBillingOrders(status string, keyword string, limit int
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+func (r *Repository) SettlementStatements(month string, monthStart time.Time, monthEnd time.Time, status string, deptID *int64, projectID *int64, limit int, offset int) ([]SettlementStatementRow, int64, SettlementStatementSummary, error) {
+	base := r.settlementStatementBaseQuery(month, monthStart, monthEnd, status, deptID, projectID)
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, SettlementStatementSummary{}, err
+	}
+	var rows []SettlementStatementRow
+	if err := base.Order("department_name asc, aigc_project_name asc, settlement_type asc").Limit(limit).Offset(offset).Scan(&rows).Error; err != nil {
+		return nil, 0, SettlementStatementSummary{}, err
+	}
+
+	var summary SettlementStatementSummary
+	summaryQuery := r.db.Table("(?) AS statements", r.settlementStatementBaseQuery(month, monthStart, monthEnd, status, deptID, projectID)).
+		Select(`COUNT(*) AS total_count,
+			COALESCE(SUM(CASE WHEN settlement_status = 'settled' THEN 1 ELSE 0 END), 0) AS settled_count,
+			COALESCE(SUM(CASE WHEN settlement_status = 'unsettled' THEN 1 ELSE 0 END), 0) AS unsettled_count,
+			COALESCE(SUM(amount_microcredits), 0) AS total_amount_microcredits,
+			COALESCE(SUM(CASE WHEN settlement_status = 'settled' THEN amount_microcredits ELSE 0 END), 0) AS settled_amount_microcredits,
+			COALESCE(SUM(CASE WHEN settlement_status = 'unsettled' THEN amount_microcredits ELSE 0 END), 0) AS unsettled_amount_microcredits`)
+	if err := summaryQuery.Scan(&summary).Error; err != nil {
+		return nil, 0, SettlementStatementSummary{}, err
+	}
+	return rows, total, summary, nil
+}
+
+func (r *Repository) UpsertSettlementStatements(statements []model.SettlementStatement) error {
+	if len(statements) == 0 {
+		return nil
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for _, statement := range statements {
+			var existing model.SettlementStatement
+			err := tx.First(&existing, "statement_key = ?", statement.StatementKey).Error
+			if err == nil {
+				if existing.Status == model.SettlementStatementSettled {
+					continue
+				}
+				if err := tx.Model(&model.SettlementStatement{}).Where("id = ? AND status <> ?", existing.ID, model.SettlementStatementSettled).Updates(map[string]any{
+					"department_name":     statement.DepartmentName,
+					"aigc_project_name":   statement.AigcProjectName,
+					"order_count":         statement.OrderCount,
+					"amount_microcredits": statement.AmountMicrocredits,
+					"first_order_at":      statement.FirstOrderAt,
+					"last_order_at":       statement.LastOrderAt,
+					"updated_at":          statement.UpdatedAt,
+				}).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err := tx.Create(&statement).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *Repository) ConfirmSettlementStatement(statementKey string, actorUserID string, note string, now time.Time) (bool, error) {
+	result := r.db.Model(&model.SettlementStatement{}).
+		Where("statement_key = ? AND status = ?", statementKey, model.SettlementStatementUnsettled).
+		Updates(map[string]any{
+			"status":       model.SettlementStatementSettled,
+			"confirmed_by": actorUserID,
+			"confirmed_at": now,
+			"confirm_note": note,
+			"updated_at":   now,
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *Repository) SettlementStatementOrders(monthStart time.Time, monthEnd time.Time, deptID int64, userID string, projectID *int64, settlementType string, status string, limit int, offset int) ([]model.BillingOrder, int64, error) {
+	var items []model.BillingOrder
+	var total int64
+	query := r.db.Model(&model.BillingOrder{}).
+		Joins("LEFT JOIN users ON users.id = billing_orders.user_id").
+		Joins("LEFT JOIN aigc_project ON aigc_project.project_id = billing_orders.aigc_project_id").
+		Where("billing_orders.status <> ?", model.BillingStatusRefunded).
+		Where("billing_orders.created_at >= ? AND billing_orders.created_at < ?", monthStart, monthEnd).
+		Where("COALESCE(billing_orders.capability, '') = ?", strings.TrimSpace(settlementType))
+	if deptID == 0 {
+		query = query.Where("COALESCE(NULLIF(aigc_project.dept_id, 0), users.dept_id, 0) = 0 AND billing_orders.user_id = ?", strings.TrimSpace(userID))
+	} else {
+		query = query.Where("COALESCE(NULLIF(aigc_project.dept_id, 0), users.dept_id, 0) = ?", deptID)
+	}
+	if projectID == nil {
+		query = query.Where("billing_orders.aigc_project_id IS NULL")
+	} else {
+		query = query.Where("billing_orders.aigc_project_id = ?", *projectID)
+	}
+	if status == "settled" {
+		query = query.Where("billing_orders.status = ?", model.BillingStatusSettled)
+	} else if status == "unsettled" {
+		query = query.Where("billing_orders.status IN ?", []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain})
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Select("billing_orders.*").Order("billing_orders.created_at desc").Limit(limit).Offset(offset).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *Repository) settlementStatementBaseQuery(month string, monthStart time.Time, monthEnd time.Time, status string, deptID *int64, projectID *int64) *gorm.DB {
+	actualAmount := "CASE WHEN billing_orders.status = 'settled' THEN COALESCE(NULLIF(billing_orders.actual_amount_microcredits, 0), billing_orders.amount_microcredits) ELSE billing_orders.amount_microcredits END"
+	statementStatus := "COALESCE(settlement_statements.status, 'unsettled')"
+	effectiveDeptID := "COALESCE(NULLIF(aigc_project.dept_id, 0), users.dept_id, 0)"
+	effectiveUserID := "CASE WHEN " + effectiveDeptID + " = 0 THEN billing_orders.user_id ELSE '' END"
+	effectiveDepartmentName := "CASE WHEN " + effectiveDeptID + " = 0 THEN '个人：' || COALESCE(NULLIF(users.display_name, ''), users.username, billing_orders.user_id) ELSE COALESCE(aigc_dept.name, '未分配团队') END"
+	statementKey := "'" + strings.ReplaceAll(month, "'", "''") + ":' || CAST(" + effectiveDeptID + " AS text) || ':' || " + effectiveUserID + " || ':' || COALESCE(CAST(billing_orders.aigc_project_id AS text), 'all') || ':' || COALESCE(billing_orders.capability, '')"
+	displayDepartmentName := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.department_name ELSE " + effectiveDepartmentName + " END"
+	displayProjectName := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.aigc_project_name ELSE COALESCE(aigc_project.project_name, '未分配项目') END"
+	displayOrderCount := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.order_count ELSE COUNT(*) END"
+	displayAmount := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.amount_microcredits ELSE COALESCE(SUM(" + actualAmount + "), 0) END"
+	displayFirstOrderAt := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.first_order_at ELSE MIN(billing_orders.created_at) END"
+	displayLastOrderAt := "CASE WHEN " + statementStatus + " = 'settled' THEN settlement_statements.last_order_at ELSE MAX(billing_orders.created_at) END"
+	query := r.db.Model(&model.BillingOrder{}).
+		Select(`COALESCE(settlement_statements.id, 0) AS id,
+			`+statementKey+` AS statement_key,
+			`+effectiveUserID+` AS user_id,
+			`+effectiveDeptID+` AS dept_id,
+			`+displayDepartmentName+` AS department_name,
+			billing_orders.aigc_project_id AS aigc_project_id,
+			`+displayProjectName+` AS aigc_project_name,
+			COALESCE(billing_orders.capability, '') AS settlement_type,
+			`+statementStatus+` AS settlement_status,
+			`+displayOrderCount+` AS order_count,
+			`+displayAmount+` AS amount_microcredits,
+			`+displayFirstOrderAt+` AS first_order_at,
+			`+displayLastOrderAt+` AS last_order_at`).
+		Joins("LEFT JOIN users ON users.id = billing_orders.user_id").
+		Joins("LEFT JOIN aigc_project ON aigc_project.project_id = billing_orders.aigc_project_id").
+		Joins("LEFT JOIN aigc_dept ON aigc_dept.dept_id = "+effectiveDeptID).
+		Joins("LEFT JOIN settlement_statements ON settlement_statements.statement_key = "+statementKey).
+		Where("billing_orders.status <> ?", model.BillingStatusRefunded).
+		Where("billing_orders.created_at >= ? AND billing_orders.created_at < ?", monthStart, monthEnd).
+		Group(statementKey + ", " + effectiveUserID + ", " + effectiveDeptID + ", " + effectiveDepartmentName + ", billing_orders.aigc_project_id, COALESCE(aigc_project.project_name, '未分配项目'), COALESCE(billing_orders.capability, ''), settlement_statements.id, " + statementStatus + ", settlement_statements.department_name, settlement_statements.aigc_project_name, settlement_statements.order_count, settlement_statements.amount_microcredits, settlement_statements.first_order_at, settlement_statements.last_order_at")
+	if status == "settled" {
+		query = query.Where(statementStatus+" = ?", "settled")
+	} else if status == "unsettled" {
+		query = query.Where(statementStatus+" = ?", "unsettled")
+	}
+	if deptID != nil {
+		query = query.Where(effectiveDeptID+" = ?", *deptID)
+	}
+	if projectID != nil {
+		query = query.Where("billing_orders.aigc_project_id = ?", *projectID)
+	}
+	return query
 }
 
 func (r *Repository) TaskHasSuccessfulBillableCall(taskID string) (bool, error) {

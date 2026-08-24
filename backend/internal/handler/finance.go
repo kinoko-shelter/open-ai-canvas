@@ -431,6 +431,92 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Header("Cache-Control", "no-store")
 		ok(c, result)
 	})
+	r.GET("/admin/settlement-statements", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		deptID, err := optionalInt64Query(c, "deptId")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		projectID, err := optionalInt64Query(c, "projectId")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.SettlementStatementPage(user, c.Query("month"), c.DefaultQuery("status", "all"), deptID, projectID, page, limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+	r.GET("/admin/settlement-statements/references", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.SettlementReferences(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+	r.GET("/admin/settlement-statements/orders", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		deptID, err := optionalInt64Query(c, "deptId")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if deptID == nil {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("请选择团队"))
+			return
+		}
+		projectID, err := optionalInt64Query(c, "projectId")
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.SettlementStatementOrders(user, c.Query("month"), *deptID, c.Query("userId"), projectID, c.Query("settlementType"), c.DefaultQuery("status", "all"), page, limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+	r.POST("/admin/settlement-statements/confirm", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req service.ConfirmSettlementStatementsRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		confirmed, err := svc.ConfirmSettlementStatements(user, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"confirmedCount": confirmed})
+	})
 	r.GET("/admin/billing-orders", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -502,4 +588,16 @@ func saveChannelModel(c *gin.Context, svc *service.Service, id string) {
 		return
 	}
 	ok(c, gin.H{"model": item})
+}
+
+func optionalInt64Query(c *gin.Context, key string) (*int64, error) {
+	value := c.Query(key)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return nil, service.BadAuthRequest("筛选参数无效")
+	}
+	return &parsed, nil
 }

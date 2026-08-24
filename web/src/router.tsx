@@ -4,7 +4,7 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { RequireFeature } from "@/components/auth/require-feature";
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { loadAigcProjectsPage, loadAssetsPage, loadCanvasPage, loadCreatePage, loadHomePage, loadProjectsPage, loadSettingsPage, loadSkillsPage, loadTasksPage, loadWalletPage } from "@/lib/workspace-route-modules";
+import { loadAigcProjectsPage, loadAssetsPage, loadCanvasPage, loadCreatePage, loadHomePage, loadProjectsPage, loadSettingsPage, loadSettlementStatementsPage, loadSkillsPage, loadTasksPage, loadWalletPage } from "@/lib/workspace-route-modules";
 import UserLayout from "@/layouts/user-layout";
 import { AuthScene } from "@/pages/auth/auth-scene";
 import RouteErrorPage from "@/pages/route-error";
@@ -46,6 +46,7 @@ const SkillsPage = lazy(loadSkillsPage);
 const TasksPage = lazy(loadTasksPage);
 const WalletPage = lazy(loadWalletPage);
 const ProjectsPage = lazy(loadProjectsPage);
+const SettlementStatementsPage = lazy(loadSettlementStatementsPage);
 const ProjectDetailPage = lazy(() => import("@/pages/projects/detail"));
 const SettingsPage = lazy(loadSettingsPage);
 const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
@@ -171,6 +172,7 @@ export const router = createBrowserRouter([
                 ],
             },
             { path: "/aigc-projects", element: <RequireAuth>{deferred(<AigcProjectsPage />)}</RequireAuth> },
+            { path: "/settlement-statements", element: <RequireAuth>{deferred(<SettlementStatementsPage />)}</RequireAuth> },
         ],
     },
     { path: "*", element: fullScreenDeferred(<NotFound />) },

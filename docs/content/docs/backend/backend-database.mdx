@@ -6,6 +6,18 @@ title: 后端数据库
 
 生产环境使用 PostgreSQL。启动时由 `backend/internal/database/schema.go` 中的 `Models()` 统一执行迁移；数据表或索引发生变化时必须同步更新本页。
 
+## 结算单
+
+`settlement_statements` 保存运营按月确认结算单的状态，和底层计费订单生命周期分离：
+
+- `id` 是数据库自增主键，用于列表展示和人工查询；业务去重不依赖该字段。
+- `statement_key` 唯一标识 `月份 + 团队/个人 + 项目 + 结算类型`，列表查询会按当月 `billing_orders` 聚合并补齐缺失记录。
+- `status` 仅表示运营是否人工确认，默认 `unsettled`，点击确认后变为 `settled`；不得用 `billing_orders.status` 推导结算单确认状态。
+- 后台任务每 20 分钟刷新当月结算单；如果当天是每月 1 号，会额外刷新上个月结算单。
+- `order_count`、`amount_microcredits`、`first_order_at`、`last_order_at` 是聚合快照；未结算结算单可随刷新更新，已结算结算单不再被刷新或确认修改。
+- 确认结算单只更新 `settlement_statements`，不改变底层 `billing_orders` 的计费状态、金额或核对记录。
+- 未分配团队的消费以 `dept_id=0 + user_id` 单独成单；有团队时按团队展示，项目团队优先于用户团队。
+
 ## 方舟可信素材绑定
 
 `ark_private_asset_bindings` 缓存本地素材库图片与方舟私域虚拟人素材库之间的关系：

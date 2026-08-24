@@ -14,6 +14,7 @@ type ChannelInterfaceType string
 type ApiCallStatus string
 type ResourceStatus string
 type BillingStatus string
+type SettlementStatementStatus string
 type CreditLedgerType string
 type RedeemCodeStatus string
 type AnnouncementStatus string
@@ -97,6 +98,9 @@ const (
 	BillingStatusSettled   BillingStatus = "settled"
 	BillingStatusRefunded  BillingStatus = "refunded"
 	BillingStatusUncertain BillingStatus = "uncertain"
+
+	SettlementStatementUnsettled SettlementStatementStatus = "unsettled"
+	SettlementStatementSettled   SettlementStatementStatus = "settled"
 
 	ProviderCancelStatusRequested ProviderCancelStatus = "requested"
 	ProviderCancelStatusConfirmed ProviderCancelStatus = "confirmed"
