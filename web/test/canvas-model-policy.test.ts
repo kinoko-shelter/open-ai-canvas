@@ -198,6 +198,7 @@ describe("逻辑模型选择", () => {
             capability: "image",
             input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 },
             imageSize: "1824x1024",
+            videoSeconds: "6",
             options: { size: "1824x1024", quality: "2k", transparentBackground: false, count: 1 },
         })).toBe("");
     });

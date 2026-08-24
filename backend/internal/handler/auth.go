@@ -952,11 +952,7 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 		}
 	}
 	if routed != nil {
-		providerModelKey := strings.TrimSpace(routed.ChannelModel.ProviderModelKey)
-		if routed.PriceTier != nil && strings.TrimSpace(routed.PriceTier.ProviderModelKey) != "" {
-			providerModelKey = routed.PriceTier.ProviderModelKey
-		}
-		body, err = replaceJSONProxyModel(body, providerModelKey)
+		body, err = replaceJSONProxyModel(body, routedProviderModelKey(routed))
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
@@ -1082,6 +1078,20 @@ func proxySystemRequest(c *gin.Context, svc *service.Service, user *model.User, 
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+}
+
+func routedProviderModelKey(routed *service.RoutedModel) string {
+	if routed == nil {
+		return ""
+	}
+	if routed.PriceTier != nil && strings.TrimSpace(routed.PriceTier.ProviderModelKey) != "" {
+		return routed.PriceTier.ProviderModelKey
+	}
+	if providerModelKey := strings.TrimSpace(routed.ChannelModel.ProviderModelKey); providerModelKey != "" {
+		return providerModelKey
+	}
+	// 旧渠道记录尚未回填 ProviderModelKey 时，ModelKey 就是原有上游模型标识。
+	return strings.TrimSpace(routed.ChannelModel.ModelKey)
 }
 
 // 逻辑模型在浏览器中只暴露逻辑 ID；真正的渠道模型和供应商模型标识只在服务端替换。

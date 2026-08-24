@@ -124,7 +124,11 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
     }
     const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation) : requirements.videoOperation;
     if (operation && spec.operations?.length && !spec.operations.includes(operation)) return "不支持当前生成模式";
-    const options = { ...requirements.options, ...(requirements.videoSeconds ? { videoSeconds: requirements.videoSeconds } : {}), ...(requirements.imageSize ? { size: requirements.imageSize } : {}) };
+    const options = {
+        ...requirements.options,
+        ...(requirements.capability === "video" && requirements.videoSeconds ? { videoSeconds: requirements.videoSeconds } : {}),
+        ...(requirements.capability === "image" && requirements.imageSize ? { size: requirements.imageSize } : {}),
+    };
     for (const [name, value] of Object.entries(options)) {
         if (value === undefined || value === null || value === "") continue;
         const constraint = spec.options?.[name];

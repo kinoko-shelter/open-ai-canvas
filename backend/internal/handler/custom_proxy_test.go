@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -176,6 +177,19 @@ func TestRelayStreamRedactorHandlesSplitSecret(t *testing.T) {
 	output := append(redactor.Push([]byte("before split-"), false), redactor.Push([]byte("secret after"), true)...)
 	if bytes.Contains(output, []byte("split-secret")) || !bytes.Contains(output, []byte("[REDACTED]")) {
 		t.Fatalf("redacted output = %q", output)
+	}
+}
+
+func TestRoutedProviderModelKeyFallsBackToChannelModelKey(t *testing.T) {
+	routed := &service.RoutedModel{ChannelModel: model.ChannelModel{ModelKey: "gpt-5.6-terra"}}
+	if got := routedProviderModelKey(routed); got != "gpt-5.6-terra" {
+		t.Fatalf("routedProviderModelKey() = %q, want channel model key", got)
+	}
+
+	routed.ChannelModel.ProviderModelKey = "gpt-5.6-terra-upstream"
+	routed.PriceTier = &model.ChannelModelPriceTier{ProviderModelKey: "gpt-5.6-terra-2k"}
+	if got := routedProviderModelKey(routed); got != "gpt-5.6-terra-2k" {
+		t.Fatalf("routedProviderModelKey() = %q, want price-tier key", got)
 	}
 }
 
